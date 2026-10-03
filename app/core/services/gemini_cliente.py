@@ -1,4 +1,5 @@
 import json
+import time 
 try:
     from google import genai  # type: ignore
     from google.genai import types  # type: ignore
@@ -17,7 +18,7 @@ SYSTEM_PROMPT = """
 Eres el motor analítico de TrendWatch enfocado en el Litoral argentino.
 Analiza la noticia recibida y responde ÚNICAMENTE en un formato JSON estricto con el siguiente esquema:
 {
-  "polaridad": float (número entre -1.0 para negativo, 0.0 para neutro y 1.0 para positivo),
+  "polaridad": float (número entre -1.0 para negativo, 0.0 para neutr   o y 1.0 para positivo),
   "confianza": float (número entre 0.0 y 1.0),
   "localidades": [
     {
@@ -31,7 +32,7 @@ Analiza la noticia recibida y responde ÚNICAMENTE en un formato JSON estricto c
 
 
 class GeminiCliente:
-    def __init__(self, api_key=None, model_name='gemini-1.5-pro'):
+    def __init__(self, api_key=None, model_name='gemini-3.8-flash'):
         self.model_name = model_name
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
         self.client = None
@@ -90,6 +91,7 @@ class GeminiCliente:
                 pub.procesado_ia = True
                 pub.save()
                 procesadas_count += 1
+                time.sleep(12)
 
             except Exception as e:
                 print(f"Error analizando publicación {pub.id_publicacion_api}: {e}")
