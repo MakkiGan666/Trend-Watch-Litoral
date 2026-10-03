@@ -43,14 +43,14 @@ class RegistroDatos(models.Model):
 
 class Publicacion(models.Model):
     id_publicacion_api = models.AutoField(primary_key=True)
-    hash_origen = models.CharField(max_length=64, unique=True)
+    hash_origen = models.CharField(max_length=64, unique=True, default="")
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
-    titulo = models.CharField(max_length=255)
+    titulo = models.CharField(max_length=255, default="")
     contenido = models.TextField()
-    url = models.URLField()
+    url = models.URLField(default="")
     fecha_captura = models.DateTimeField(default=timezone.now)
     procesado_ia = models.BooleanField(default=False)
-    id_registro = models.ForeignKey('RegistroDatos', on_delete=models.CASCADE)
+    id_registro = models.ForeignKey('RegistroDatos', on_delete=models.CASCADE, null=True, blank=True)
 
     class Meta:
         db_table = 'Publicacion'

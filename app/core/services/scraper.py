@@ -99,7 +99,7 @@ def fetch_and_store_elterritorio(category="misiones", limit=10):
                 url=link,
                 procesado_ia=False,
                 id_registro=registro, # Relación ForeignKey con RegistroDatos
-                fecha=timezone.now()
+                fecha_captura=timezone.now()
             )
             volumen_capturado += 1
 
