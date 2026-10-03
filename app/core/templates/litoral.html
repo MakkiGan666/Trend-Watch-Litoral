@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Litoral · TrendWatch{% endblock %}
+{% block nav %}{% endblock %}
+{% block footer %}{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+{% endblock %}
+
+{% block content %}
+<style>
+  .litoral-page { min-height: 100vh; padding: 32px 20px 64px; color: #DAF1DE; background: linear-gradient(135deg, #051F20, #0B2B26 55%, #051F20); }
+  .litoral-shell { max-width: 1360px; margin: 0 auto; }
+  .litoral-nav { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:28px; }
+  .litoral-brand { color:#DAF1DE; text-decoration:none; font-weight:700; letter-spacing:.02em; }
+  .litoral-link { color:#8EB69B; text-decoration:none; border:1px solid #8EB69B4D; border-radius:12px; padding:9px 14px; }
+  .litoral-link:hover { color:#DAF1DE; background:#163832CC; }
+  .litoral-intro { margin-bottom:28px; }
+  .litoral-intro h1 { margin:0 0 8px; color:#DAF1DE; font-size:clamp(2rem,4vw,3.5rem); }
+  .litoral-intro p { max-width:680px; margin:0; color:#8EB69B; font-size:1.05rem; }
+  .litoral-panel { background:#163832CC; border:1px solid #8EB69B4D; border-radius:24px; box-shadow:0 24px 60px #00000033; backdrop-filter:blur(16px); }
+  .litoral-map-layout { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr); gap:20px; margin-bottom:36px; }
+  .map-panel { height:min(70vh,620px); min-height:0; padding:0; overflow:hidden; }
+  .leaflet-map { width:100%; height:100%; background:#e8eee8; }
+  .leaflet-container { font:12px/1.4 Inter, sans-serif; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:#163832; color:#DAF1DE; }
+  .leaflet-popup-content { margin:12px 14px; }
+  .leaflet-popup-content strong { color:#DAF1DE; }
+  .leaflet-control-zoom a { color:#235347; }
+  .map-outline { fill:#235347; fill-opacity:.82; stroke:#8EB69B; stroke-width:1; }
+  .map-division { fill:none; stroke:#8EB69B; stroke-width:.45; stroke-opacity:.65; }
+  .map-point { fill:#DAF1DE; stroke:#051F20; stroke-width:.6; cursor:pointer; }
+  .map-point:hover, .map-point.active { fill:#8EB69B; }
+  .map-label { fill:#DAF1DE; font: 2.8px sans-serif; pointer-events:none; }
+  .department-summary { padding:26px; display:flex; flex-direction:column; justify-content:center; min-height:420px; }
+  .department-summary h2 { color:#DAF1DE; margin:0 0 14px; }
+  .department-summary p { color:#8EB69B; }
+  .summary-number { color:#8EB69B; font-size:3rem; font-weight:700; }
+  .department-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:18px; }
+  .department-card { position:relative; min-height:250px; overflow:hidden; padding:0; border:1px solid #8EB69B4D; border-radius:24px; color:#DAF1DE; text-align:left; cursor:pointer; background:#163832; box-shadow:0 18px 40px #0000002B; transition:transform .2s, border-color .2s; }
+  .department-card:hover, .department-card.active { transform:translateY(-4px); border-color:#8EB69B; }
+  .department-card::before { content:""; position:absolute; inset:0; background:linear-gradient(180deg,#051F2010 35%,#051F20B8 100%); z-index:1; }
+  .department-card > * { position:relative; z-index:2; }
+  .mockup-cover { position:absolute; inset:0; background-position:center; background-size:cover; opacity:1; }
+  .mockup-footer { position:absolute; inset:auto 12px 12px; display:flex; justify-content:space-between; align-items:end; padding:10px 12px; border:1px solid #8EB69B66; border-radius:14px; background:#051F20B8; backdrop-filter:blur(10px); color:#DAF1DE; font-size:.75rem; }
+  .mockup-votes { display:flex; gap:5px; color:#DAF1DE; font-size:.95rem; }
+  .mockup-votes button { border:0; padding:0; background:none; color:inherit; cursor:pointer; font-size:.95rem; }
+  .department-card h3 { margin:0; font-size:1.05rem; }
+  .department-card small { color:#8EB69B; }
+  .department-card .mention-count { color:#8EB69B; font-size:.75rem; }
+  .section-title { display:flex; align-items:end; justify-content:space-between; gap:16px; margin:0 0 16px; }
+  .section-title h2 { margin:0; color:#DAF1DE; }.section-title p { margin:0; color:#8EB69B; font-size:.9rem; }
+  .comments-modal { display:none; position:fixed; inset:0; z-index:20; align-items:center; justify-content:center; padding:20px; background:#00000099; backdrop-filter:blur(8px); }
+  .comments-modal.is-open { display:flex; }
+  .comments-dialog { width:min(680px,100%); max-height:90vh; overflow:auto; padding:28px; background:#163832F2; border:1px solid #8EB69B66; border-radius:24px; box-shadow:0 24px 80px #00000066; }
+  .comments-head { display:flex; justify-content:space-between; gap:16px; }.comments-head h2 { margin:0; color:#DAF1DE; }.close-comments { border:0; background:transparent; color:#8EB69B; font-size:1.5rem; cursor:pointer; }
+  .sentiment-options { display:flex; gap:8px; margin:20px 0; }.sentiment-options button, .comment-submit { flex:1; padding:10px; border-radius:12px; border:1px solid #8EB69B4D; background:#0B2B26; color:#8EB69B; cursor:pointer; }.sentiment-options button.selected { background:#235347; border-color:#8EB69B; color:#DAF1DE; }
+  .comment-list { display:grid; gap:10px; max-height:220px; overflow:auto; margin-bottom:16px; }.comment-item { padding:12px; border-radius:14px; background:#0B2B26CC; border:1px solid #8EB69B26; }.comment-item strong { color:#DAF1DE; }.comment-item p { margin:6px 0 0; color:#8EB69B; }
+  .comment-form { display:flex; gap:8px; }.comment-form input { flex:1; min-width:0; padding:11px 13px; border-radius:12px; border:1px solid #8EB69B4D; background:#0B2B26; color:#DAF1DE; }.comment-submit { flex:0 0 auto; background:#235347; color:#DAF1DE; }
+  @media (max-width: 1100px) { .department-grid { grid-template-columns:repeat(3, minmax(0,1fr)); } }
+  @media (max-width: 760px) { .litoral-page { padding:20px 14px 44px; }.litoral-map-layout { grid-template-columns:1fr; }.map-panel { height:360px; }.department-grid { grid-template-columns:1fr; gap:12px; }.department-card { min-height:235px; }.comment-form { flex-direction:column; }.comment-submit { width:100%; } }
+</style>
+
+<div class="litoral-page">
+  <div class="litoral-shell">
+    <nav class="litoral-nav" aria-label="Navegación Litoral">
+      <a class="litoral-brand" href="{% url 'landing' %}">TrendWatch · Litoral</a>
+      <a class="litoral-link" href="{% url 'categorias' %}">Explorar categorías</a>
+    </nav>
+
+    <header class="litoral-intro">
+      <h1>Provincia de Misiones</h1>
+      <p>Explorá tendencias, noticias y conversaciones de cada departamento del Litoral.</p>
+    </header>
+
+    <section class="litoral-map-layout" aria-label="Mapa interactivo de Misiones">
+      <div class="litoral-panel map-panel">
+        <div id="misiones-map" class="leaflet-map" role="img" aria-label="Mapa cartográfico de la provincia de Misiones"></div>
+      </div>
+      <aside class="litoral-panel department-summary" id="department-summary">
+        <p>Departamento seleccionado</p>
+        <h2>Elegí una localidad</h2>
+        <span class="summary-number">17</span>
+        <p>departamentos monitoreados. Seleccioná un punto o tarjeta para abrir la Vista Comentarios.</p>
+      </aside>
+    </section>
+
+    <section aria-labelledby="departments-title">
+      <div class="section-title"><div><h2 id="departments-title">Departamentos de Misiones</h2><p>Del sur al norte, con noticias y comentarios.</p></div><p>17 departamentos</p></div>
+      <div class="department-grid" id="department-grid"></div>
+    </section>
+  </div>
+</div>
+
+<div class="comments-modal" id="comments-modal" role="dialog" aria-modal="true" aria-labelledby="comments-title">
+  <div class="comments-dialog">
+    <div class="comments-head"><div><p id="comments-location" style="color:#8EB69B;margin:0 0 5px"></p><h2 id="comments-title">Vista Comentarios</h2></div><button class="close-comments" id="close-comments" type="button" aria-label="Cerrar">&times;</button></div>
+    <div class="sentiment-options" role="group" aria-label="Calificar sentimiento"><button type="button" data-sentiment="Positivo">Positivo</button><button type="button" data-sentiment="Neutral">Neutral</button><button type="button" data-sentiment="Negativo">Negativo</button></div>
+    <div class="comment-list" id="comment-list"></div>
+    <form class="comment-form" id="comment-form"><input id="comment-input" type="text" placeholder="Escribí tu comentario..." required><button class="comment-submit" type="submit">Publicar</button></form>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const departments = [
+    ['capital','Capital',324,18.4],['obera','Oberá',287,12.1],['iguazu','Iguazú',412,28.5],['eldorado','Eldorado',198,5.2],['sanignacio','San Ignacio',156,-3.1],['cainguas','Cainguás',89,2.3],['libertador','Libertador Gral. San Martín',201,11.7],['apostoles','Apóstoles',143,7.4],['belgrano','Gral. Manuel Belgrano',167,9.8],['montecarlo','Montecarlo',234,15.3],['candelaria','Candelaria',112,4.6],['sanpedro','San Pedro',178,8.9],['sanjavier','San Javier',145,6.2],['concepcion','Concepción',98,1.4],['25mayo','25 de Mayo',134,3.8],['leandro','Leandro N. Alem',156,6.9],['guarani','Guaraní',189,10.1]
+  ];
+  const departmentImages = {capital:'{% static "mockup/Capital_fondo.png" %}',obera:'{% static "mockup/Obera_fonod.png" %}',iguazu:'{% static "mockup/Iguazu_fondo.png" %}',eldorado:'{% static "mockup/El_Dorado_fondo.png" %}',sanignacio:'{% static "mockup/San_Ignacio_fondo.png" %}',cainguas:'{% static "mockup/Cainguas_fondo.png" %}',libertador:'{% static "mockup/Libertador_SanMartin_fondo.png" %}',apostoles:'{% static "mockup/Apostoles_fondo.png" %}',belgrano:'{% static "mockup/Gral.Manuel_Belgrano_fondo.png" %}',montecarlo:'{% static "mockup/Montecarlo_fondo.png" %}',candelaria:'{% static "mockup/Candelaria_fondo.png" %}',sanpedro:'{% static "mockup/San_Pedro_fondo.png" %}',sanjavier:'{% static "mockup/San_Javier_fondo.png" %}',concepcion:'{% static "mockup/Concepcion_fondo.png" %}','25mayo':'{% static "mockup/25_mayo_fondo.png" %}',leandro:'{% static "mockup/LeandroN.Alem_fondo.png" %}',guarani:'{% static "mockup/Guarani_fondo.png" %}'};
+  const coordinates = {capital:[-27.36,-55.90],obera:[-27.49,-55.12],iguazu:[-25.60,-54.57],eldorado:[-26.40,-54.62],sanignacio:[-27.25,-55.53],cainguas:[-27.20,-54.99],libertador:[-26.90,-54.96],apostoles:[-27.91,-55.75],belgrano:[-25.95,-53.95],montecarlo:[-26.57,-54.74],candelaria:[-27.46,-55.74],sanpedro:[-26.62,-54.11],sanjavier:[-27.87,-55.13],concepcion:[-27.99,-55.52],'25mayo':[-27.38,-54.74],leandro:[-27.60,-55.32],guarani:[-27.30,-54.20]};
+  const grid = document.getElementById('department-grid'); const modal = document.getElementById('comments-modal'); const comments = [{author:'María García',text:'Excelente noticia para la región.',sentiment:'Positivo'},{author:'Juan López',text:'Se necesita más inversión en infraestructura.',sentiment:'Neutral'}]; let activeId = null; let activeSentiment = 'Neutral';
+  const map = L.map('misiones-map', {scrollWheelZoom:false}).setView([-27.15,-55.25], 8);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'&copy; OpenStreetMap'}).addTo(map);
+  const markers = {};
+  departments.forEach(([id,name,mentions,trend]) => { const card = document.createElement('article'); card.className='department-card'; card.dataset.id=id; card.tabIndex=0; card.setAttribute('role','button'); card.setAttribute('aria-label','Abrir vista de '+name); card.innerHTML='<div class="mockup-cover" style="background-image:url('+departmentImages[id]+')"></div><div class="mockup-footer"><div><small>'+name+'</small><h3>'+mentions+' menciones</h3></div><div class="mockup-votes"><button type="button" aria-label="Sentimiento positivo">👍</button><button type="button" aria-label="Sentimiento negativo">👎</button></div></div>'; card.addEventListener('click',() => openComments(id)); card.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();openComments(id);}}); card.querySelectorAll('.mockup-votes button').forEach(button=>button.addEventListener('click',event=>{event.stopPropagation();openComments(id);})); grid.appendChild(card); const marker=L.circleMarker(coordinates[id], {radius:7, color:'#051F20', weight:2, fillColor:'#235347', fillOpacity:.95}).addTo(map).bindPopup('<strong>'+name+'</strong><br>'+mentions+' menciones'); marker.on('click',() => openComments(id)); markers[id]=marker; });
+  map.fitBounds(Object.values(coordinates), {padding:[24,24]});
+  function openComments(id) { activeId=id; const dep=departments.find(item=>item[0]===id); document.querySelectorAll('.department-card').forEach(card=>card.classList.toggle('active',card.dataset.id===id)); Object.entries(markers).forEach(([markerId,marker])=>marker.setStyle({fillColor:markerId===id?'#8EB69B':'#235347',radius:markerId===id?10:7})); document.getElementById('department-summary').innerHTML='<p>Departamento seleccionado</p><h2>'+dep[1]+'</h2><span class="summary-number">'+dep[2]+'</span><p>menciones registradas · tendencia '+(dep[3]>0?'+':'')+dep[3]+'%</p>'; document.getElementById('comments-location').textContent=dep[1]; renderComments(); modal.classList.add('is-open'); document.getElementById('comment-input').focus(); }
+  function renderComments() { document.getElementById('comment-list').innerHTML=comments.map(comment=>'<article class="comment-item"><strong>'+comment.author+' · '+comment.sentiment+'</strong><p>'+comment.text+'</p></article>').join(''); }
+  document.querySelectorAll('[data-sentiment]').forEach(button=>button.addEventListener('click',()=>{activeSentiment=button.dataset.sentiment;document.querySelectorAll('[data-sentiment]').forEach(item=>item.classList.toggle('selected',item===button));}));
+  document.getElementById('comment-form').addEventListener('submit',event=>{event.preventDefault();const input=document.getElementById('comment-input');if(input.value.trim()){comments.push({author:'SB',text:input.value.trim(),sentiment:activeSentiment});input.value='';renderComments();}}); document.getElementById('close-comments').addEventListener('click',()=>modal.classList.remove('is-open')); modal.addEventListener('click',event=>{if(event.target===modal)modal.classList.remove('is-open');}); renderComments();
+</script>
+{% endblock %}

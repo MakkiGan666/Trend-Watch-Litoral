@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}Publicaciones · TrendWatch{% endblock %}
+{% block body_class %}publications{% endblock %}
+
+{% block content %}
+<section class="wrap publications-page">
+    <div class="page-head reveal">
+        <h1>Publicaciones monitoreadas</h1>
+        <p>Noticias y menciones registradas por las fuentes de TrendWatch Litoral.</p>
+    </div>
+
+    <div class="publication-list glass glass--sheen reveal">
+        <div class="publication-list__head">
+            <div>
+                <h2>Últimas publicaciones</h2>
+                <p>Mostrando hasta 100 registros, ordenados por fecha.</p>
+            </div>
+            <span class="publication-count">{{ publicaciones|length }} registros</span>
+        </div>
+
+        <div class="publication-table-wrap">
+            <table class="publication-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Contenido</th>
+                        <th>Fuente / Registro</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pub in publicaciones %}
+                    <tr>
+                        <td>{{ pub.id_publicacion_api }}</td>
+                        <td>{{ pub.fecha|date:"d/m/Y H:i"|default:"Sin fecha" }}</td>
+                        <td>{{ pub.contenido }}</td>
+                        <td>{{ pub.id_registro.fuentes_api|default:"Sin registro" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="4" class="publication-empty">No hay publicaciones registradas todavía.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}

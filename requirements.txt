@@ -1,0 +1,9 @@
+Django>=5.0
+psycopg2-binary>=2.9
+pandas
+feedparser
+newspaper3k
+scipy
+google-genai
+python-dotenv
+lxml_html_clean

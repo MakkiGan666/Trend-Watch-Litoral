@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}TrendWatch Litoral · Monitoreo y análisis en Misiones{% endblock %}
+{% block body_class %}landing-page{% endblock %}
+
+{% block content %}
+<main class="landing-main">
+  <header class="landing-hero" aria-labelledby="hero-title">
+    <div class="wrap landing-hero__grid">
+      <div class="landing-hero__content">
+        <p class="eyebrow"><span class="pulse" aria-hidden="true"></span>TrendWatch Litoral</p>
+        <h1 id="hero-title">Observá. Analizá. Comprendé.</h1>
+        <p class="landing-hero__lede">Una plataforma de monitoreo y análisis de tendencias que transforma información de Misiones en datos para comprender qué temas generan impacto en la región.</p>
+        <div class="landing-hero__actions">
+          <a class="btn btn--primary" href="{% url 'categorias' %}">Explorar la plataforma</a>
+          <a class="btn btn--ghost" href="#que-es">Conocer el proyecto</a>
+        </div>
+      </div>
+      <div class="landing-hero__visual" aria-label="Visualización conceptual de datos territoriales">
+        <div class="landing-orbit landing-orbit--outer" aria-hidden="true"></div>
+        <div class="landing-orbit landing-orbit--inner" aria-hidden="true"></div>
+        <div class="landing-data-card landing-data-card--main glass glass--sheen"><span class="landing-data-card__label">Territorio analizado</span><strong>Misiones</strong><span class="landing-data-card__meta">17 departamentos · información regional</span></div>
+        <div class="landing-data-card landing-data-card--small glass glass--sheen"><span class="landing-data-card__label">Flujo</span><strong>Datos → conocimiento</strong></div>
+        <div class="landing-node landing-node--one" aria-hidden="true"></div><div class="landing-node landing-node--two" aria-hidden="true"></div><div class="landing-node landing-node--three" aria-hidden="true"></div>
+      </div>
+    </div>
+  </header>
+
+  <section id="que-es" class="landing-section landing-section--intro" aria-labelledby="que-es-title">
+    <div class="wrap landing-split"><div><p class="section-kicker">El proyecto</p><h2 id="que-es-title">¿Qué es TrendWatch Litoral?</h2></div><div class="landing-copy"><p>TrendWatch Litoral nace como una plataforma orientada al monitoreo de información pública y tendencias en Misiones.</p><p>El sistema recopila y organiza información proveniente de distintas fuentes para facilitar su exploración, análisis y visualización.</p></div></div>
+  </section>
+
+  <section id="como-funciona" class="landing-section" aria-labelledby="como-funciona-title">
+    <div class="wrap"><div class="section-heading"><p class="section-kicker">Método de trabajo</p><h2 id="como-funciona-title">¿Cómo transformamos información en conocimiento?</h2></div><div class="process-grid">
+      <article class="process-card glass glass--sheen"><span>01</span><h3>Recopilación</h3><p>Obtención de información proveniente de distintas fuentes.</p></article>
+      <article class="process-card glass glass--sheen"><span>02</span><h3>Procesamiento</h3><p>Organización y preparación de los datos para su consulta.</p></article>
+      <article class="process-card glass glass--sheen"><span>03</span><h3>Análisis</h3><p>Identificación de patrones y comportamientos informativos.</p></article>
+      <article class="process-card glass glass--sheen"><span>04</span><h3>Detección de tendencias</h3><p>Reconocimiento de temas que adquieren relevancia.</p></article>
+      <article class="process-card glass glass--sheen"><span>05</span><h3>Visualización</h3><p>Presentación de resultados de forma comprensible.</p></article>
+    </div></div>
+  </section>
+
+  <section class="landing-section" aria-labelledby="capacidades-title">
+    <div class="wrap"><div class="section-heading"><p class="section-kicker">Alcance de la plataforma</p><h2 id="capacidades-title">Una plataforma para comprender la información</h2></div><div class="capability-grid">
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">▤</span><h3>Información</h3><p>Reunir información proveniente de distintas fuentes.</p></article>
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">↗</span><h3>Tendencias</h3><p>Detectar temas que adquieren relevancia.</p></article>
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">⌁</span><h3>Análisis</h3><p>Interpretar patrones y comportamiento de la información.</p></article>
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">⌖</span><h3>Territorio</h3><p>Observar la distribución de la actividad informativa dentro de Misiones.</p></article>
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">◌</span><h3>Sentimiento</h3><p>Analizar la orientación de las menciones cuando los datos están disponibles.</p></article>
+      <article class="capability-card glass glass--sheen"><span aria-hidden="true">▥</span><h3>Visualización</h3><p>Transformar información compleja en indicadores comprensibles.</p></article>
+    </div></div>
+  </section>
+
+  <section id="territorio" class="landing-section landing-section--territory" aria-labelledby="territorio-title">
+    <div class="wrap landing-split landing-split--territory"><div class="territory-visual glass glass--sheen" aria-label="Composición visual del territorio misionero"><div class="territory-map-shape" aria-hidden="true"><svg viewBox="0 0 360 360" role="img" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="misionesFill" x1="0%" x2="100%" y1="0%" y2="100%">
+          <stop offset="0%" stop-color="#9ed6ae"/>
+          <stop offset="36%" stop-color="#6DB187"/>
+          <stop offset="72%" stop-color="#4E8D67"/>
+          <stop offset="100%" stop-color="#2D5E49"/>
+        </linearGradient>
+      </defs>
+
+      <path d="M89 55L127 32L170 20L215 24L256 38L290 60L325 98L338 136L329 177L311 206L335 239L327 278L300 311L260 336L220 349L179 343L140 332L103 312L72 278L55 241L42 193L47 145L58 110L70 83L89 55Z" fill="rgba(12,29,27,0.7)" opacity="0.8"/>
+      <path d="M86 64L120 45L163 36L209 39L250 52L285 74L310 108L323 141L315 177L294 203L313 234L306 267L283 296L248 320L208 332L170 326L133 314L101 287L73 249L55 211L49 175L56 136L68 102L86 64Z" fill="url(#misionesFill)" stroke="rgba(236,246,237,0.8)" stroke-width="2"/>
+      <path d="M88 93L130 113L157 121L192 153L205 188L191 223L214 255L190 289L151 302L117 286L92 252L76 214L76 176L83 134L88 93Z" fill="rgba(19,33,31,0.12)" stroke="rgba(232,242,234,0.28)" stroke-width="1.5"/>
+      <path d="M95 100C126 130 151 154 175 176C205 201 233 222 260 219" fill="none" stroke="rgba(232,242,234,0.35)" stroke-width="2" stroke-linecap="round" stroke-dasharray="5 7"/>
+      <path d="M85 160C125 180 159 190 198 188C236 186 267 182 299 164" fill="none" stroke="rgba(232,242,234,0.38)" stroke-width="2" stroke-linecap="round"/>
+      <path d="M108 260C138 278 171 284 206 279C240 274 271 278 300 295" fill="none" stroke="rgba(232,242,234,0.35)" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 8"/>
+      <text x="111" y="192" fill="#EEFDF2" font-size="24" font-family="Inter Tight, Arial, sans-serif" font-weight="700">MISIONES</text>
+    </svg></div></div><div class="landing-copy"><p class="section-kicker">Identidad regional</p><h2 id="territorio-title">Una mirada sobre Misiones</h2><p>TrendWatch Litoral no pretende ser simplemente un portal de noticias. Es una herramienta enfocada en comprender la información y las tendencias dentro del territorio misionero.</p><div class="territory-facts"><div><strong>17</strong><span>departamentos</span></div><div><strong>Datos</strong><span>perspectiva regional</span></div><div><strong>Flujo</strong><span>información organizada</span></div></div><a class="btn btn--ghost" href="{% url 'litoral' %}">Explorar el territorio</a></div></div>
+  </section>
+
+  <section class="landing-section" aria-labelledby="perfiles-title"><div class="wrap"><div class="section-heading"><p class="section-kicker">Alcance del proyecto</p><h2 id="perfiles-title">¿Para quién está pensado?</h2></div><div class="profile-grid"><article class="profile-card"><h3>Investigadores</h3><p>Explorar información y detectar patrones.</p></article><article class="profile-card"><h3>Analistas</h3><p>Observar tendencias y evolución de temas.</p></article><article class="profile-card"><h3>Organizaciones</h3><p>Comprender el contexto informativo regional.</p></article><article class="profile-card"><h3>Estudiantes</h3><p>Utilizar datos como herramienta de aprendizaje.</p></article><article class="profile-card"><h3>Ciudadanía</h3><p>Consultar información organizada sobre la región.</p></article></div></div></section>
+
+  <section class="landing-section" aria-labelledby="tecnologia-title"><div class="wrap technology-panel glass glass--deep glass--sheen"><div class="section-heading"><p class="section-kicker">Proyecto académico</p><h2 id="tecnologia-title">Tecnología + Datos + IA</h2></div><div class="technology-grid"><div><strong>Django</strong><span>Backend y arquitectura web.</span></div><div><strong>PostgreSQL</strong><span>Base de datos prevista para la arquitectura objetivo.</span></div><div><strong>Data Analytics</strong><span>Procesamiento y visualización de información.</span></div><div><strong>NLP / IA</strong><span>Tecnología proyectada para el procesamiento de texto.</span></div></div></div></section>
+
+  <section class="landing-section landing-section--why" aria-labelledby="por-que-title"><div class="wrap landing-split"><div><p class="section-kicker">Sentido del proyecto</p><h2 id="por-que-title">¿Por qué TrendWatch Litoral?</h2></div><div class="landing-copy"><p>Para organizar información dispersa, facilitar su exploración, detectar cambios y tendencias, incorporar una perspectiva territorial y presentar fenómenos regionales de forma visual.</p></div></div></section>
+
+  <section class="landing-section landing-section--cta" aria-labelledby="cta-title"><div class="wrap"><div class="landing-cta glass glass--deep glass--sheen"><p class="section-kicker">Exploración abierta</p><h2 id="cta-title">Descubrí lo que está pasando en Misiones.</h2><p>Información regional. Datos. Tendencias.</p><a class="btn btn--primary" href="{% url 'categorias' %}">Explorar TrendWatch</a></div></div></section>
+</main>
+{% endblock %}

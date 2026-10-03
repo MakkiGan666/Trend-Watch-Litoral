@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Categorías y segmentación · TrendWatch{% endblock %}
+{% block body_class %}app{% endblock %}
+
+{# El dashboard trae su propio header lateral y superior #}
+{% block nav %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block content %}
+<div class="shell" id="shell">
+
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="sidebar glass glass--sheen" id="sidebar" aria-label="Navegación de la plataforma">
+    <div class="sidebar__top">
+      <a class="brand" href="{% url 'landing' %}">
+        {% include "partials/_mark.html" %}
+        <span class="brand__text">TrendWatch</span>
+      </a>
+      <button class="icon-btn" id="sidebar-collapse" type="button" aria-label="Contraer menú" aria-expanded="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l-6 6 6 6"/></svg>
+      </button>
+    </div>
+
+    <nav>
+      <a href="{% url 'landing' %}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg>
+        <span class="sidebar__label">Inicio</span>
+      </a>
+
+      <p class="sidebar__group">Explorar</p>
+      <a href="#resultados">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 7-9"/><path d="M20 6h-4M20 6v4"/></svg>
+        <span class="sidebar__label">Tendencias</span>
+      </a>
+      <a href="{% url 'dashboard' %}">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 9h6M7 13h10M7 16h7"/></svg>
+        <span class="sidebar__label">Noticias</span>
+      </a>
+      <a href="#resultados">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 10-3.2 6.4L21 20l-1.2-3.6A7.9 7.9 0 0020 12z"/></svg>
+        <span class="sidebar__label">Menciones</span>
+      </a>
+
+      <p class="sidebar__group">Segmentación</p>
+      <a href="{% url 'categorias' %}" aria-current="page">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>
+        <span class="sidebar__label">Categorías</span>
+      </a>
+      <a href="#filtros">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c4-3.5 6-7 6-10a6 6 0 10-12 0c0 3 2 6.5 6 10z"/><circle cx="12" cy="11" r="2.2"/></svg>
+        <span class="sidebar__label">Localidades</span>
+      </a>
+      <a href="#filtros">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a14 14 0 0114-14"/><path d="M5 13a8 8 0 018 8"/><circle cx="5.5" cy="18.5" r="1.6" fill="currentColor" stroke="none"/></svg>
+        <span class="sidebar__label">Fuentes</span>
+      </a>
+      <a href="#grafico">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 15v-3M12 15V9M17 15v-5"/></svg>
+        <span class="sidebar__label">Análisis</span>
+      </a>
+    </nav>
+
+    <div class="sidebar__foot">
+      <a href="#">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 14.5a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2v.2a2 2 0 11-4 0v-.1a1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00-1.2-2.9H3a2 2 0 110-4h.1a1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 002.9-1.2V3a2 2 0 114 0v.1a1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5.9z"/></svg>
+        <span class="sidebar__label">Configuración</span>
+      </a>
+    </div>
+  </aside>
+
+  <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+  <!-- ==================== CONTENIDO ==================== -->
+  <div class="app-main">
+
+    <!-- HEADER -->
+    <header class="app-header">
+      <div class="app-header__inner glass glass--sheen">
+        <button class="icon-btn burger" id="sidebar-open" type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="sidebar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+
+        <div class="app-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DAF1DE" stroke-width="2" stroke-linecap="round" opacity=".6"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+          <label class="sr-only" for="app-search-input">Buscar tendencias, temas o localidades</label>
+          <input id="app-search-input" type="search" placeholder="Buscar tendencias, temas o localidades…">
+          <span class="kbd" aria-hidden="true">/</span>
+        </div>
+
+        <div class="app-header__act">
+          <button class="icon-btn dot-badge" type="button" aria-label="Notificaciones">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 1112 0c0 4 1.5 5.5 1.5 5.5h-15S6 13 6 9z"/><path d="M10.5 18.5a2 2 0 003 0"/></svg>
+          </button>
+          <span class="avatar" aria-hidden="true">SB</span>
+          <span class="sr-only">Sesión de Sofía Bergalo</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="app-body">
+
+      <!-- TÍTULO -->
+      <div class="page-head reveal">
+        <h1>Categorías y segmentación</h1>
+        <p>Elegí una categoría y combinala con localidad, provincia, fuente y período. Los filtros se acumulan: todos los que estén activos se aplican a la vez.</p>
+      </div>
+
+      <!-- CATEGORÍAS -->
+      <section aria-labelledby="h-cat">
+        <h2 id="h-cat" class="sr-only">Categorías disponibles</h2>
+        <div class="cat-grid">
+          {# Cada card funciona como filtro rápido: data-cat coincide con el value del select #}
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="politica" data-label="Política">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M3 21h18M6 21V10M12 21V6M18 21v-8M6 10l6-4 6 7"/></svg></span>
+              <span class="cat__d">+18%</span>
+            </div>
+            <h3>Política</h3>
+            <p>Gestión, anuncios y debate público</p>
+            <div class="cat__foot"><span class="meter"><i style="width:88%"></i></span><span>612 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="economia" data-label="Economía">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M4 18l5-6 4 3 7-9"/><path d="M20 6h-4M20 6v4"/></svg></span>
+              <span class="cat__d">+24%</span>
+            </div>
+            <h3>Economía</h3>
+            <p>Precios, comercio y empleo regional</p>
+            <div class="cat__foot"><span class="meter"><i style="width:79%"></i></span><span>548 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="sociedad" data-label="Sociedad">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9.5" r="2.3"/></svg></span>
+              <span class="cat__d">+9%</span>
+            </div>
+            <h3>Sociedad</h3>
+            <p>Comunidad, servicios y vida urbana</p>
+            <div class="cat__foot"><span class="meter"><i style="width:58%"></i></span><span>402 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="seguridad" data-label="Seguridad">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg></span>
+              <span class="cat__d down">−6%</span>
+            </div>
+            <h3>Seguridad</h3>
+            <p>Policiales y prevención</p>
+            <div class="cat__foot"><span class="meter"><i style="width:75%"></i></span><span>523 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="educacion" data-label="Educación">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M7 11v5c0 1.5 2.5 3 5 3s5-1.5 5-3v-5"/></svg></span>
+              <span class="cat__d">+11%</span>
+            </div>
+            <h3>Educación</h3>
+            <p>Escuelas, inscripciones y docentes</p>
+            <div class="cat__foot"><span class="meter"><i style="width:56%"></i></span><span>394 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="salud" data-label="Salud">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg></span>
+              <span class="cat__d">+31%</span>
+            </div>
+            <h3>Salud</h3>
+            <p>Hospitales, campañas y prevención</p>
+            <div class="cat__foot"><span class="meter"><i style="width:68%"></i></span><span>471 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="tecnologia" data-label="Tecnología">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.4"/><circle cx="5" cy="6" r="1.9"/><circle cx="19" cy="18" r="1.9"/><path d="M6.6 7.4l3.8 3.2M17.4 16.6l-3.8-3.2"/></svg></span>
+              <span class="cat__d">+16%</span>
+            </div>
+            <h3>Tecnología</h3>
+            <p>Conectividad e innovación</p>
+            <div class="cat__foot"><span class="meter"><i style="width:27%"></i></span><span>187 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="turismo" data-label="Turismo">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21c4-3.5 6-7 6-10a6 6 0 10-12 0c0 3 2 6.5 6 10z"/><circle cx="12" cy="11" r="2.2"/></svg></span>
+              <span class="cat__d">+34%</span>
+            </div>
+            <h3>Turismo</h3>
+            <p>Cataratas, temporada y servicios</p>
+            <div class="cat__foot"><span class="meter"><i style="width:53%"></i></span><span>366 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="cultura" data-label="Cultura">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6l8-3 8 3v14"/><path d="M4 20h16M9 20v-5h6v5"/></svg></span>
+              <span class="cat__d">+7%</span>
+            </div>
+            <h3>Cultura</h3>
+            <p>Festividades y patrimonio</p>
+            <div class="cat__foot"><span class="meter"><i style="width:35%"></i></span><span>241 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="ambiente" data-label="Ambiente">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 22V9"/><path d="M12 9c0-3 2-6 6-6 0 4-2.5 6-6 6z"/><path d="M12 13c0-3-2-5.5-6-5.5 0 3.5 2.5 5.5 6 5.5z"/></svg></span>
+              <span class="cat__d">+13%</span>
+            </div>
+            <h3>Ambiente</h3>
+            <p>Selva, ríos y gestión de residuos</p>
+            <div class="cat__foot"><span class="meter"><i style="width:41%"></i></span><span>288 menciones</span></div>
+          </button>
+
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="deportes" data-label="Deportes">
+            <div class="cat__top">
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M3.5 12h17"/></svg></span>
+              <span class="cat__d">+5%</span>
+            </div>
+            <h3>Deportes</h3>
+            <p>Ligas locales y clubes</p>
+            <div class="cat__foot"><span class="meter"><i style="width:45%"></i></span><span>310 menciones</span></div>
+          </button>
+        </div>
+      </section>
+
+      <!-- FILTROS -->
+      <section id="filtros" class="filters glass glass--sheen reveal" aria-labelledby="h-filtros">
+        <h2 id="h-filtros" style="font-size:19px;margin-bottom:14px">Segmentar resultados</h2>
+
+        <form class="filters__grid" id="filters" onsubmit="return false">
+          <div>
+            <label for="f-localidad">Localidad</label>
+            <select class="select" id="f-localidad" name="localidad">
+              <option value="">Todas</option>
+              <option value="posadas">Posadas</option>
+              <option value="apostoles">Apóstoles</option>
+              <option value="caiguas">Cainguás</option>
+              <option value="candelaria">Candelaria</option>
+              <option value="concepcion">Concepción</option>
+              <option value="eldorado">Eldorado</option>
+              <option value="general manuel belgrano">General Manuel Belgrano</option>
+              <option value="guarani">Guaraní</option>
+              <option value="iguazu">Iguazú</option>
+              <option value="alem">Leandro N. Alem</option>
+              <option value="montecarlo">Montecarlo</option>
+              <option value="obera">Oberá</option>
+              <option value="san ignacio">San Ignacio</option>
+              <option value="san javier">San Javier</option>
+              <option value="san pedro">San Pedro</option>
+              <option value="veinticinco de mayo">25 de mayo</option>
+            </select>
+          </div>
+          <div>
+          <div>
+            <label for="f-categoria">Categoría</label>
+            <select class="select" id="f-categoria" name="categoria">
+              <option value="">Todas</option>
+              <option value="politica">Política</option>
+              <option value="economia">Economía</option>
+              <option value="sociedad">Sociedad</option>
+              <option value="seguridad">Seguridad</option>
+              <option value="educacion">Educación</option>
+              <option value="salud">Salud</option>
+              <option value="tecnologia">Tecnología</option>
+              <option value="turismo">Turismo</option>
+              <option value="cultura">Cultura</option>
+              <option value="ambiente">Ambiente</option>
+              <option value="deportes">Deportes</option>
+            </select>
+          </div>
+          <div>
+            <label for="f-periodo">Período</label>
+            <select class="select" id="f-periodo" name="periodo">
+              <option value="">Últimos 7 días</option>
+              <option value="hoy">Hoy</option>
+              <option value="30d">Últimos 30 días</option>
+              <option value="custom">Personalizado</option>
+            </select>
+          </div>
+        </form>
+
+        <div class="filters__foot" id="active-filters">
+          <span class="label">Filtros activos:</span>
+          <span class="label" id="no-filters">ninguno · mostrando todo el período</span>
+          <button class="link-btn" type="button" id="clear-filters" hidden>Quitar todos</button>
+        </div>
+      </section>
+
+      <!-- RESULTADOS -->
+      <section id="resultados" aria-labelledby="h-res">
+        <div class="results-head reveal" style="margin-bottom:16px">
+          <div>
+            <h2 id="h-res">Tendencias detectadas</h2>
+            <p class="count"><strong id="result-count">128</strong> resultados con los filtros actuales</p>
+          </div>
+          <div class="seg" data-seg role="group" aria-label="Ordenar resultados">
+            <button type="button" aria-pressed="true">Relevancia</button>
+            <button type="button" aria-pressed="false">Volumen</button>
+            <button type="button" aria-pressed="false">Más recientes</button>
+          </div>
+        </div>
+
+        <div class="trend-grid">
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#TurismoMisiones</span>
+              <span class="trend__delta">↑ 34%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Turismo</span><span class="tag tag--soft">Puerto Iguazú</span><span class="tag tag--soft">24 h</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">2.140</div></div>
+              <div><div class="l">Relevancia</div><div class="v">92</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-pos"></i>Positivo</span></div></div>
+            </div>
+          </article>
+
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#ObrasPosadas</span>
+              <span class="trend__delta">↑ 64%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Política</span><span class="tag tag--soft">Posadas</span><span class="tag tag--soft">7 días</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">1.870</div></div>
+              <div><div class="l">Relevancia</div><div class="v">88</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-neu"></i>Mixto</span></div></div>
+            </div>
+          </article>
+
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#PrecioYerba</span>
+              <span class="trend__delta">↑ 28%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Economía</span><span class="tag tag--soft">Apóstoles</span><span class="tag tag--soft">7 días</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">1.420</div></div>
+              <div><div class="l">Relevancia</div><div class="v">81</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-neg"></i>Negativo</span></div></div>
+            </div>
+          </article>
+
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#ServiciosEldorado</span>
+              <span class="trend__delta">↑ 19%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Sociedad</span><span class="tag tag--soft">Eldorado</span><span class="tag tag--soft">24 h</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">980</div></div>
+              <div><div class="l">Relevancia</div><div class="v">74</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-neg"></i>Negativo</span></div></div>
+            </div>
+          </article>
+
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#DengueMisiones</span>
+              <span class="trend__delta">↑ 31%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Salud</span><span class="tag tag--soft">Oberá</span><span class="tag tag--soft">7 días</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">860</div></div>
+              <div><div class="l">Relevancia</div><div class="v">69</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-neg"></i>Negativo</span></div></div>
+            </div>
+          </article>
+
+          <article class="trend glass glass--sheen reveal">
+            <div class="trend__top">
+              <span class="trend__hash">#FiestaDelInmigrante</span>
+              <span class="trend__delta down">↓ 8%</span>
+            </div>
+            <div class="trend__tags"><span class="tag">Cultura</span><span class="tag tag--soft">Oberá</span><span class="tag tag--soft">30 días</span></div>
+            <div class="trend__stats">
+              <div><div class="l">Volumen</div><div class="v">610</div></div>
+              <div><div class="l">Relevancia</div><div class="v">57</div></div>
+              <div><div class="l">Sentimiento</div><div class="v"><span class="sent"><i class="i-pos"></i>Positivo</span></div></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- GRÁFICO -->
+      <section id="grafico" class="chart-card glass glass--sheen reveal" aria-labelledby="h-graf">
+        <div class="chart-card__head">
+          <div>
+            <h2 id="h-graf">Evolución de menciones</h2>
+            <p class="sub">Últimos 7 días · Misiones · todas las categorías</p>
+          </div>
+          <div class="seg" data-seg role="group" aria-label="Ventana temporal del gráfico">
+            <button type="button" aria-pressed="false">24 h</button>
+            <button type="button" aria-pressed="true">7 días</button>
+            <button type="button" aria-pressed="false">30 días</button>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <svg id="tw-chart" role="img" aria-label="Gráfico de líneas: las menciones crecen de 1.240 el lunes a 2.610 el domingo"></svg>
+          <div class="chart-tip" id="chart-tip" aria-hidden="true"></div>
+        </div>
+
+        <div class="chart-legend">
+          <span><i style="background:#3FD0B4"></i>Menciones</span>
+          <span><i style="background:#8EB69B"></i>Alcance estimado</span>
+          <span style="margin-left:auto">Datos de demostración</span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

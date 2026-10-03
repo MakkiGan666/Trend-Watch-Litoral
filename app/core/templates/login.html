@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Iniciar sesión · TrendWatch{% endblock %}
+{% block body_class %}auth{% endblock %}
+
+{# El login usa su propio fondo, sin navbar ni footer públicos #}
+{% block background %}{% endblock %}
+{% block nav %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block content %}
+<div class="auth-grid">
+
+  <!-- ---------- Panel visual ---------- -->
+  <aside class="auth-side" style="background:
+      radial-gradient(760px 520px at 18% 8%, rgba(63,208,180,.22), transparent 62%),
+      radial-gradient(620px 460px at 88% 92%, rgba(35,83,71,.6), transparent 66%),
+      linear-gradient(160deg,#0B2B26 0%, #051F20 62%, #07231F 100%);">
+
+    <div class="auth-side__blobs" aria-hidden="true"><i></i><i></i></div>
+
+    <svg class="auth-side__topo" viewBox="0 0 800 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g fill="none" stroke="#8EB69B" stroke-width="1" opacity=".5">
+        <path d="M-40 260 C 120 200, 260 320, 420 262 S 720 150, 860 226"/>
+        <path d="M-40 322 C 120 262, 260 382, 420 324 S 720 212, 860 288"/>
+        <path d="M-40 386 C 120 326, 260 446, 420 388 S 720 276, 860 352"/>
+        <path d="M-40 452 C 120 392, 260 512, 420 454 S 720 342, 860 418"/>
+        <path d="M-40 520 C 120 460, 260 580, 420 522 S 720 410, 860 486"/>
+        <path d="M-40 590 C 120 530, 260 650, 420 592 S 720 480, 860 556"/>
+      </g>
+      <path d="M-40 806 C 140 748, 300 860, 460 796 S 740 690, 880 752" fill="none" stroke="#DAF1DE" stroke-width="3" opacity=".14"/>
+      <g transform="translate(470,140) scale(.82)" opacity=".5">
+        <path d="M243 34 C 238 62, 222 88, 200 112 C 178 136, 162 166, 150 200 C 140 230, 132 262, 118 288 C 104 312, 82 330, 56 340 C 40 346, 26 336, 24 318 C 22 296, 32 272, 42 250 C 54 224, 58 198, 66 172 C 76 140, 98 114, 126 88 C 156 60, 192 40, 226 26 C 238 21, 245 24, 243 34 Z"
+              fill="rgba(63,208,180,.05)" stroke="rgba(218,241,222,.22)" stroke-width="1.2"/>
+      </g>
+    </svg>
+
+    <a class="back-link" href="{% url 'landing' %}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+      Volver a TrendWatch
+    </a>
+
+    <span class="brand">{% include "partials/_mark.html" %} TrendWatch <em>Litoral</em></span>
+
+    <div>
+      <h2>La conversación del Litoral sigue corriendo.</h2>
+      <p class="lede">Entrá para guardar los temas que seguís, votar la relevancia de las noticias y recibir el resumen semanal de tu localidad.</p>
+
+      <div class="auth-live glass glass--sheen">
+        <div class="auth-live__top">
+          <span class="on"><span class="pulse" aria-hidden="true"></span>En vivo</span>
+          <span>Últimas 24 horas</span>
+        </div>
+        <ul>
+          <li><span>#ObrasPosadas · Capital</span><span class="d">+64%</span></li>
+          <li><span>#TurismoMisiones · Iguazú</span><span class="d">+41%</span></li>
+          <li><span>#ServiciosEldorado · Eldorado</span><span class="d down">+19%</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="auth-side__foot">
+      <span>4.812 publicaciones hoy</span>
+      <span>17 fuentes</span>
+      <span>Última ingesta 14:42</span>
+    </div>
+  </aside>
+
+  <!-- ---------- Formulario ---------- -->
+  <main class="auth-main">
+    <form class="auth-card glass glass--deep glass--sheen" method="post" action="">
+      {% csrf_token %}
+
+      {% include "partials/_mark.html" %}
+
+      <h1>Iniciar sesión</h1>
+      <p class="sub">Accedé a TrendWatch con tu cuenta.</p>
+
+      <div class="field">
+        <label for="id_username">Usuario o correo electrónico</label>
+        <div class="input">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#DAF1DE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3.5 7l8.5 6 8.5-6"/></svg>
+          <input id="id_username" name="username" type="text" autocomplete="username"
+                 placeholder="nombre@correo.com" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="id_password">Contraseña</label>
+        <div class="input">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#DAF1DE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10" rx="3"/><path d="M8 10.5V7.8a4 4 0 118 0v2.7"/></svg>
+          <input id="id_password" name="password" type="password" autocomplete="current-password"
+                 placeholder="Tu contraseña" required>
+          <button class="input__toggle" type="button" data-password-toggle="id_password"
+                  aria-label="Mostrar contraseña" aria-pressed="false">
+            <svg data-eye-on width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg data-eye-off width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M2.5 12S6 5.8 12 5.8c1.9 0 3.5.6 4.8 1.4M21.5 12s-3.5 6.2-9.5 6.2c-1.9 0-3.5-.6-4.8-1.4"/><path d="M4 4l16 16"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="auth-row">
+        <label class="check">
+          <input type="checkbox" name="remember" checked>
+          <span class="check__box"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#051F20" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.2 5.2L20 6.5"/></svg></span>
+          Recordarme
+        </label>
+        <a href="#">¿Olvidaste tu contraseña?</a>
+      </div>
+
+      <button class="btn btn--primary btn--block" type="submit">Iniciar sesión</button>
+
+      {% if error %}<p class="form-msg" role="alert">{{ error }}</p>{% endif %}
+
+      <p class="auth-foot">¿Todavía no tenés cuenta? <a href="#">Registrate</a></p>
+    </form>
+  </main>
+</div>
+{% endblock %}
