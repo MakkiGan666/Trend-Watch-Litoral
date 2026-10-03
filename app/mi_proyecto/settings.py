@@ -77,7 +77,7 @@ WSGI_APPLICATION = 'mi_proyecto.wsgi.application'
 
 # Cargar las variables del archivo .env
 load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
 # Con Docker Compose se define DB_HOST y se usa PostgreSQL/PostGIS.
 # Sin DB_HOST (por ejemplo `python manage.py runserver` en tu PC) usa SQLite.
