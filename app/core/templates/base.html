@@ -9,7 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}">
+  <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}">
+  <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=11">
   {% block extra_head %}{% endblock %}
 </head>
 
@@ -48,7 +49,7 @@
       <div class="nav__links">
         <a href="{% url 'landing' %}" {% if request.resolver_match.url_name == 'landing' %}aria-current="page"{% endif %}>Inicio</a>
         <a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>
-        <a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Publicaciones</a>
+        <a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>
         <a href="{% url 'landing' %}#como-funciona">Cómo funciona</a>
         <a href="{% url 'litoral' %}" {% if request.resolver_match.url_name == 'litoral' %}aria-current="page"{% endif %}>Litoral</a>
       </div>
@@ -57,9 +58,9 @@
           <span class="nav__user">Hola, {{ request.session.user_name }}</span>
           <a class="btn btn--ghost" href="{% url 'logout' %}">Cerrar sesión</a>
         {% else %}
-          <a class="btn btn--ghost" href="{% url 'login' %}">Iniciar sesión</a>
+          <a class="btn btn--ghost" href="{% url 'landing' %}#login-modal">Iniciar sesión</a>
         {% endif %}
-        <a class="btn btn--primary" href="{% url 'categorias' %}">Explorar tendencias</a>
+        <a class="btn btn--primary" href="{% url 'categorias' %}#resultados">Explorar tendencias</a>
       </div>
       <button class="public-nav-toggle icon-btn" id="public-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded="false" aria-controls="public-nav-links">☰</button>
     </nav>
@@ -87,7 +88,7 @@
         <div>
           <h4>Plataforma</h4>
           <a href="{% url 'categorias' %}">Categorías</a>
-          <a href="{% url 'dashboard' %}">Publicaciones</a>
+          <a href="{% url 'dashboard' %}">Dashboard</a>
           <a href="{% url 'categorias' %}">Localidades</a>
           <a href="{% url 'categorias' %}">Fuentes</a>
         </div>
@@ -96,7 +97,7 @@
           {% if request.session.user_id %}
             <a href="{% url 'logout' %}">Cerrar sesión</a>
           {% else %}
-            <a href="{% url 'login' %}">Iniciar sesión</a>
+            <a href="{% url 'landing' %}#login-modal">Iniciar sesión</a>
           {% endif %}
         </div>
       </div>
@@ -108,7 +109,7 @@
   </footer>
   {% endblock %}
 
-  <script src="{% static 'js/trendwatch.js' %}" defer></script>
+  <script src="{% static 'js/trendwatch.js' %}?v=3" defer></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>
