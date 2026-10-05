@@ -4,10 +4,17 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone 
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from .serializers import UserMeSerializer
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from .services.sentimiento import compute_probabilistic_sentiment
 
 # Importación de Modelos
 from core.models import Publicacion, RegistroDatos, Sentimiento, Locacion, User
@@ -259,3 +266,27 @@ class UserMeView(APIView):
     def get(self, request):
         serializer = UserMeSerializer(request.user)
         return Response(serializer.data)
+    
+    
+class BatchSentimentAnalysisView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        """
+        Espera un payload JSON con una lista de comentarios:
+        {
+          "comments": [
+            {"message": "El servicio es excelente e impecable"},
+            {"message": "Muy malo y con muchos problemas"}
+          ]
+        }
+        """
+        comments = request.data.get('comments', [])
+        
+        if not isinstance(comments, list):
+            return Response(
+                {"error": "El campo 'comments' debe ser una lista de objetos."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # Ejecutamos el análisis probabilístico
+        metrics = compute_probabilistic_sentiment(comments)
+        return Response(metrics, status=status.HTTP_200_OK)
