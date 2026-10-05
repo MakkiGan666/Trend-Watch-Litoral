@@ -52,6 +52,26 @@
     const scrim    = $('#scrim');
     const burger   = $('#sidebar-open');
     const collapse = $('#sidebar-collapse');
+    const navLinks = $$('nav a', sidebar);
+
+    const setCurrentNav = link => {
+      navLinks.forEach(item => {
+        if (item === link) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+      });
+    };
+
+    const syncCurrentNav = () => {
+      const link = navLinks.find(item => item.getAttribute('href') === window.location.hash);
+      if (link) setCurrentNav(link);
+    };
+
+    navLinks.forEach(link => {
+      link.addEventListener('click', () => setCurrentNav(link));
+    });
+
+    syncCurrentNav();
+    window.addEventListener('hashchange', syncCurrentNav);
 
     const closeMobile = () => {
       sidebar.classList.remove('is-open');
@@ -108,6 +128,65 @@
       links.classList.remove('is-open');
       toggle.setAttribute('aria-expanded', 'false');
     }));
+  }
+
+  function initLoginModal() {
+    const modal = $('#login-modal');
+    if (!modal) return;
+
+    const triggers = $$('a[href="#login-modal"], a[href$="#login-modal"]');
+    const closeButtons = $$('[data-login-close]', modal);
+    const username = $('#id_modal_username', modal);
+    let lastFocused = null;
+
+    const open = () => {
+      if (!modal.hidden && modal.classList.contains('is-open')) return;
+      lastFocused = document.activeElement;
+      modal.hidden = false;
+      document.body.classList.add('login-modal-open');
+      requestAnimationFrame(() => modal.classList.add('is-open'));
+      username && username.focus();
+    };
+
+    const close = () => {
+      if (modal.hidden) return;
+      modal.classList.remove('is-open');
+      document.body.classList.remove('login-modal-open');
+      modal.hidden = true;
+      if (window.location.hash === '#login-modal') {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      if (lastFocused && typeof lastFocused.focus === 'function') lastFocused.focus();
+    };
+
+    triggers.forEach(trigger => trigger.addEventListener('click', event => {
+      event.preventDefault();
+      open();
+    }));
+    closeButtons.forEach(button => button.addEventListener('click', close));
+
+    modal.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = $$('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])', modal);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+
+    if (window.location.hash === '#login-modal' || !modal.hidden) open();
   }
 
   /* ---------- 5. Filtros y segmentación (mock) ------------------------- */
@@ -348,6 +427,7 @@
     initSidebar();
     initSearchShortcut();
     initPublicNav();
+    initLoginModal();
     initFilters();
     initSeg();
     initChart();
