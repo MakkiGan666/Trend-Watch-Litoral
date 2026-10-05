@@ -4,6 +4,10 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .serializers import UserMeSerializer
 
 # Importación de Modelos
 from core.models import Publicacion, RegistroDatos, Sentimiento, Locacion, User
@@ -248,3 +252,10 @@ def eliminar_publicacion(request, pk):
         pub.delete()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} eliminada exitosamente."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
+
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserMeSerializer(request.user)
+        return Response(serializer.data)

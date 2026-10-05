@@ -9,6 +9,12 @@ from .views import (
     login_view,
     logout_view,
 )
+from django.urls import path
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
+from .views import UserMeView
 
 
 urlpatterns = [
@@ -27,4 +33,10 @@ urlpatterns = [
     path('api/publicaciones/<int:pk>/', views.obtener_detalle_publicacion, name='detalle_publicacion'),
     path('api/publicaciones/<int:pk>/actualizar/', views.actualizar_publicacion, name='actualizar_publicacion'),
     path('api/publicaciones/<int:pk>/eliminar/', views.eliminar_publicacion, name='eliminar_publicacion'),
+    # Autenticación
+    path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # Perfil de usuario
+    path('api/auth/me/', UserMeView.as_view(), name='user_me')
 ]
