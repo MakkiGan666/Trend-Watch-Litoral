@@ -4,6 +4,7 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone 
+import hashlib
 
 # REST Framework
 from rest_framework.views import APIView
@@ -116,60 +117,104 @@ def procesar_ia(request):
 # ==========================================
 
 # 1. CREATE / INGESTA
-@csrf_exempt
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def crear_o_ingestar_publicacion(request):
     """
-    Soporta dos modalidades:
-    1. Si se envía 'titulo' y 'contenido', crea una publicación individual en PostgreSQL.
-    2. Si se envía 'categoria', ejecuta la ingesta desde El Territorio mediante el scraper.
+    Crea una publicación (manual o RSS) y le calcula automáticamente el sentimiento.
     """
     data = request.data
-
-    # Modalidad 1: Creación manual/directa de una publicación
-    if 'titulo' in data and 'contenido' in data:
+    
+    # CASO A: Creación manual vía JSON
+    if data and "titulo" in data and "contenido" in data:
+        # 1. Guardar la publicación en PostgreSQL
+        url_val = data.get("url", "")
+        
+        # Si la URL viene vacía, usamos el título para garantizar que no choque
+        base_hash = url_val if url_val else data.get("titulo", "")
+        hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
+    
         publicacion = Publicacion.objects.create(
-            titulo=data.get('titulo'),
-            contenido=data.get('contenido'),
-            fuente=data.get('fuente', 'El Territorio'),
-            url=data.get('url', ''),
-            hash_origen=data.get('url', ''),  # O generar hash según tu lógica
-            procesado_ia=False
+            hash_origen=hash_gen,
+            titulo=data.get("titulo"),
+            contenido=data.get("contenido"),
+            fuente=data.get("fuente", "Manual"),
+            url=data.get("url", ""),
+            fecha_captura=data.get("fecha_publicacion", timezone.now())
         )
+        
+        # 2. CALCULAR SENTIMIENTO AUTOMÁTICAMENTE
+        texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+        polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+        
+        analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
+        confianza = float(analisis_lote.get("confidence_score", 0.0))
+
+        # 3. Guardar en la tabla Sentimiento
+        obj_sentimiento, _ = Sentimiento.objects.update_or_create(
+            id_publicacion_api=publicacion,
+            defaults={
+                'polaridad': polaridad,
+                'confianza': confianza,
+            }
+        )
+
+        # 4. Marcar como procesada por la IA
+        publicacion.procesado_ia = True
+        publicacion.save()
+
+        # 5. Retornar la respuesta con el sentimiento incluido
         return Response({
             "status": "ok",
             "id_publicacion_api": publicacion.id_publicacion_api,
             "titulo": publicacion.titulo,
-            "mensaje": "Publicación creada correctamente en PostgreSQL."
+            "procesado_ia": publicacion.procesado_ia,
+            "sentimiento": {
+                "id_sentimiento": obj_sentimiento.id_sentimiento,
+                "polaridad": obj_sentimiento.polaridad,
+                "confianza": obj_sentimiento.confianza
+            },
+            "mensaje": "Publicación creada e ingerida con análisis de sentimiento automático."
         }, status=status.HTTP_201_CREATED)
 
-    # Modalidad 2: Ingesta mediante Scraper RSS
-    categoria = data.get('categoria', 'misiones')
-    limite = data.get('limit', 10)
-    
-    resultado = fetch_and_store_elterritorio(category=categoria, limit=limite)
-    
-    if resultado.get("status") == "EXITO":
-        return Response(resultado, status=status.HTTP_200_OK)
+    # CASO B: Ingesta masiva vía Scraper RSS
     else:
-        return Response(resultado, status=status.HTTP_400_BAD_REQUEST)
+        publicaciones_creadas = fetch_and_store_elterritorio()
+        
+        for pub in publicaciones_creadas:
+            if not pub.procesado_ia:
+                texto = f"{pub.titulo} {pub.contenido}"
+                pol = float(analyze_sentiment_lexicon(texto))
+                
+                res_prob = compute_probabilistic_sentiment([{"message": texto}])
+                conf = float(res_prob.get("confidence_score", 0.0))
+
+                Sentimiento.objects.update_or_create(
+                    id_publicacion_api=pub,
+                    defaults={'polaridad': pol, 'confianza': conf}
+                )
+                pub.procesado_ia = True
+                pub.save()
+
+        return Response({
+            "status": "ok",
+            "total_ingestadas": len(publicaciones_creadas),
+            "mensaje": f"Se procesaron {len(publicaciones_creadas)} publicaciones RSS con sentimiento automatizado."
+        }, status=status.HTTP_200_OK)
 
 
-@csrf_exempt
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
-    
-    # 2. NUEVO: Ejecutar el Worker de IA para procesar lo recién ingresado
-    # Batch_size alto para procesar todas las nuevas en la categoría (ej. 10)
     resultado_ia = procesar_publicaciones_con_ia(batch_size=10)
     
-    return JsonResponse({
+    return Response({
         "status": "success", 
         "mensaje_ingesta": resultado_ingesta,
         "mensaje_ia": resultado_ia
-    })
+    }, status=status.HTTP_200_OK)
 
 
 # 2. READ (Lectura)
