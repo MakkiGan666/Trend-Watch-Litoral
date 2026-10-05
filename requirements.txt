@@ -7,3 +7,5 @@ scipy
 google-genai
 python-dotenv
 lxml_html_clean
+djangorestframework
+djangorestframework-simplejwt
