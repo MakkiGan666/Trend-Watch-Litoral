@@ -7,6 +7,7 @@ from rest_framework_simplejwt.views import (
 from .views import (
     UserMeView,
     BatchSentimentAnalysisView,
+    ProcesarSentimientoPublicacionView,
 )
 
 urlpatterns = [
@@ -36,4 +37,8 @@ urlpatterns = [
     
     # Análisis de Sentimiento
     path('api/sentiment/batch-analyze/', BatchSentimentAnalysisView.as_view(), name='sentiment_batch_analyze'),
+    
+    # Análisis de Sentimiento e IA
+    path('api/sentiment/batch-analyze/', BatchSentimentAnalysisView.as_view(), name='sentiment_batch_analyze'),
+    path('api/publicaciones/<int:pk>/procesar-sentimiento/', ProcesarSentimientoPublicacionView.as_view(), name='procesar_sentimiento_publicacion'),
 ]
