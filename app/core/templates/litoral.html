@@ -65,7 +65,7 @@
 <div class="litoral-page">
   <div class="litoral-shell">
     <nav class="litoral-nav" aria-label="Navegación Litoral">
-      <a class="litoral-brand" href="{% url 'landing' %}">TrendWatch · Litoral</a>
+      <a class="litoral-brand" href="{% url 'landing' %}">{% include "partials/_mark.html" %}<span>TrendWatch · Litoral</span></a>
       <a class="litoral-link" href="{% url 'categorias' %}">Explorar categorías</a>
     </nav>
 
