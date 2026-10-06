@@ -68,7 +68,7 @@
                             <a class="inicio-topic-link inicio-topic-link--{{ forloop.counter }} glass glass--sheen"
                                href="/categorias/#resultados">
                                 <span class="inicio-topic-link__label">Tema destacado</span>
-                                <strong>{{ trend.descripcion|truncatechars:30 }}</strong>
+                                <strong>{{ trend.id_temas.descripcion|truncatechars:30 }}</strong>
                                 <span class="inicio-topic-link__count">Publicaciones · {{ trend.publication_count }}</span>
                             </a>
                             {% empty %}

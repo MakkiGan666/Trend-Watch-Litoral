@@ -22,6 +22,11 @@ from core.services import scraper as scraper_service
 from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
+
+from django.db.models import Count
+from core.models import TemaTrend
+
+
 _fetch_elterritorio_news_by_category = getattr(
     scraper_service,
     'fetch_elterritorio_news_by_category',
@@ -53,8 +58,25 @@ else:
 # VISTAS WEB Y PLANTILLAS HTML
 # ==========================================
 
+from django.db.models import Count
+from core.models import TemaTrend
+
 def landing(request):
-    return render(request, 'inicio.html')
+    """
+    Carga la portada (inicio.html) enviando las tendencias/temas destacados
+    y calculando el total de publicaciones por cada tema.
+    """
+    featured_trends = TemaTrend.objects.select_related(
+        'id_temas', 
+        'id_trends', 
+        'id_temas__id_categoria'
+    ).annotate(
+        publication_count=Count('id_temas__publicaciones')
+    ).all()[:6]
+
+    return render(request, 'inicio.html', {
+        'featured_trends': featured_trends,
+    })
 
 
 def categorias(request):
@@ -89,20 +111,21 @@ def login_view(request):
 
 
 def logout_view(request):
+    """ Cierra la sesión del usuario y redirige al inicio """
     request.session.flush()
     return redirect('landing')
 
 
 def dashboard(request):
-    # Traemos las publicaciones y usamos prefetch_related para traer también sus sentimientos 
-    # (esto optimiza la base de datos en lugar de hacer una consulta por cada fila)
+    """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
                                        .prefetch_related('sentimiento_set', 'locacion_set')\
-                                       .order_by('-fecha', '-id_publicacion_api')[:100]
+                                       .order_by('-fecha_captura', '-id_publicacion_api')[:100]
     
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
     })
+
 
 def procesar_ia(request):
     """ Endpoint web para disparar manualmente la IA """
