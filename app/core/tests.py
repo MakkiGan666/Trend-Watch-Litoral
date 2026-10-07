@@ -38,7 +38,7 @@ class IngestaRSSTestCase(TestCase):
         self.factory = APIRequestFactory()
         call_command('configurar_roles', stdout=StringIO())
         self.user = get_user_model().objects.create_user(username='prueba_ingesta')
-        self.user.groups.add(Group.objects.get(name='Analista'))
+        self.user.groups.add(Group.objects.get(name='Administrador'))
         self.registro = RegistroDatos.objects.create(
             fuentes_api='Prueba RSS', fecha_ejecucion=timezone.now(),
             estado='EXITO', lenguaje='es',
@@ -132,7 +132,7 @@ class RolesPermisosTestCase(TestCase):
         call_command('configurar_roles', stdout=StringIO())
         self.api = APIClient()
         self.usuarios = {}
-        for rol in ('Lector', 'Analista', 'Administrador'):
+        for rol in ('Usuario', 'Administrador'):
             usuario = get_user_model().objects.create_user(
                 username=rol.lower(), is_staff=rol == 'Administrador',
             )
@@ -197,7 +197,7 @@ class RolesPermisosTestCase(TestCase):
             lambda: self.api.post('/api/sentiment/batch-analyze/', {'comments': []}, format='json'),
             lambda: self.api.post(f'/api/publicaciones/{pk}/procesar-sentimiento/'),
         )
-        for rol in (None, 'Lector', 'Sin rol'):
+        for rol in (None, 'Usuario', 'Sin rol'):
             self.autenticar(rol)
             for indice, operacion in enumerate(operaciones):
                 with self.subTest(rol=rol, operacion=indice):
@@ -208,8 +208,8 @@ class RolesPermisosTestCase(TestCase):
                     for mock in self.mocks.values():
                         mock.assert_not_called()
 
-    def test_analista_y_administrador_crean_editan_y_procesan(self):
-        for rol in ('Analista', 'Administrador'):
+    def test_administrador_crea_edita_y_procesa(self):
+        for rol in ('Administrador',):
             with self.subTest(rol=rol):
                 self.autenticar(rol)
                 response = self.client.post('/publicaciones/crear/', {
@@ -230,13 +230,8 @@ class RolesPermisosTestCase(TestCase):
                 self.assertEqual(self.client.post('/procesar-ia/').status_code, 200)
                 self.assertEqual(self.api.post('/api/sentiment/batch-analyze/', {'comments': []}, format='json').status_code, 200)
                 self.assertEqual(self.api.post(f'/api/publicaciones/{pk}/procesar-sentimiento/').status_code, 200)
-                esperado = 403 if rol == 'Analista' else 200
-                antes = self.estado_datos()
-                self.assertEqual(self.api.delete(f'/api/publicaciones/{pk}/eliminar/').status_code, esperado)
-                if rol == 'Analista':
-                    self.assertEqual(self.estado_datos(), antes)
-                else:
-                    self.assertFalse(Publicacion.objects.filter(pk=pk).exists())
+                self.assertEqual(self.api.delete(f'/api/publicaciones/{pk}/eliminar/').status_code, 200)
+                self.assertFalse(Publicacion.objects.filter(pk=pk).exists())
         self.mocks['fetch_and_store_elterritorio'].assert_called()
         self.mocks['procesar_publicaciones_con_ia'].assert_called()
 
@@ -254,15 +249,16 @@ class RolesPermisosTestCase(TestCase):
         for mock in self.mocks.values():
             mock.assert_not_called()
 
-    def test_grupos_exactos_idempotentes_y_reutiliza_analista(self):
+    def test_grupos_exactos_idempotentes_y_reutilizados(self):
         from core.roles import PERMISOS_ROLES
-        analista = Group.objects.get(name='Analista')
-        pk = analista.pk
-        analista.permissions.add(Permission.objects.get(content_type__app_label='core', codename='delete_publicacion'))
+        pks = dict(Group.objects.filter(name__in=PERMISOS_ROLES).values_list('name', 'pk'))
+        Group.objects.get(name='Usuario').permissions.add(Permission.objects.get(
+            content_type__app_label='core', codename='delete_publicacion',
+        ))
         call_command('configurar_roles', stdout=StringIO())
         call_command('configurar_roles', stdout=StringIO())
-        self.assertEqual(Group.objects.get(name='Analista').pk, pk)
-        self.assertTrue(self.usuarios['Analista'].groups.filter(pk=pk).exists())
+        self.assertEqual(dict(Group.objects.filter(name__in=PERMISOS_ROLES).values_list('name', 'pk')), pks)
+        self.assertEqual(set(PERMISOS_ROLES), {'Usuario', 'Administrador'})
         for nombre, esperados in PERMISOS_ROLES.items():
             grupo = Group.objects.get(name=nombre)
             reales = {f'{p.content_type.app_label}.{p.codename}' for p in grupo.permissions.select_related('content_type')}
@@ -285,7 +281,7 @@ class RolesPermisosTestCase(TestCase):
 
     def test_asignacion_por_comando_actualiza_flags_y_permisos(self):
         usuario = self.usuarios['Sin rol']
-        for rol in ('Administrador', 'Lector', 'Analista'):
+        for rol in ('Administrador', 'Usuario'):
             call_command('configurar_roles', usuario=usuario.username, rol=rol, stdout=StringIO())
             usuario.refresh_from_db()
             self.assertEqual(list(usuario.groups.values_list('name', flat=True)), [rol])
@@ -300,7 +296,7 @@ class RolesPermisosTestCase(TestCase):
         response = self.api.patch(f'/api/publicaciones/{self.publicacion.pk}/actualizar/', {'titulo': 'Permiso directo'}, format='json')
         self.assertEqual(response.status_code, 200)
 
-    def test_perfil_informa_grupos_y_no_inventa_lector(self):
+    def test_perfil_informa_roles_actuales_y_no_inventa_usuario(self):
         for rol in self.usuarios:
             self.autenticar(rol)
             response = self.api.get('/api/auth/me/')
@@ -339,18 +335,11 @@ class RolesPermisosTestCase(TestCase):
         for mock in self.mocks.values():
             mock.assert_not_called()
 
-    def test_permisos_de_lector_y_analista_corresponden_a_la_matriz(self):
-        esperados = {
-            'Lector': {'view_publicacion'},
-            'Analista': {'view_publicacion', 'add_publicacion', 'change_publicacion',
-                         'ejecutar_scraping', 'procesar_ia'},
-        }
-        for rol, permisos in esperados.items():
-            grupo = Group.objects.get(name=rol)
-            self.assertEqual(set(grupo.permissions.values_list('codename', flat=True)), permisos)
-            self.assertTrue(all(app == 'core' for app in grupo.permissions.values_list(
-                'content_type__app_label', flat=True,
-            )))
+    def test_permiso_usuario_es_solo_lectura(self):
+        grupo = Group.objects.get(name='Usuario')
+        self.assertEqual(set(grupo.permissions.values_list(
+            'content_type__app_label', 'codename',
+        )), {('core', 'view_publicacion')})
 
     def test_endpoint_alternativo_ia_protegido(self):
         from django.test import RequestFactory
@@ -359,7 +348,7 @@ class RolesPermisosTestCase(TestCase):
         from core.services.gemini_cliente import disparar_ingesta as alternativa
         factory = RequestFactory()
         with patch('core.services.gemini_cliente.fetch_and_store_elterritorio') as scraper, patch('core.services.gemini_cliente.procesar_publicaciones_con_ia') as ia:
-            for usuario in (AnonymousUser(), self.usuarios['Lector'], self.usuarios['Sin rol']):
+            for usuario in (AnonymousUser(), self.usuarios['Usuario'], self.usuarios['Sin rol']):
                 request = factory.post('/alternativa/')
                 request.user = usuario
                 if usuario.is_authenticated:
@@ -372,3 +361,45 @@ class RolesPermisosTestCase(TestCase):
             self.assertEqual(alternativa(request, 'misiones').status_code, 405)
             scraper.assert_not_called()
             ia.assert_not_called()
+
+    def test_configuracion_preserva_grupos_historicos_y_sus_miembros(self):
+        grupos = [Group.objects.create(name=nombre) for nombre in ('Lector', 'Analista')]
+        permiso = Permission.objects.get(content_type__app_label='core', codename='change_publicacion')
+        for grupo in grupos:
+            grupo.permissions.add(permiso)
+        antiguo = get_user_model().objects.create_user(username='historico', is_staff=True)
+        antiguo.groups.add(*grupos)
+        antiguo.user_permissions.add(permiso)
+        administrador = self.usuarios['Administrador']
+        administrador.groups.add(*grupos)
+        for _ in range(2):
+            call_command('configurar_roles', stdout=StringIO())
+        for grupo in grupos:
+            self.assertTrue(Group.objects.filter(pk=grupo.pk, name=grupo.name).exists())
+            self.assertEqual(list(grupo.permissions.values_list('pk', flat=True)), [permiso.pk])
+            self.assertTrue(antiguo.groups.filter(pk=grupo.pk).exists())
+            self.assertTrue(administrador.groups.filter(pk=grupo.pk).exists())
+        antiguo.refresh_from_db()
+        self.assertTrue(antiguo.is_staff)
+        self.assertEqual(list(antiguo.user_permissions.values_list('pk', flat=True)), [permiso.pk])
+        self.assertTrue(antiguo.has_perm('core.change_publicacion'))
+        from rest_framework_simplejwt.tokens import RefreshToken
+        self.api.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(antiguo).access_token}')
+        self.assertEqual(self.api.get('/api/auth/me/').data['roles'], [])
+        self.api.credentials(HTTP_AUTHORIZATION=f'Bearer {RefreshToken.for_user(administrador).access_token}')
+        self.assertEqual(self.api.get('/api/auth/me/').data['roles'], ['ADMINISTRADOR'])
+        # La reasignación sólo afecta a la cuenta indicada; conserva los grupos históricos.
+        call_command('configurar_roles', usuario=antiguo.username, rol='Usuario', stdout=StringIO())
+        antiguo.refresh_from_db()
+        self.assertFalse(antiguo.is_staff)
+        self.assertFalse(antiguo.user_permissions.exists())
+        self.assertEqual(list(antiguo.groups.values_list('name', flat=True)), ['Usuario'])
+        for grupo in grupos:
+            self.assertTrue(grupo.permissions.filter(pk=permiso.pk).exists())
+            self.assertTrue(administrador.groups.filter(pk=grupo.pk).exists())
+
+    def test_roles_historicos_no_se_pueden_asignar(self):
+        from django.core.management.base import CommandError
+        for rol in ('Lector', 'Analista'):
+            with self.assertRaises(CommandError):
+                call_command('configurar_roles', usuario='sin_rol', rol=rol, stdout=StringIO())

@@ -1,13 +1,9 @@
-PERMISOS_LECTOR = frozenset({'core.view_publicacion'})
-PERMISOS_ANALISTA = PERMISOS_LECTOR | {
-    'core.add_publicacion', 'core.change_publicacion',
-    'core.ejecutar_scraping', 'core.procesar_ia',
-}
+PERMISOS_USUARIO = frozenset({'core.view_publicacion'})
 MODELOS_ADMIN = (
     'publicacion', 'sentimiento', 'locacion', 'registrodatos',
     'tematrend', 'publicaciontema', 'userauditoria', 'votopublicacion',
 )
-PERMISOS_ADMINISTRADOR = PERMISOS_ANALISTA | {
+PERMISOS_ADMINISTRADOR = PERMISOS_USUARIO | {'core.ejecutar_scraping', 'core.procesar_ia'} | {
     f'core.{accion}_{modelo}'
     for modelo in MODELOS_ADMIN
     for accion in ('view', 'add', 'change', 'delete')
@@ -17,7 +13,6 @@ PERMISOS_ADMINISTRADOR = PERMISOS_ANALISTA | {
     for accion in ('view', 'add', 'change', 'delete')
 }
 PERMISOS_ROLES = {
-    'Lector': PERMISOS_LECTOR,
-    'Analista': PERMISOS_ANALISTA,
+    'Usuario': PERMISOS_USUARIO,
     'Administrador': PERMISOS_ADMINISTRADOR,
 }

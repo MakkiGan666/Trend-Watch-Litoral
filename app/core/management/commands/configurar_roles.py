@@ -7,7 +7,7 @@ from core.roles import PERMISOS_ROLES
 
 
 class Command(BaseCommand):
-    help = 'Configura los permisos exactos de Lector, Analista y Administrador.'
+    help = 'Configura los permisos exactos de Usuario y Administrador.'
 
     def add_arguments(self, parser):
         parser.add_argument('--usuario', help='Username existente al que asignar un rol.')
@@ -17,6 +17,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if bool(options['usuario']) != bool(options['rol']):
             raise CommandError('--usuario y --rol deben indicarse juntos.')
+        if options['rol'] and options['rol'] not in PERMISOS_ROLES:
+            raise CommandError('Sólo se admiten Usuario y Administrador.')
         permisos = {
             f'{p.content_type.app_label}.{p.codename}': p
             for p in Permission.objects.select_related('content_type')
