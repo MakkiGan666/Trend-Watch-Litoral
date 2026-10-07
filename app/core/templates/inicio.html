@@ -10,6 +10,7 @@
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
         <link rel="icon" type="image/png" href="/static/img/favicon.png">
         <link rel="stylesheet" href="/static/css/trendwatch.css?v=13">
+        <link rel="stylesheet" href="/static/css/landing-news.css?v=2">
     </head>
     <body class="landing-page">
         <a class="skip" href="#main">Saltar al contenido</a>
@@ -51,36 +52,38 @@
         </div>
         <main id="main">
             <div class="inicio-page">
-                <header class="inicio-hero reveal" aria-labelledby="inicio-title">
-                    <div class="wrap inicio-hero__grid">
-                        <div class="inicio-hero__content">
-                            <p class="eyebrow"><span class="pulse" aria-hidden="true"></span>TrendWatch Litoral · Misiones</p>
-                            <h1 id="inicio-title">¿Qué temas están tomando fuerza en Misiones?</h1>
-                            <p class="inicio-hero__lede">
-                                Reunimos información pública de distintas fuentes para explorar qué se conversa en la región, por tema, localidad y período.
-                            </p>
-                            <div class="inicio-hero__actions">
-                                <a class="btn btn--primary" href="/categorias/#resultados">Explorar tendencias</a>
-                            </div>
+                <h1 class="sr-only" id="inicio-title">Noticias por categoría y tendencias de Misiones</h1>
+                <div class="wrap news-layout">
+                    <div class="news-feed" data-news-feed="{% url 'listar_publicaciones' %}" aria-busy="false">
+                        {% include "partials/_news_category.html" with category_key="deportes" category_label="Deportes" %}
+                        {% include "partials/_news_category.html" with category_key="actualidad" category_label="Actualidad" %}
+                        {% include "partials/_news_category.html" with category_key="misiones" category_label="Misiones" %}
+                        {% include "partials/_news_category.html" with category_key="cultura" category_label="Cultura" %}
+                        {% include "partials/_news_category.html" with category_key="tecnologia" category_label="Tecnología" %}
+                        {% include "partials/_news_category.html" with category_key="policiales" category_label="Policiales" %}
+                        {% include "partials/_news_category.html" with category_key="sin-categoria" category_label="Otras noticias" %}
+                        <div class="news-feed__status">
+                            <p data-news-status role="status" aria-live="polite">Noticias de El Territorio</p>
+                            <button class="btn btn--ghost news-feed__retry" type="button" data-news-retry hidden>Reintentar</button>
                         </div>
-                        <div class="inicio-hero__visual" aria-label="Temas destacados de Misiones">
-                            {% for trend in featured_trends %}
-                            <a class="inicio-topic-link inicio-topic-link--{{ forloop.counter }} glass glass--sheen"
-                               href="/categorias/#resultados">
-                                <span class="inicio-topic-link__label">Tema destacado</span>
-                                <strong>{{ trend.descripcion|truncatechars:30 }}</strong>
-                                <span class="inicio-topic-link__count">Publicaciones · {{ trend.publication_count }}</span>
-                            </a>
-                            {% empty %}
-                            <div class="inicio-trends-empty glass glass--sheen">
-                                <span class="inicio-topic-link__label">Exploración regional</span>
-                                <strong>Aquí aparecerán los temas destacados</strong>
-                                <span>Se mostrarán cuando haya tendencias asociadas a publicaciones reales.</span>
-                            </div>
-                            {% endfor %}
-                        </div>
+                        <noscript><p class="news-feed__status">Activá JavaScript para consultar las noticias.</p></noscript>
                     </div>
-                </header>
+                    <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">
+                        <p class="news-trends__eyebrow">Conversación regional</p>
+                        <h2 id="news-trends-title">Trends</h2>
+                        <p class="news-trends__description">Explorá los temas de Tendencias detectadas.</p>
+                        <ul class="news-trends__list">
+                            <li><a href="/categorias/#trend-turismomisiones"><span>#TurismoMisiones</span><span aria-hidden="true">↗</span></a></li>
+                            <li><a href="/categorias/#trend-obrasposadas"><span>#ObrasPosadas</span><span aria-hidden="true">↗</span></a></li>
+                            <li><a href="/categorias/#trend-precioyerba"><span>#PrecioYerba</span><span aria-hidden="true">↗</span></a></li>
+                            <li><a href="/categorias/#trend-servicioseldorado"><span>#ServiciosEldorado</span><span aria-hidden="true">↗</span></a></li>
+                            <li><a href="/categorias/#trend-denguemisiones"><span>#DengueMisiones</span><span aria-hidden="true">↗</span></a></li>
+                            <li><a href="/categorias/#trend-fiestadelinmigrante"><span>#FiestaDelInmigrante</span><span aria-hidden="true">↗</span></a></li>
+                        </ul>
+                        <p class="news-trends__note">Tendencias de demostración.</p>
+                        <a class="news-trends__more" href="/categorias/#resultados">Ver todas las tendencias →</a>
+                    </aside>
+                </div>
             </div>
         </main>
         <div class="login-modal" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-modal-title" aria-describedby="login-modal-description" {% if not open_login_modal %}hidden{% endif %}>
@@ -162,5 +165,6 @@
             </div>
         </footer>
         <script src="/static/js/trendwatch.js?v=3" defer></script>
+        <script src="/static/js/landing-news.js?v=1" defer></script>
     </body>
 </html>
