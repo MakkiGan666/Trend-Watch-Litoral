@@ -5,6 +5,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone 
 import hashlib
+import re
+from html import unescape
+from urllib.parse import urlsplit
+from django.utils.html import strip_tags
+from django.views.decorators.http import require_safe
 
 # REST Framework
 from rest_framework.views import APIView
@@ -81,6 +86,40 @@ def landing(request):
 
 def categorias(request):
     return render(request, 'categorias.html')
+
+
+@require_safe
+def noticia(request, pk):
+    """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
+    publicacion = get_object_or_404(Publicacion, pk=pk)
+    categorias_noticia = list(dict.fromkeys(
+        publicacion.temas.values_list('id_categoria__nombre_categoria', flat=True)
+    ))
+    if not categorias_noticia:
+        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
+        if coincidencia:
+            categorias_noticia = [coincidencia.group(1).strip()]
+    localidades_noticia = list(dict.fromkeys(
+        Locacion.objects.filter(id_publicacion_api=publicacion)
+        .exclude(location='').values_list('location', flat=True)
+    ))
+
+    def enlace_seguro(valor):
+        try:
+            url = (valor or '').strip()
+            partes = urlsplit(url)
+            return url if partes.scheme in ('http', 'https') and partes.netloc else None
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    return render(request, 'noticia.html', {
+        'publicacion': publicacion,
+        'categorias_noticia': categorias_noticia,
+        'localidades_noticia': localidades_noticia,
+        'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
+        'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'enlace_original': enlace_seguro(publicacion.url),
+    })
 
 
 def litoral(request):

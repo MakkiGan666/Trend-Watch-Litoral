@@ -14,6 +14,7 @@ urlpatterns = [
     # Vistas Web / Templates
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),
+    path('noticia/<int:pk>/', views.noticia, name='noticia'),
     path('litoral/', views.litoral, name='litoral'),
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),

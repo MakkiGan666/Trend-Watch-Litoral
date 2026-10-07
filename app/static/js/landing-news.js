@@ -56,13 +56,13 @@
     source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
     source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
     const heading = document.createElement('h3');
-    const url = safeUrl(publication.url);
+    const originalUrl = safeUrl(publication.url);
+    const id = String(publication.id ?? '');
+    const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
     const title = publication.titulo || 'Noticia sin título';
-    if (url && !isDemo) {
+    if (internalUrl) {
       const link = document.createElement('a');
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+      link.href = internalUrl;
       link.textContent = title;
       heading.append(link);
     } else { heading.textContent = title; }
@@ -73,13 +73,15 @@
       note.textContent = 'Contenido de ejemplo. No corresponde a una noticia publicada.';
       body.append(note);
     }
-    if (url) {
+    if (internalUrl || originalUrl) {
       const link = document.createElement('a');
       link.className = 'news-card__link';
-      link.href = url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = isDemo ? 'Visitar El Territorio ↗' : 'Leer en El Territorio ↗';
+      link.href = internalUrl || originalUrl;
+      if (!internalUrl) {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      }
+      link.textContent = internalUrl ? 'Leer noticia →' : (isDemo ? 'Visitar El Territorio ↗' : 'Consultar fuente original ↗');
       body.append(link);
     }
     article.append(media, body);
