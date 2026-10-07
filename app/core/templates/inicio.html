@@ -11,6 +11,7 @@
         <link rel="icon" type="image/png" href="/static/img/favicon.png">
         <link rel="stylesheet" href="/static/css/trendwatch.css?v=13">
         <link rel="stylesheet" href="/static/css/landing-news.css?v=3">
+        <link rel="stylesheet" href="/static/css/auth-flow.css?v=4">
     </head>
     <body class="landing-page">
         <a class="skip" href="#main">Saltar al contenido</a>
@@ -44,8 +45,7 @@
                     <a href="/litoral/">Litoral</a>
                 </div>
                 <div class="nav__act">
-                    <a class="btn btn--ghost" href="#login-modal" aria-haspopup="dialog">Iniciar sesión</a>
-                    <a class="btn btn--primary" href="/categorias/#resultados">Explorar tendencias</a>
+                    {% include "partials/_account_actions.html" %}
                 </div>
                 <button class="public-nav-toggle icon-btn" id="public-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded="false" aria-controls="public-nav-links">☰</button>
             </nav>
@@ -89,44 +89,7 @@
                 <button class="login-modal__close icon-btn" type="button" aria-label="Cerrar inicio de sesión" data-login-close>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
                 </button>
-                <form class="auth-card" method="post" action="{% url 'login' %}">
-                    {% csrf_token %}
-                    <div class="login-modal__brand">
-                        {% include "partials/_mark.html" %}
-                        <span>TrendWatch <em>Litoral</em></span>
-                    </div>
-                    <h1 id="login-modal-title">Iniciar sesión</h1>
-                    <p class="sub" id="login-modal-description">Accedé a TrendWatch con tu cuenta.</p>
-
-                    <div class="field">
-                        <label for="id_modal_username">Usuario o correo electrónico</label>
-                        <div class="input">
-                            <input id="id_modal_username" name="username" type="text" autocomplete="username"
-                                   placeholder="nombre@correo.com" value="{{ login_identifier|default:'' }}" required>
-                        </div>
-                    </div>
-
-                    <div class="field">
-                        <label for="id_modal_password">Contraseña</label>
-                        <div class="input">
-                            <input id="id_modal_password" name="password" type="password" autocomplete="current-password"
-                                   placeholder="Tu contraseña" required>
-                        </div>
-                    </div>
-
-                    <div class="auth-row">
-                        <label class="check">
-                            <input type="checkbox" name="remember" checked>
-                            <span class="check__box"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#051F20" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.2 5.2L20 6.5"/></svg></span>
-                            Recordarme
-                        </label>
-                        <a href="#">¿Olvidaste tu contraseña?</a>
-                    </div>
-
-                    <button class="btn btn--primary btn--block" type="submit">Iniciar sesión</button>
-                    {% if login_error %}<p class="form-msg" role="alert">{{ login_error }}</p>{% endif %}
-                    <p class="auth-foot">¿Todavía no tenés cuenta? <a href="#">Registrate</a></p>
-                </form>
+                {% include "partials/_auth_form.html" with heading_id="login-modal-title" description_id="login-modal-description" %}
             </section>
         </div>
         <footer>
@@ -161,7 +124,8 @@
                 </div>
             </div>
         </footer>
-        <script src="/static/js/trendwatch.js?v=3" defer></script>
+        <script src="/static/js/trendwatch.js?v=4" defer></script>
         <script src="/static/js/landing-news.js?v=3" defer></script>
+        <script src="/static/js/auth-flow.js?v=2" defer></script>
     </body>
 </html>

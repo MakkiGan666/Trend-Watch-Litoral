@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}">
   <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=11">
+  <link rel="stylesheet" href="{% static 'css/auth-flow.css' %}?v=4">
   {% block extra_head %}{% endblock %}
 </head>
 
@@ -54,13 +55,7 @@
         <a href="{% url 'litoral' %}" {% if request.resolver_match.url_name == 'litoral' %}aria-current="page"{% endif %}>Litoral</a>
       </div>
       <div class="nav__act">
-        {% if request.session.user_id %}
-          <span class="nav__user">Hola, {{ request.session.user_name }}</span>
-          <a class="btn btn--ghost" href="{% url 'logout' %}">Cerrar sesión</a>
-        {% else %}
-          <a class="btn btn--ghost" href="{% url 'landing' %}#login-modal">Iniciar sesión</a>
-        {% endif %}
-        <a class="btn btn--primary" href="{% url 'categorias' %}#resultados">Explorar tendencias</a>
+        {% include "partials/_account_actions.html" %}
       </div>
       <button class="public-nav-toggle icon-btn" id="public-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded="false" aria-controls="public-nav-links">☰</button>
     </nav>
@@ -109,7 +104,8 @@
   </footer>
   {% endblock %}
 
-  <script src="{% static 'js/trendwatch.js' %}?v=3" defer></script>
+  <script src="{% static 'js/trendwatch.js' %}?v=4" defer></script>
+  <script src="{% static 'js/auth-flow.js' %}?v=2" defer></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

@@ -153,6 +153,7 @@
       modal.classList.remove('is-open');
       document.body.classList.remove('login-modal-open');
       modal.hidden = true;
+      modal.dispatchEvent(new Event('auth:reset'));
       if (window.location.hash === '#login-modal') {
         history.replaceState(null, '', window.location.pathname + window.location.search);
       }
@@ -173,7 +174,8 @@
       }
       if (event.key !== 'Tab') return;
 
-      const focusable = $$('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])', modal);
+      const focusable = $$('button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])', modal)
+        .filter(element => element.getClientRects().length > 0);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
