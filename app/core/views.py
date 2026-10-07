@@ -298,7 +298,17 @@ def crear_o_ingestar_publicacion(request):
 
     # CASO B: Ingesta masiva vía Scraper RSS
     else:
-        publicaciones_creadas = fetch_and_store_elterritorio()
+        resultado_ingesta = fetch_and_store_elterritorio()
+        if resultado_ingesta.get('status') != 'EXITO':
+            return Response({
+                'status': 'error',
+                'mensaje': 'La ingesta RSS falló; puede haber publicaciones guardadas parcialmente.',
+                'mensaje_ingesta': resultado_ingesta,
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        publicaciones_creadas = Publicacion.objects.filter(
+            id_registro_id=resultado_ingesta['registro_id']
+        )
         
         for pub in publicaciones_creadas:
             if not pub.procesado_ia:
@@ -327,6 +337,12 @@ def crear_o_ingestar_publicacion(request):
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
+    if resultado_ingesta.get('status') != 'EXITO':
+        return Response({
+            'status': 'error',
+            'mensaje': 'La ingesta RSS falló; puede haber publicaciones guardadas parcialmente.',
+            'mensaje_ingesta': resultado_ingesta,
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     resultado_ia = procesar_publicaciones_con_ia(batch_size=10)
     
     return Response({
