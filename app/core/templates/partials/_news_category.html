@@ -1,0 +1,15 @@
+<section class="news-category" data-news-category="{{ category_key }}" aria-labelledby="news-heading-{{ category_key }}">
+  <div class="news-category__head">
+    <h2 id="news-heading-{{ category_key }}">{{ category_label }}</h2>
+    <div class="news-category__controls" hidden>
+      <button class="icon-btn" type="button" data-news-prev aria-label="Noticias anteriores de {{ category_label }}" aria-controls="news-track-{{ category_key }}">‹</button>
+      <button class="icon-btn" type="button" data-news-next aria-label="Noticias siguientes de {{ category_label }}" aria-controls="news-track-{{ category_key }}">›</button>
+    </div>
+  </div>
+  <div class="news-category__empty">
+    <div class="news-category__preview" aria-hidden="true"><span></span><span></span><span></span></div>
+    <p>Las noticias de {{ category_label }} aparecerán aquí.</p>
+  </div>
+  <div class="news-track" id="news-track-{{ category_key }}" hidden></div>
+  <div class="news-category__pages" role="group" aria-label="Páginas de noticias de {{ category_label }}" hidden></div>
+</section>

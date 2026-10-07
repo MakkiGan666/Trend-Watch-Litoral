@@ -1,0 +1,42 @@
+/* Ajuste Login: composición de acceso con la paleta original. */
+.account-actions{display:flex;align-items:center;gap:9px}
+.account-enter{gap:8px;white-space:nowrap}
+.account-bell{display:grid;place-items:center;width:48px;height:48px;padding:0;flex-shrink:0}
+.account-notifications{position:relative}
+.account-notifications__panel{position:absolute;top:calc(100% + 16px);right:0;width:260px;padding:20px;z-index:3}
+.account-notifications__panel p{color:var(--tx-2);font-size:13px;margin-top:8px}
+.account-notifications__panel[hidden]{display:none}
+.login-modal .login-modal__panel{width:min(100%,520px);padding:34px 36px 30px;transform:none}
+.auth-flow [hidden]{display:none!important}
+.auth-flow__brand{display:flex;flex-direction:column;align-items:center;gap:14px;margin-bottom:26px;text-align:center;font:600 21px "Bricolage Grotesque",sans-serif}
+.auth-flow__brand .brand__mark{width:131px;height:131px}
+.auth-flow__brand em{color:var(--aqua);font-style:normal}
+.auth-flow .auth-flow__title{font-size:25px;line-height:1.25;padding-right:10px;display:flex;align-items:baseline;gap:10px}
+.auth-flow__title::before{content:"";width:9px;height:9px;flex:0 0 9px;background:var(--aqua);border-radius:2px}
+.auth-flow__description{font-size:13px;color:var(--tx-2);margin:10px 0 24px}
+.auth-flow .field>label{color:var(--mist);font-weight:500;margin-bottom:9px}
+.auth-flow .input{min-height:48px}
+.auth-flow .input input{min-width:0;width:100%}
+.auth-flow__email{border-color:var(--aqua-line)}
+.auth-flow .input:focus-within{border-color:var(--aqua);box-shadow:0 0 0 3px var(--aqua-soft)}
+.auth-flow__email>svg{flex-shrink:0;color:var(--sage)}
+.auth-flow__divider{display:flex;align-items:center;gap:14px;color:var(--tx-2);font-size:13px;margin:22px 0 16px}
+.auth-flow__divider::before,.auth-flow__divider::after{content:"";height:1px;flex:1;background:var(--edge)}
+.auth-flow__social{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.auth-flow__social button{display:flex;align-items:center;justify-content:center;gap:10px;min-height:48px;padding:10px;border:1px solid var(--edge);border-radius:var(--r-sm);background:var(--glass-hi);color:var(--tx);font-weight:600;cursor:not-allowed}
+.auth-flow__availability{font-size:11px;line-height:1.5;color:var(--tx-2);margin-top:10px}
+.auth-flow__next{margin-top:26px;min-height:48px}
+.auth-flow__show,.auth-foot button,.auth-flow__back{border:0;background:none;color:var(--aqua);font-size:13px;cursor:pointer}
+.auth-flow__show{padding:8px;flex-shrink:0}
+.auth-foot button{font-size:inherit;font-weight:600}
+.auth-flow__back{display:block;margin:16px auto 0;text-align:center}
+.auth-flow__registration p{font-size:14px;color:var(--tx-2);margin-bottom:14px}
+.auth-flow__registration .btn{margin-top:22px}
+.auth-main>.auth-flow{background:var(--glass-deep);border:1px solid var(--edge);box-shadow:var(--shadow)}
+@media(max-width:1100px){.nav-holder .nav{gap:14px}.account-actions{gap:8px}}
+@media(max-width:660px){.nav-holder .nav__act{display:flex;margin-left:auto}.nav-holder .nav{gap:8px}.account-actions{gap:6px}.account-actions .nav__user{display:none}.account-enter{padding:10px 14px;font-size:13px;gap:6px}.account-bell{width:40px;height:40px}.nav-holder .nav .brand{font-size:14px;gap:7px}.nav-holder .nav .brand__mark{width:36px;height:36px}.nav-holder .nav .brand em{display:none}.account-notifications__panel{position:fixed;top:82px;right:12px;width:min(280px,calc(100vw - 24px))}}
+@media(max-width:420px){.account-enter>span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.account-enter{min-width:40px;min-height:40px;padding:0 10px;justify-content:center}.login-modal{padding:14px}.login-modal .login-modal__panel{padding:30px 22px 24px}.auth-flow .auth-flow__title{font-size:22px}.auth-flow__brand{margin-bottom:22px}}
+@media(max-height:650px){.login-modal .login-modal__panel{padding-top:28px;padding-bottom:22px}.auth-flow__brand{margin-bottom:18px}}
+
+.auth-flow__registration{border:0;padding:0;margin:0;min-width:0}
+.auth-flow__registration .input input{background:transparent;color:var(--tx);border:0;outline:0;font:inherit}
