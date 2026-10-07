@@ -4,13 +4,28 @@ from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password
 from django.utils import timezone 
+import hashlib
 
-# Importación de Modelos
+# REST Framework
+from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+
+# Modelos y Serializadores
 from core.models import Publicacion, RegistroDatos, Sentimiento, Locacion, User
+from .serializers import UserMeSerializer
 
-# Importación de Servicios
+# Servicios (Scrapers, Sentiment & Gemini)
 from core.services import scraper as scraper_service
+from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
+from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
+
+from django.db.models import Count
+from core.models import TemaTrend
+
 
 _fetch_elterritorio_news_by_category = getattr(
     scraper_service,
@@ -43,8 +58,25 @@ else:
 # VISTAS WEB Y PLANTILLAS HTML
 # ==========================================
 
+from django.db.models import Count
+from core.models import TemaTrend
+
 def landing(request):
-    return render(request, 'inicio.html')
+    """
+    Carga la portada (inicio.html) enviando las tendencias/temas destacados
+    y calculando el total de publicaciones por cada tema.
+    """
+    featured_trends = TemaTrend.objects.select_related(
+        'id_temas', 
+        'id_trends', 
+        'id_temas__id_categoria'
+    ).annotate(
+        publication_count=Count('id_temas__publicaciones')
+    ).all()[:6]
+
+    return render(request, 'inicio.html', {
+        'featured_trends': featured_trends,
+    })
 
 
 def categorias(request):
@@ -79,20 +111,21 @@ def login_view(request):
 
 
 def logout_view(request):
+    """ Cierra la sesión del usuario y redirige al inicio """
     request.session.flush()
     return redirect('landing')
 
 
 def dashboard(request):
-    # Traemos las publicaciones y usamos prefetch_related para traer también sus sentimientos 
-    # (esto optimiza la base de datos en lugar de hacer una consulta por cada fila)
+    """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
                                        .prefetch_related('sentimiento_set', 'locacion_set')\
-                                       .order_by('-fecha', '-id_publicacion_api')[:100]
+                                       .order_by('-fecha_captura', '-id_publicacion_api')[:100]
     
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
     })
+
 
 def procesar_ia(request):
     """ Endpoint web para disparar manualmente la IA """
@@ -107,67 +140,104 @@ def procesar_ia(request):
 # ==========================================
 
 # 1. CREATE / INGESTA
-@csrf_exempt
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def crear_o_ingestar_publicacion(request):
-    """ Crea publicaciones en lote extrayendo del RSS """
-    if request.method == 'POST':
-        try:
-            body = json.loads(request.body)
-            categoria = body.get('categoria', 'misiones')
-            
-            # Dispara el servicio de scraping
-            noticias = fetch_elterritorio_news_by_category(category=categoria, limit=5)
-            
-            # Registro de Auditoría (RegistroDatos)
-            registro = RegistroDatos.objects.create(
-                fuentes_api=f"El Territorio ({categoria})",
-                fecha_ejecucion=timezone.now(),
-                estado="EXITO",
-                lenguaje="es"
-            )
+    """
+    Crea una publicación (manual o RSS) y le calcula automáticamente el sentimiento.
+    """
+    data = request.data
+    
+    # CASO A: Creación manual vía JSON
+    if data and "titulo" in data and "contenido" in data:
+        # 1. Guardar la publicación en PostgreSQL
+        url_val = data.get("url", "")
+        
+        # Si la URL viene vacía, usamos el título para garantizar que no choque
+        base_hash = url_val if url_val else data.get("titulo", "")
+        hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
+    
+        publicacion = Publicacion.objects.create(
+            hash_origen=hash_gen,
+            titulo=data.get("titulo"),
+            contenido=data.get("contenido"),
+            fuente=data.get("fuente", "Manual"),
+            url=data.get("url", ""),
+            fecha_captura=data.get("fecha_publicacion", timezone.now())
+        )
+        
+        # 2. CALCULAR SENTIMIENTO AUTOMÁTICAMENTE
+        texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+        polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+        
+        analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
+        confianza = float(analisis_lote.get("confidence_score", 0.0))
 
-            creadas = 0
-            for item in noticias:
-                # Deduplicación mediante Hash de Origen
-                pub, created = Publicacion.objects.get_or_create(
-                    hash_origen=item['id_noticia'],
-                    defaults={
-                        'fuente': item['source'],
-                        'titulo': item['title'],
-                        'contenido': item['summary'],
-                        'url': item['link'],
-                        'procesado_ia': False,
-                        'id_registro': registro
-                    }
+        # 3. Guardar en la tabla Sentimiento
+        obj_sentimiento, _ = Sentimiento.objects.update_or_create(
+            id_publicacion_api=publicacion,
+            defaults={
+                'polaridad': polaridad,
+                'confianza': confianza,
+            }
+        )
+
+        # 4. Marcar como procesada por la IA
+        publicacion.procesado_ia = True
+        publicacion.save()
+
+        # 5. Retornar la respuesta con el sentimiento incluido
+        return Response({
+            "status": "ok",
+            "id_publicacion_api": publicacion.id_publicacion_api,
+            "titulo": publicacion.titulo,
+            "procesado_ia": publicacion.procesado_ia,
+            "sentimiento": {
+                "id_sentimiento": obj_sentimiento.id_sentimiento,
+                "polaridad": obj_sentimiento.polaridad,
+                "confianza": obj_sentimiento.confianza
+            },
+            "mensaje": "Publicación creada e ingerida con análisis de sentimiento automático."
+        }, status=status.HTTP_201_CREATED)
+
+    # CASO B: Ingesta masiva vía Scraper RSS
+    else:
+        publicaciones_creadas = fetch_and_store_elterritorio()
+        
+        for pub in publicaciones_creadas:
+            if not pub.procesado_ia:
+                texto = f"{pub.titulo} {pub.contenido}"
+                pol = float(analyze_sentiment_lexicon(texto))
+                
+                res_prob = compute_probabilistic_sentiment([{"message": texto}])
+                conf = float(res_prob.get("confidence_score", 0.0))
+
+                Sentimiento.objects.update_or_create(
+                    id_publicacion_api=pub,
+                    defaults={'polaridad': pol, 'confianza': conf}
                 )
-                if created:
-                    creadas += 1
+                pub.procesado_ia = True
+                pub.save()
 
-            return JsonResponse({
-                "status": "success",
-                "mensaje": f"Se procesaron las noticias. {creadas} nuevas creadas.",
-                "id_registro": registro.id_registro
-            }, status=201)
-
-        except Exception as e:
-            return JsonResponse({"status": "error", "detalle": str(e)}, status=400)
-    return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
+        return Response({
+            "status": "ok",
+            "total_ingestadas": len(publicaciones_creadas),
+            "mensaje": f"Se procesaron {len(publicaciones_creadas)} publicaciones RSS con sentimiento automatizado."
+        }, status=status.HTTP_200_OK)
 
 
-@csrf_exempt
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
-    
-    # 2. NUEVO: Ejecutar el Worker de IA para procesar lo recién ingresado
-    # Batch_size alto para procesar todas las nuevas en la categoría (ej. 10)
     resultado_ia = procesar_publicaciones_con_ia(batch_size=10)
     
-    return JsonResponse({
+    return Response({
         "status": "success", 
         "mensaje_ingesta": resultado_ingesta,
         "mensaje_ia": resultado_ia
-    })
+    }, status=status.HTTP_200_OK)
 
 
 # 2. READ (Lectura)
@@ -248,3 +318,79 @@ def eliminar_publicacion(request, pk):
         pub.delete()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} eliminada exitosamente."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
+
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserMeSerializer(request.user)
+        return Response(serializer.data)
+    
+    
+class BatchSentimentAnalysisView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        """
+        Espera un payload JSON con una lista de comentarios:
+        {
+          "comments": [
+            {"message": "El servicio es excelente e impecable"},
+            {"message": "Muy malo y con muchos problemas"}
+          ]
+        }
+        """
+        comments = request.data.get('comments', [])
+        
+        if not isinstance(comments, list):
+            return Response(
+                {"error": "El campo 'comments' debe ser una lista de objetos."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        # Ejecutamos el análisis probabilístico
+        metrics = compute_probabilistic_sentiment(comments)
+        return Response(metrics, status=status.HTTP_200_OK)
+    
+
+class ProcesarSentimientoPublicacionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        """
+        Analiza el texto de una publicación específica de la DB 
+        y registra/actualiza el resultado en la tabla Sentimiento.
+        """
+        publicacion = get_object_or_404(Publicacion, pk=pk)
+        
+        # 1. Unimos el título y contenido para el análisis
+        texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+        
+        # 2. Calculamos la polaridad léxica individual (convertida a float nativo)
+        polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+        
+        # 3. Calculamos la métrica probabilística (convertida a float nativo)
+        analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
+        confianza = float(analisis_lote.get("confidence_score", 0.0))
+
+        # 4. Guardamos o actualizamos en la tabla Sentimiento de PostgreSQL
+        obj_sentimiento, created = Sentimiento.objects.update_or_create(
+            id_publicacion_api=publicacion,
+            defaults={
+                'polaridad': polaridad,
+                'confianza': confianza,
+            }
+        )
+
+        # 5. Marcamos la publicación como procesada por la IA
+        publicacion.procesado_ia = True
+        publicacion.save()
+
+        return Response({
+            "id_publicacion": publicacion.id_publicacion_api,
+            "titulo": publicacion.titulo,
+            "procesado_ia": publicacion.procesado_ia,
+            "sentimiento": {
+                "id_sentimiento": obj_sentimiento.id_sentimiento,
+                "polaridad": obj_sentimiento.polaridad,
+                "confianza": obj_sentimiento.confianza
+            }
+        }, status=status.HTTP_200_OK)
