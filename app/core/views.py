@@ -1,10 +1,12 @@
 import json
-from django.shortcuts import redirect, render, get_object_or_404
+import hashlib
+from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
+from django.db.models import Count, F
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import check_password
-from django.utils import timezone 
-import hashlib
 import re
 from html import unescape
 from urllib.parse import urlsplit
@@ -13,6 +15,7 @@ from django.views.decorators.http import require_safe
 from django.http import Http404
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .services.cotizaciones import obtener_cotizaciones
+from django.contrib.auth.decorators import login_required
 
 # REST Framework
 from rest_framework.views import APIView
@@ -21,8 +24,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-# Modelos y Serializadores
-from core.models import Publicacion, RegistroDatos, Sentimiento, Locacion, User
+# Modelos y Formularios
+from core.models import (
+    Publicacion, RegistroDatos, Sentimiento, Locacion, 
+    User, TemaTrend, Tema, PublicacionTema
+)
+from .forms import PublicacionForm
 from .serializers import UserMeSerializer
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -30,9 +37,6 @@ from core.services import scraper as scraper_service
 from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
-
-from django.db.models import Count
-from core.models import TemaTrend
 
 
 _fetch_elterritorio_news_by_category = getattr(
@@ -173,34 +177,41 @@ def publicaciones_localidad(request, slug):
 
 
 def login_view(request):
-    if request.session.get('user_id'):
-        return render(request, 'login.html', {'already_logged_in': True})
+    # Si ya está logueado, redirige directamente al inicio
+    if request.user.is_authenticated:
+        return redirect('landing')
 
-    error = None
     if request.method == 'POST':
         identifier = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
-        user = User.objects.filter(email__iexact=identifier).first()
-        if user is None:
-            user = User.objects.filter(nombre__iexact=identifier).first()
-
-        if user is not None and check_password(password, user.password_hash):
-            request.session.cycle_key()
-            request.session['user_id'] = user.id_user
-            request.session['user_name'] = user.nombre
-            request.session['user_email'] = user.email
+        
+        user = authenticate(request, username=identifier, password=password)
+        
+        if user is not None:
+            login(request, user)
             return redirect('landing')
+        else:
+            # Si falla el login, recarga inicio.html pasando las tendencias y abriendo el modal con error
+            featured_trends = TemaTrend.objects.select_related(
+                'id_temas', 'id_trends', 'id_temas__id_categoria'
+            ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
 
-        error = 'Usuario o contraseña incorrectos.'
-    return render(request, 'login.html', {'error': error})
+            return render(request, 'inicio.html', {
+                'featured_trends': featured_trends,
+                'open_login_modal': True,
+                'login_error': 'Usuario o contraseña incorrectos.',
+            })
 
-
-def logout_view(request):
-    """ Cierra la sesión del usuario y redirige al inicio """
-    request.session.flush()
+    # Si entran por GET a /login/, redirigimos a la portada
     return redirect('landing')
 
 
+def logout_view(request):
+    logout(request) # Limpia la sesión
+    return redirect('landing')
+
+
+@login_required(login_url='login')
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
@@ -479,3 +490,41 @@ class ProcesarSentimientoPublicacionView(APIView):
                 "confianza": obj_sentimiento.confianza
             }
         }, status=status.HTTP_200_OK)
+
+def crear_publicacion_view(request):
+    if request.method == 'POST':
+        form = PublicacionForm(request.POST)
+        if form.is_valid():
+            publicacion = form.save(commit=False)
+            
+            # Generar hash_origen si está vacío
+            if not publicacion.hash_origen:
+                semilla = f"{publicacion.titulo}{timezone.now().timestamp()}"
+                publicacion.hash_origen = hashlib.sha256(semilla.encode('utf-8')).hexdigest()
+            
+            publicacion.save()
+
+            # Vincular la categoría seleccionada a través de Tema
+            categoria_seleccionada = form.cleaned_data.get('categoria')
+            if categoria_seleccionada:
+                # Buscar si ya existe algún Tema para esta categoría
+                tema = Tema.objects.filter(id_categoria=categoria_seleccionada).first()
+                
+                # Si no existe ninguno, creamos uno nuevo
+                if not tema:
+                    tema = Tema.objects.create(
+                        id_categoria=categoria_seleccionada,
+                        descripcion=f'Tema automático para {categoria_seleccionada.nombre_categoria}'
+                    )
+
+                # Crear el vínculo en la tabla intermedia
+                PublicacionTema.objects.create(
+                    id_publicacion_api=publicacion,
+                    id_temas=tema
+                )
+
+            return redirect('landing')
+    else:
+        form = PublicacionForm()
+
+    return render(request, 'core/crear_publicacion.html', {'form': form})
