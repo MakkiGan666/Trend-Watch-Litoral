@@ -8,6 +8,7 @@ from .views import (
     UserMeView,
     BatchSentimentAnalysisView,
     ProcesarSentimientoPublicacionView,
+    crear_publicacion_view
 )
 
 urlpatterns = [
@@ -41,4 +42,7 @@ urlpatterns = [
     # Análisis de Sentimiento e IA
     path('api/sentiment/batch-analyze/', BatchSentimentAnalysisView.as_view(), name='sentiment_batch_analyze'),
     path('api/publicaciones/<int:pk>/procesar-sentimiento/', ProcesarSentimientoPublicacionView.as_view(), name='procesar_sentimiento_publicacion'),
+    
+    
+    path('publicaciones/crear/', crear_publicacion_view, name='crear_publicacion'),
 ]
