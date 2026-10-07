@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/publicaciones/crear/', views.crear_o_ingestar_publicacion, name='crear_publicacion'),
     path('api/publicaciones/ingestar/<str:categoria>/', views.disparar_ingesta, name='disparar_ingesta'),
     path('api/publicaciones/', views.listar_publicaciones, name='listar_publicaciones'),
+    path('api/cotizaciones/', views.cotizaciones, name='cotizaciones'),
     path('api/publicaciones/<int:pk>/', views.obtener_detalle_publicacion, name='detalle_publicacion'),
     path('api/publicaciones/<int:pk>/actualizar/', views.actualizar_publicacion, name='actualizar_publicacion'),
     path('api/publicaciones/<int:pk>/eliminar/', views.eliminar_publicacion, name='eliminar_publicacion'),

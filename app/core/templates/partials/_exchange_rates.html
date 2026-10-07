@@ -1,0 +1,22 @@
+<section class="exchange-rates glass glass--sheen" aria-labelledby="exchange-rates-title" data-exchange-rates="/api/cotizaciones/">
+  <p class="news-trends__eyebrow">Referencia regional</p>
+  <h2 id="exchange-rates-title">Cotizaciones</h2>
+  <p class="exchange-rates__description">Pesos argentinos por 1 USD o 1 BRL.</p>
+  <div class="exchange-rates__labels" aria-hidden="true"><span></span><span>Compra</span><span>Venta</span></div>
+  <div class="exchange-rate" data-currency="oficial">
+    <div class="exchange-rate__values"><h3>Dólar oficial</h3><span data-buy aria-label="Compra">—</span><span data-sell aria-label="Venta">—</span></div>
+    <p data-rate-date>Esperando cotización.</p>
+  </div>
+  <div class="exchange-rate" data-currency="blue">
+    <div class="exchange-rate__values"><h3>Dólar blue</h3><span data-buy aria-label="Compra">—</span><span data-sell aria-label="Venta">—</span></div>
+    <p data-rate-date>Esperando cotización.</p>
+  </div>
+  <div class="exchange-rate" data-currency="real">
+    <div class="exchange-rate__values"><h3>Real brasileño</h3><span data-buy aria-label="Compra">—</span><span data-sell aria-label="Venta">—</span></div>
+    <p data-rate-date>Esperando cotización.</p>
+  </div>
+  <p class="exchange-rates__status" data-exchange-status role="status" aria-live="polite">Cargando cotizaciones…</p>
+  <button class="btn btn--ghost exchange-rates__retry" type="button" data-exchange-retry hidden>Reintentar</button>
+  <p class="exchange-rates__source">Fuente: <a href="https://dolarapi.com/docs/argentina/" target="_blank" rel="noopener noreferrer">DolarAPI ↗</a></p>
+  <noscript><p class="exchange-rates__description">Activá JavaScript para consultar las cotizaciones.</p></noscript>
+</section>

@@ -12,6 +12,7 @@ from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe
 from django.http import Http404
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
+from .services.cotizaciones import obtener_cotizaciones
 
 # REST Framework
 from rest_framework.views import APIView
@@ -88,6 +89,11 @@ def landing(request):
 
 def categorias(request):
     return render(request, 'categorias.html')
+
+
+@require_safe
+def cotizaciones(request):
+    return JsonResponse(obtener_cotizaciones())
 
 
 @require_safe
