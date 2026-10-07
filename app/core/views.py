@@ -2,7 +2,6 @@ import json
 import hashlib
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.db.models import Count, F
 from django.contrib.auth import authenticate, login, logout
@@ -11,11 +10,11 @@ import re
 from html import unescape
 from urllib.parse import urlsplit
 from django.utils.html import strip_tags
-from django.views.decorators.http import require_safe
+from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .services.cotizaciones import obtener_cotizaciones
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, permission_required
 
 # REST Framework
 from rest_framework.views import APIView
@@ -31,6 +30,7 @@ from core.models import (
 )
 from .forms import PublicacionForm
 from .serializers import UserMeSerializer
+from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from core.services import scraper as scraper_service
@@ -212,6 +212,7 @@ def logout_view(request):
 
 
 @login_required(login_url='login')
+@permission_required('core.view_publicacion', raise_exception=True)
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
@@ -223,6 +224,9 @@ def dashboard(request):
     })
 
 
+@require_POST
+@login_required(login_url='login')
+@permission_required('core.procesar_ia', raise_exception=True)
 def procesar_ia(request):
     """ Endpoint web para disparar manualmente la IA """
     resultado = procesar_publicaciones_con_ia(batch_size=10)
@@ -237,7 +241,7 @@ def procesar_ia(request):
 
 # 1. CREATE / INGESTA
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, CrearPublicacion])
 def crear_o_ingestar_publicacion(request):
     """
     Crea una publicación (manual o RSS) y le calcula automáticamente el sentimiento.
@@ -332,8 +336,8 @@ def crear_o_ingestar_publicacion(request):
         }, status=status.HTTP_200_OK)
 
 
-@api_view(['GET', 'POST'])
-@permission_classes([IsAuthenticated])
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, EjecutarIngesta])
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
@@ -398,20 +402,19 @@ def obtener_detalle_publicacion(request, pk):
 
 
 # 3. UPDATE (Actualización / Moderación)
-@csrf_exempt
+@api_view(['PUT', 'PATCH'])
+@permission_classes([IsAuthenticated, EditarPublicacion])
 def actualizar_publicacion(request, pk):
     """ Modifica campos de una publicación recibiendo un JSON """
     if request.method in ['PUT', 'PATCH']:
         pub = get_object_or_404(Publicacion, pk=pk)
         try:
-            body = json.loads(request.body)
+            body = request.data
             
             if 'titulo' in body:
                 pub.titulo = body['titulo']
             if 'contenido' in body:
                 pub.contenido = body['contenido']
-            if 'procesado_ia' in body:
-                pub.procesado_ia = body['procesado_ia']
 
             pub.save()
             return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
@@ -422,7 +425,8 @@ def actualizar_publicacion(request, pk):
 
 
 # 4. DELETE (Eliminación)
-@csrf_exempt
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated, EliminarPublicacion])
 def eliminar_publicacion(request, pk):
     """ Elimina una publicación por ID """
     if request.method == 'DELETE':
@@ -440,7 +444,7 @@ class UserMeView(APIView):
     
     
 class BatchSentimentAnalysisView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ProcesarIA]
     def post(self, request):
         """
         Espera un payload JSON con una lista de comentarios:
@@ -464,7 +468,7 @@ class BatchSentimentAnalysisView(APIView):
     
 
 class ProcesarSentimientoPublicacionView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, ProcesarIA]
 
     def post(self, request, pk):
         """
@@ -507,6 +511,8 @@ class ProcesarSentimientoPublicacionView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+@login_required(login_url='login')
+@permission_required('core.add_publicacion', raise_exception=True)
 def crear_publicacion_view(request):
     if request.method == 'POST':
         form = PublicacionForm(request.POST)

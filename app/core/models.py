@@ -54,6 +54,10 @@ class Publicacion(models.Model):
 
     class Meta:
         db_table = 'Publicacion'
+        permissions = [
+            ('ejecutar_scraping', 'Puede ejecutar scraping'),
+            ('procesar_ia', 'Puede ejecutar procesamiento IA'),
+        ]
 
     def __str__(self):
         return self.titulo

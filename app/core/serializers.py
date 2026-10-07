@@ -9,11 +9,8 @@ class UserMeSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'roles']
 
     def get_roles(self, obj):
-        roles = []
         if obj.is_superuser:
-            roles.append('ADMINISTRADOR')
-        if obj.is_staff:
-            roles.append('STAFF')
-        if not roles:
-            roles.append('USUARIO_LECTURA')
-        return roles
+            return ['ADMINISTRADOR']
+        return [nombre.upper() for nombre in obj.groups.filter(
+            name__in=('Lector', 'Analista', 'Administrador')
+        ).order_by('name').values_list('name', flat=True)]

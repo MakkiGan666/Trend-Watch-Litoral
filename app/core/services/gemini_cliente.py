@@ -9,7 +9,8 @@ except ImportError:  # pragma: no cover - compatibilidad con entornos sin la SDK
 
 from django.conf import settings
 from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from django.contrib.auth.decorators import login_required, permission_required
 from core.models import Publicacion, Sentimiento, Locacion
 from core.services.scraper import fetch_and_store_elterritorio
 
@@ -107,7 +108,9 @@ types = gemini_cliente.types
 def procesar_publicaciones_con_ia(batch_size=5):
     return gemini_cliente.procesar_publicaciones_con_ia(batch_size=batch_size)
 
-@csrf_exempt
+@require_POST
+@login_required(login_url='login')
+@permission_required(('core.ejecutar_scraping', 'core.procesar_ia'), raise_exception=True)
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la ingesta y luego la IA """
     
