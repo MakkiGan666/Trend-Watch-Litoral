@@ -12,5 +12,5 @@ class UserMeSerializer(serializers.ModelSerializer):
         if obj.is_superuser:
             return ['ADMINISTRADOR']
         return [nombre.upper() for nombre in obj.groups.filter(
-            name__in=('Lector', 'Analista', 'Administrador')
+            name__in=('Usuario', 'Administrador')
         ).order_by('name').values_list('name', flat=True)]

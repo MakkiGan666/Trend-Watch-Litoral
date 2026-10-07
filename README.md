@@ -67,25 +67,36 @@ docker compose exec web python manage.py migrate
 docker compose exec web python manage.py configurar_roles
 ```
 
-El comando reutiliza los grupos `Lector`, `Analista` y `Administrador` y reemplaza
-sus permisos por el conjunto definido en `core/roles.py`. Puede ejecutarse varias
-veces. No asigna usuarios salvo que se indiquen ambas opciones:
+El comando crea/reutiliza únicamente los roles activos `Usuario` y
+`Administrador`, con los permisos exactos definidos en `core/roles.py`.
+Es idempotente. Usuario sólo puede consultar noticias y dashboard;
+Administrador puede además crear, editar, eliminar, ejecutar scraping e IA y
+administrar usuarios/grupos en Django Admin.
+
+La asignación explícita reemplaza grupos y limpia permisos individuales:
 
 ```bash
-docker compose exec web python manage.py configurar_roles --usuario nombre_usuario --rol Analista
+docker compose exec web python manage.py configurar_roles --usuario nombre_usuario --rol Usuario
 ```
 
-La asignación explícita reemplaza los grupos y permisos individuales del usuario.
-Sólo Administrador recibe `is_staff`; el comando no reasigna superusuarios.
-Usar este comando para altas/cambios de rol y mantener un único rol por cuenta.
-Los permisos Django son acumulativos: permisos individuales u otros grupos pueden
-ampliar el acceso. Los superusuarios conservan sus privilegios estándar.
+Usuario recibe `is_staff=False`; Administrador recibe `is_staff=True`.
+El comando no reasigna superusuarios. El Admin conserva el mecanismo estándar
+Django: cuenta activa con `is_staff` y permisos por modelo. Mantener un único rol
+por cuenta y no conceder permisos individuales ni staff a Usuario.
+Los permisos Django son acumulativos; los superusuarios conservan sus privilegios.
 
-Lector puede leer; Analista también puede crear, editar, ejecutar scraping e IA;
-Administrador también puede eliminar y administrar usuarios/grupos en Django
-Admin. El acceso al Admin utiliza el mecanismo estándar de Django: usuario
-activo con `is_staff`, y permisos de modelo para cada operación. Mantener
-`is_staff=False` en Lector y Analista; el comando de asignación lo establece.
+### Grupos históricos
+
+`Lector` y `Analista` quedan fuera de `PERMISOS_ROLES` y no aparecen como roles
+en `/api/auth/me/`. Su existencia no impide ejecutar `configurar_roles`.
+El comando no modifica esos grupos, sus permisos, membresías ni flags de usuarios.
+No realiza migraciones o limpieza de datos históricos.
+
+Al asignar explícitamente Usuario o Administrador, se reemplazan los grupos y
+permisos individuales únicamente de esa cuenta, ajustando también `is_staff`.
+Los permisos de grupos históricos conservan su efecto en Django aunque no se
+muestren como roles: revisar esas cuentas por separado si se requiere retirar
+accesos anteriores.
 
 No cargar la fixture histórica `core/fixtures/roles.json` para configurar estos
 roles: usa IDs de permisos y contiene el conjunto anterior de Analista. Usar
