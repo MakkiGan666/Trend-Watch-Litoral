@@ -9,7 +9,7 @@
 {% block footer %}{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -154,125 +154,125 @@
         <h2 id="h-localidades">Localidades</h2>
         <p class="sub" style="margin-bottom:16px">Los 17 departamentos de Misiones presentes en Litoral.</p>
         <div class="locality-grid">
-          <button class="locality-card reveal" type="button" data-locality="capital" aria-pressed="false" aria-label="Seleccionar departamento Capital">
+          <a class="locality-card reveal" href="{% url 'localidad' 'capital' %}" aria-label="Ver noticias de Capital">
             <img class="locality-card__photo" src="{% static 'mockup/Capital_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Capital</small><strong>324 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="obera" aria-pressed="false" aria-label="Seleccionar departamento Oberá">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'obera' %}" aria-label="Ver noticias de Oberá">
             <img class="locality-card__photo" src="{% static 'mockup/Obera_fonod.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Oberá</small><strong>287 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="iguazu" aria-pressed="false" aria-label="Seleccionar departamento Iguazú">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'iguazu' %}" aria-label="Ver noticias de Iguazú">
             <img class="locality-card__photo" src="{% static 'mockup/Iguazu_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Iguazú</small><strong>412 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="eldorado" aria-pressed="false" aria-label="Seleccionar departamento Eldorado">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'eldorado' %}" aria-label="Ver noticias de Eldorado">
             <img class="locality-card__photo" src="{% static 'mockup/El_Dorado_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Eldorado</small><strong>198 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="sanignacio" aria-pressed="false" aria-label="Seleccionar departamento San Ignacio">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'sanignacio' %}" aria-label="Ver noticias de San Ignacio">
             <img class="locality-card__photo" src="{% static 'mockup/San_Ignacio_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>San Ignacio</small><strong>156 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="cainguas" aria-pressed="false" aria-label="Seleccionar departamento Cainguás">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'cainguas' %}" aria-label="Ver noticias de Cainguás">
             <img class="locality-card__photo" src="{% static 'mockup/Cainguas_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Cainguás</small><strong>89 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="libertador" aria-pressed="false" aria-label="Seleccionar departamento Libertador Gral. San Martín">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'libertador' %}" aria-label="Ver noticias de Libertador Gral. San Martín">
             <img class="locality-card__photo" src="{% static 'mockup/Libertador_SanMartin_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Libertador Gral. San Martín</small><strong>201 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="apostoles" aria-pressed="false" aria-label="Seleccionar departamento Apóstoles">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'apostoles' %}" aria-label="Ver noticias de Apóstoles">
             <img class="locality-card__photo" src="{% static 'mockup/Apostoles_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Apóstoles</small><strong>143 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="belgrano" aria-pressed="false" aria-label="Seleccionar departamento Gral. Manuel Belgrano">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'belgrano' %}" aria-label="Ver noticias de Gral. Manuel Belgrano">
             <img class="locality-card__photo" src="{% static 'mockup/Gral.Manuel_Belgrano_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Gral. Manuel Belgrano</small><strong>167 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="montecarlo" aria-pressed="false" aria-label="Seleccionar departamento Montecarlo">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'montecarlo' %}" aria-label="Ver noticias de Montecarlo">
             <img class="locality-card__photo" src="{% static 'mockup/Montecarlo_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Montecarlo</small><strong>234 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="candelaria" aria-pressed="false" aria-label="Seleccionar departamento Candelaria">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'candelaria' %}" aria-label="Ver noticias de Candelaria">
             <img class="locality-card__photo" src="{% static 'mockup/Candelaria_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Candelaria</small><strong>112 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="sanpedro" aria-pressed="false" aria-label="Seleccionar departamento San Pedro">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'sanpedro' %}" aria-label="Ver noticias de San Pedro">
             <img class="locality-card__photo" src="{% static 'mockup/San_Pedro_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>San Pedro</small><strong>178 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="sanjavier" aria-pressed="false" aria-label="Seleccionar departamento San Javier">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'sanjavier' %}" aria-label="Ver noticias de San Javier">
             <img class="locality-card__photo" src="{% static 'mockup/San_Javier_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>San Javier</small><strong>145 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="concepcion" aria-pressed="false" aria-label="Seleccionar departamento Concepción">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'concepcion' %}" aria-label="Ver noticias de Concepción">
             <img class="locality-card__photo" src="{% static 'mockup/Concepcion_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Concepción</small><strong>98 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="25mayo" aria-pressed="false" aria-label="Seleccionar departamento 25 de Mayo">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' '25mayo' %}" aria-label="Ver noticias de 25 de Mayo">
             <img class="locality-card__photo" src="{% static 'mockup/25_mayo_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>25 de Mayo</small><strong>134 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="leandro" aria-pressed="false" aria-label="Seleccionar departamento Leandro N. Alem">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'leandro' %}" aria-label="Ver noticias de Leandro N. Alem">
             <img class="locality-card__photo" src="{% static 'mockup/LeandroN.Alem_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Leandro N. Alem</small><strong>156 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
-          <button class="locality-card reveal" type="button" data-locality="guarani" aria-pressed="false" aria-label="Seleccionar departamento Guaraní">
+          </a>
+          <a class="locality-card reveal" href="{% url 'localidad' 'guarani' %}" aria-label="Ver noticias de Guaraní">
             <img class="locality-card__photo" src="{% static 'mockup/Guarani_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
             <span class="locality-card__footer">
               <span><small>Guaraní</small><strong>189 menciones</strong></span>
               <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
             </span>
-          </button>
+          </a>
         </div>
         <p class="sub locality-demo-note">Menciones de demostración, como en Litoral.</p>
       </section>

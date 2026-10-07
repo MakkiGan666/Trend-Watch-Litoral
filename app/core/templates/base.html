@@ -84,7 +84,7 @@
           <h4>Plataforma</h4>
           <a href="{% url 'categorias' %}">Categorías</a>
           <a href="{% url 'dashboard' %}">Dashboard</a>
-          <a href="{% url 'categorias' %}">Localidades</a>
+          <a href="{% url 'categorias' %}#localidades">Localidades</a>
         </div>
         <div>
           <h4>Cuenta</h4>
@@ -103,7 +103,7 @@
   </footer>
   {% endblock %}
 
-  <script src="{% static 'js/trendwatch.js' %}?v=5" defer></script>
+  <script src="{% static 'js/trendwatch.js' %}?v=6" defer></script>
   <script src="{% static 'js/auth-flow.js' %}?v=2" defer></script>
   {% block extra_js %}{% endblock %}
 </body>

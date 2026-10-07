@@ -229,9 +229,6 @@
       // conteo ficticio: cada filtro recorta el resultado
       const n = state.size === 0 ? total : Math.max(4, Math.round(total / Math.pow(1.8, state.size)));
       counter.textContent = n;
-      $$('[data-locality]').forEach(card => {
-        card.setAttribute('aria-pressed', String(card.dataset.locality === form.querySelector('[name="localidad"]').value));
-      });
     }
 
     $$('select', form).forEach(sel => {
@@ -250,15 +247,6 @@
       $$('select', form).forEach(s => s.selectedIndex = 0);
       $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
       render();
-    });
-
-    $$('[data-locality]').forEach(card => {
-      card.addEventListener('click', () => {
-        const sel = form.querySelector('[name="localidad"]');
-        sel.value = sel.value === card.dataset.locality ? '' : card.dataset.locality;
-        sel.dispatchEvent(new Event('change'));
-        $('#filtros').scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
     });
 
     // las cards de categoría actúan como filtro rápido

@@ -10,6 +10,8 @@ from html import unescape
 from urllib.parse import urlsplit
 from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe
+from django.http import Http404
+from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 
 # REST Framework
 from rest_framework.views import APIView
@@ -124,6 +126,44 @@ def noticia(request, pk):
 
 def litoral(request):
     return render(request, 'litoral.html')
+
+
+def _departamento_o_404(slug):
+    departamento = next((d for d in DEPARTAMENTOS if d['slug'] == slug), None)
+    if departamento is None:
+        raise Http404('Departamento no encontrado')
+    return departamento
+
+
+@require_safe
+def localidad(request, slug):
+    return render(request, 'localidad.html', {'departamento': _departamento_o_404(slug)})
+
+
+@require_safe
+def publicaciones_localidad(request, slug):
+    departamento = _departamento_o_404(slug)
+    ubicaciones = [nombre for nombre in Locacion.objects.values_list('location', flat=True).distinct()
+                   if departamento_de_ubicacion(nombre) == slug]
+    publicaciones = (Publicacion.objects.filter(locacion__location__in=ubicaciones)
+                     .distinct().prefetch_related('temas__id_categoria')
+                     .order_by('-fecha_captura', '-id_publicacion_api'))
+    data = []
+    for publicacion in publicaciones:
+        categorias = list(dict.fromkeys(t.id_categoria.nombre_categoria for t in publicacion.temas.all()))
+        if not categorias:
+            coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
+            categorias = [coincidencia.group(1).strip()] if coincidencia else []
+        data.append({
+            'id': publicacion.id_publicacion_api,
+            'titulo': publicacion.titulo,
+            'fuente': publicacion.fuente,
+            'url': publicacion.url,
+            'categorias': categorias,
+            'fecha': publicacion.fecha_captura.isoformat() if publicacion.fecha_captura else None,
+        })
+    return JsonResponse({'status': 'success', 'departamento': departamento['nombre'],
+                         'total': len(data), 'data': data})
 
 
 def login_view(request):
