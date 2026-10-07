@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Categorías y segmentación · TrendWatch{% endblock %}
 {% block body_class %}app{% endblock %}
@@ -6,6 +7,10 @@
 {# El dashboard trae su propio header lateral y superior #}
 {% block nav %}{% endblock %}
 {% block footer %}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=1">
+{% endblock %}
 
 {% block content %}
 <div class="shell" id="shell">
@@ -47,15 +52,11 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>
         <span class="sidebar__label">Categorías</span>
       </a>
-      <a href="#f-localidad">
+      <a href="#localidades">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c4-3.5 6-7 6-10a6 6 0 10-12 0c0 3 2 6.5 6 10z"/><circle cx="12" cy="11" r="2.2"/></svg>
         <span class="sidebar__label">Localidades</span>
       </a>
-      <a href="#filtros">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a14 14 0 0114-14"/><path d="M5 13a8 8 0 018 8"/><circle cx="5.5" cy="18.5" r="1.6" fill="currentColor" stroke="none"/></svg>
-        <span class="sidebar__label">Fuentes</span>
-      </a>
-      <a href="#grafico">
+<a href="#grafico">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 15v-3M12 15V9M17 15v-5"/></svg>
         <span class="sidebar__label">Análisis</span>
       </a>
@@ -103,64 +104,13 @@
       <!-- TÍTULO -->
       <div class="page-head reveal">
         <h1>Categorías y segmentación</h1>
-        <p>Elegí una categoría y combinala con localidad, provincia, fuente y período. Los filtros se acumulan: todos los que estén activos se aplican a la vez.</p>
+        <p>Elegí una categoría y combinala con departamento y período. Los filtros se acumulan: todos los que estén activos se aplican a la vez.</p>
       </div>
 
       <!-- CATEGORÍAS -->
       <section id="categorias" aria-labelledby="h-cat">
         <h2 id="h-cat" class="sr-only">Categorías disponibles</h2>
         <div class="cat-grid">
-          {# Cada card funciona como filtro rápido: data-cat coincide con el value del select #}
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="politica" data-label="Política">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M3 21h18M6 21V10M12 21V6M18 21v-8M6 10l6-4 6 7"/></svg></span>
-              <span class="cat__d">+18%</span>
-            </div>
-            <h3>Política</h3>
-            <p>Gestión, anuncios y debate público</p>
-            <div class="cat__foot"><span class="meter"><i style="width:88%"></i></span><span>612 menciones</span></div>
-          </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="economia" data-label="Economía">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M4 18l5-6 4 3 7-9"/><path d="M20 6h-4M20 6v4"/></svg></span>
-              <span class="cat__d">+24%</span>
-            </div>
-            <h3>Economía</h3>
-            <p>Precios, comercio y empleo regional</p>
-            <div class="cat__foot"><span class="meter"><i style="width:79%"></i></span><span>548 menciones</span></div>
-          </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="sociedad" data-label="Sociedad">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9.5" r="2.3"/></svg></span>
-              <span class="cat__d">+9%</span>
-            </div>
-            <h3>Sociedad</h3>
-            <p>Comunidad, servicios y vida urbana</p>
-            <div class="cat__foot"><span class="meter"><i style="width:58%"></i></span><span>402 menciones</span></div>
-          </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="seguridad" data-label="Seguridad">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg></span>
-              <span class="cat__d down">−6%</span>
-            </div>
-            <h3>Seguridad</h3>
-            <p>Policiales y prevención</p>
-            <div class="cat__foot"><span class="meter"><i style="width:75%"></i></span><span>523 menciones</span></div>
-          </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="educacion" data-label="Educación">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M7 11v5c0 1.5 2.5 3 5 3s5-1.5 5-3v-5"/></svg></span>
-              <span class="cat__d">+11%</span>
-            </div>
-            <h3>Educación</h3>
-            <p>Escuelas, inscripciones y docentes</p>
-            <div class="cat__foot"><span class="meter"><i style="width:56%"></i></span><span>394 menciones</span></div>
-          </button>
-
           <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="salud" data-label="Salud">
             <div class="cat__top">
               <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg></span>
@@ -170,17 +120,15 @@
             <p>Hospitales, campañas y prevención</p>
             <div class="cat__foot"><span class="meter"><i style="width:68%"></i></span><span>471 menciones</span></div>
           </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="tecnologia" data-label="Tecnología">
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="policiales" data-label="Policiales">
             <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.4"/><circle cx="5" cy="6" r="1.9"/><circle cx="19" cy="18" r="1.9"/><path d="M6.6 7.4l3.8 3.2M17.4 16.6l-3.8-3.2"/></svg></span>
-              <span class="cat__d">+16%</span>
+              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg></span>
+              <span class="cat__d down">−6%</span>
             </div>
-            <h3>Tecnología</h3>
-            <p>Conectividad e innovación</p>
-            <div class="cat__foot"><span class="meter"><i style="width:27%"></i></span><span>187 menciones</span></div>
+            <h3>Policiales</h3>
+            <p>Policiales y prevención</p>
+            <div class="cat__foot"><span class="meter"><i style="width:75%"></i></span><span>523 menciones</span></div>
           </button>
-
           <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="turismo" data-label="Turismo">
             <div class="cat__top">
               <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21c4-3.5 6-7 6-10a6 6 0 10-12 0c0 3 2 6.5 6 10z"/><circle cx="12" cy="11" r="2.2"/></svg></span>
@@ -190,37 +138,143 @@
             <p>Cataratas, temporada y servicios</p>
             <div class="cat__foot"><span class="meter"><i style="width:53%"></i></span><span>366 menciones</span></div>
           </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="cultura" data-label="Cultura">
+          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="festividades" data-label="Festividades">
             <div class="cat__top">
               <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6l8-3 8 3v14"/><path d="M4 20h16M9 20v-5h6v5"/></svg></span>
               <span class="cat__d">+7%</span>
             </div>
-            <h3>Cultura</h3>
+            <h3>Festividades</h3>
             <p>Festividades y patrimonio</p>
             <div class="cat__foot"><span class="meter"><i style="width:35%"></i></span><span>241 menciones</span></div>
           </button>
+        </div>
+      </section>
 
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="ambiente" data-label="Ambiente">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 22V9"/><path d="M12 9c0-3 2-6 6-6 0 4-2.5 6-6 6z"/><path d="M12 13c0-3-2-5.5-6-5.5 0 3.5 2.5 5.5 6 5.5z"/></svg></span>
-              <span class="cat__d">+13%</span>
-            </div>
-            <h3>Ambiente</h3>
-            <p>Selva, ríos y gestión de residuos</p>
-            <div class="cat__foot"><span class="meter"><i style="width:41%"></i></span><span>288 menciones</span></div>
+      <section id="localidades" aria-labelledby="h-localidades">
+        <h2 id="h-localidades">Localidades</h2>
+        <p class="sub" style="margin-bottom:16px">Los 17 departamentos de Misiones presentes en Litoral.</p>
+        <div class="locality-grid">
+          <button class="locality-card reveal" type="button" data-locality="capital" aria-pressed="false" aria-label="Seleccionar departamento Capital">
+            <img class="locality-card__photo" src="{% static 'mockup/Capital_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Capital</small><strong>324 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
           </button>
-
-          <button class="cat glass glass--sheen reveal" type="button" aria-pressed="false" data-cat="deportes" data-label="Deportes">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M3.5 12h17"/></svg></span>
-              <span class="cat__d">+5%</span>
-            </div>
-            <h3>Deportes</h3>
-            <p>Ligas locales y clubes</p>
-            <div class="cat__foot"><span class="meter"><i style="width:45%"></i></span><span>310 menciones</span></div>
+          <button class="locality-card reveal" type="button" data-locality="obera" aria-pressed="false" aria-label="Seleccionar departamento Oberá">
+            <img class="locality-card__photo" src="{% static 'mockup/Obera_fonod.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Oberá</small><strong>287 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="iguazu" aria-pressed="false" aria-label="Seleccionar departamento Iguazú">
+            <img class="locality-card__photo" src="{% static 'mockup/Iguazu_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Iguazú</small><strong>412 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="eldorado" aria-pressed="false" aria-label="Seleccionar departamento Eldorado">
+            <img class="locality-card__photo" src="{% static 'mockup/El_Dorado_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Eldorado</small><strong>198 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="sanignacio" aria-pressed="false" aria-label="Seleccionar departamento San Ignacio">
+            <img class="locality-card__photo" src="{% static 'mockup/San_Ignacio_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>San Ignacio</small><strong>156 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="cainguas" aria-pressed="false" aria-label="Seleccionar departamento Cainguás">
+            <img class="locality-card__photo" src="{% static 'mockup/Cainguas_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Cainguás</small><strong>89 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="libertador" aria-pressed="false" aria-label="Seleccionar departamento Libertador Gral. San Martín">
+            <img class="locality-card__photo" src="{% static 'mockup/Libertador_SanMartin_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Libertador Gral. San Martín</small><strong>201 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="apostoles" aria-pressed="false" aria-label="Seleccionar departamento Apóstoles">
+            <img class="locality-card__photo" src="{% static 'mockup/Apostoles_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Apóstoles</small><strong>143 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="belgrano" aria-pressed="false" aria-label="Seleccionar departamento Gral. Manuel Belgrano">
+            <img class="locality-card__photo" src="{% static 'mockup/Gral.Manuel_Belgrano_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Gral. Manuel Belgrano</small><strong>167 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="montecarlo" aria-pressed="false" aria-label="Seleccionar departamento Montecarlo">
+            <img class="locality-card__photo" src="{% static 'mockup/Montecarlo_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Montecarlo</small><strong>234 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="candelaria" aria-pressed="false" aria-label="Seleccionar departamento Candelaria">
+            <img class="locality-card__photo" src="{% static 'mockup/Candelaria_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Candelaria</small><strong>112 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="sanpedro" aria-pressed="false" aria-label="Seleccionar departamento San Pedro">
+            <img class="locality-card__photo" src="{% static 'mockup/San_Pedro_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>San Pedro</small><strong>178 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="sanjavier" aria-pressed="false" aria-label="Seleccionar departamento San Javier">
+            <img class="locality-card__photo" src="{% static 'mockup/San_Javier_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>San Javier</small><strong>145 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="concepcion" aria-pressed="false" aria-label="Seleccionar departamento Concepción">
+            <img class="locality-card__photo" src="{% static 'mockup/Concepcion_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Concepción</small><strong>98 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="25mayo" aria-pressed="false" aria-label="Seleccionar departamento 25 de Mayo">
+            <img class="locality-card__photo" src="{% static 'mockup/25_mayo_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>25 de Mayo</small><strong>134 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="leandro" aria-pressed="false" aria-label="Seleccionar departamento Leandro N. Alem">
+            <img class="locality-card__photo" src="{% static 'mockup/LeandroN.Alem_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Leandro N. Alem</small><strong>156 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
+          </button>
+          <button class="locality-card reveal" type="button" data-locality="guarani" aria-pressed="false" aria-label="Seleccionar departamento Guaraní">
+            <img class="locality-card__photo" src="{% static 'mockup/Guarani_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
+            <span class="locality-card__footer">
+              <span><small>Guaraní</small><strong>189 menciones</strong></span>
+              <span class="locality-card__votes" aria-hidden="true">&#128077; &#128078;</span>
+            </span>
           </button>
         </div>
+        <p class="sub locality-demo-note">Menciones de demostración, como en Litoral.</p>
       </section>
 
       <!-- FILTROS -->
@@ -231,41 +285,34 @@
           <div>
             <label for="f-localidad">Localidad</label>
             <select class="select" id="f-localidad" name="localidad">
-              <option value="">Todas</option>
-              <option value="posadas">Posadas</option>
-              <option value="apostoles">Apóstoles</option>
-              <option value="caiguas">Cainguás</option>
-              <option value="candelaria">Candelaria</option>
-              <option value="concepcion">Concepción</option>
-              <option value="eldorado">Eldorado</option>
-              <option value="general manuel belgrano">General Manuel Belgrano</option>
-              <option value="guarani">Guaraní</option>
-              <option value="iguazu">Iguazú</option>
-              <option value="alem">Leandro N. Alem</option>
-              <option value="montecarlo">Montecarlo</option>
+              <option value="">Todos</option>
+              <option value="capital">Capital</option>
               <option value="obera">Oberá</option>
-              <option value="san ignacio">San Ignacio</option>
-              <option value="san javier">San Javier</option>
-              <option value="san pedro">San Pedro</option>
-              <option value="veinticinco de mayo">25 de mayo</option>
+              <option value="iguazu">Iguazú</option>
+              <option value="eldorado">Eldorado</option>
+              <option value="sanignacio">San Ignacio</option>
+              <option value="cainguas">Cainguás</option>
+              <option value="libertador">Libertador Gral. San Martín</option>
+              <option value="apostoles">Apóstoles</option>
+              <option value="belgrano">Gral. Manuel Belgrano</option>
+              <option value="montecarlo">Montecarlo</option>
+              <option value="candelaria">Candelaria</option>
+              <option value="sanpedro">San Pedro</option>
+              <option value="sanjavier">San Javier</option>
+              <option value="concepcion">Concepción</option>
+              <option value="25mayo">25 de Mayo</option>
+              <option value="leandro">Leandro N. Alem</option>
+              <option value="guarani">Guaraní</option>
             </select>
           </div>
-          <div>
           <div>
             <label for="f-categoria">Categoría</label>
             <select class="select" id="f-categoria" name="categoria">
               <option value="">Todas</option>
-              <option value="politica">Política</option>
-              <option value="economia">Economía</option>
-              <option value="sociedad">Sociedad</option>
-              <option value="seguridad">Seguridad</option>
-              <option value="educacion">Educación</option>
               <option value="salud">Salud</option>
-              <option value="tecnologia">Tecnología</option>
+              <option value="policiales">Policiales</option>
               <option value="turismo">Turismo</option>
-              <option value="cultura">Cultura</option>
-              <option value="ambiente">Ambiente</option>
-              <option value="deportes">Deportes</option>
+              <option value="festividades">Festividades</option>
             </select>
           </div>
           <div>

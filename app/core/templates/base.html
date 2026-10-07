@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}">
+  <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=11">
   <link rel="stylesheet" href="{% static 'css/auth-flow.css' %}?v=4">
   {% block extra_head %}{% endblock %}
@@ -85,7 +85,6 @@
           <a href="{% url 'categorias' %}">Categorías</a>
           <a href="{% url 'dashboard' %}">Dashboard</a>
           <a href="{% url 'categorias' %}">Localidades</a>
-          <a href="{% url 'categorias' %}">Fuentes</a>
         </div>
         <div>
           <h4>Cuenta</h4>
@@ -104,7 +103,7 @@
   </footer>
   {% endblock %}
 
-  <script src="{% static 'js/trendwatch.js' %}?v=4" defer></script>
+  <script src="{% static 'js/trendwatch.js' %}?v=5" defer></script>
   <script src="{% static 'js/auth-flow.js' %}?v=2" defer></script>
   {% block extra_js %}{% endblock %}
 </body>
