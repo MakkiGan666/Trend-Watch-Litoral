@@ -13,6 +13,7 @@
         <link rel="stylesheet" href="/static/css/landing-news.css?v=3">
         <link rel="stylesheet" href="/static/css/exchange-rates.css?v=1">
         <link rel="stylesheet" href="/static/css/auth-flow.css?v=4">
+        <link rel="stylesheet" href="/static/css/notification-prompt.css?v=2">
     </head>
     <body class="landing-page">
         <a class="skip" href="#main">Saltar al contenido</a>
@@ -96,6 +97,7 @@
                 {% include "partials/_auth_form.html" with heading_id="login-modal-title" description_id="login-modal-description" %}
             </section>
         </div>
+        {% include "partials/_notification_prompt.html" with auto_prompt=True %}
         <footer>
             <div class="wrap">
                 <div class="foot">
@@ -128,8 +130,9 @@
             </div>
         </footer>
         <script src="/static/js/trendwatch.js?v=6" defer></script>
-        <script src="/static/js/landing-news.js?v=5" defer></script>
+        <script src="/static/js/landing-news.js?v=6" defer></script>
         <script src="/static/js/exchange-rates.js?v=1" defer></script>
         <script src="/static/js/auth-flow.js?v=2" defer></script>
+        <script src="/static/js/notification-prompt.js?v=2" defer></script>
     </body>
 </html>

@@ -58,7 +58,7 @@
     source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
     source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
     const heading = document.createElement('h3');
-    const originalUrl = safeUrl(publication.url);
+    const originalUrl = isDemo ? null : safeUrl(publication.url);
     const id = String(publication.id ?? '');
     const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
     const title = publication.titulo || 'Noticia sin título';
@@ -72,7 +72,7 @@
     if (isDemo) {
       const note = document.createElement('p');
       note.className = 'news-card__demo-note';
-      note.textContent = 'Contenido de ejemplo. No corresponde a una noticia publicada.';
+      note.textContent = 'Contenido de ejemplo. La lectura interna estará disponible cuando se carguen noticias reales de esta categoría.';
       body.append(note);
     }
     if (internalUrl || originalUrl) {
@@ -83,7 +83,7 @@
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
       }
-      link.textContent = internalUrl ? 'Leer noticia →' : (isDemo ? 'Visitar El Territorio ↗' : 'Consultar fuente original ↗');
+      link.textContent = internalUrl ? 'Leer noticia →' : 'Consultar fuente original ↗';
       body.append(link);
     }
     article.append(media, body);
@@ -169,7 +169,7 @@
         const publications = groups.get(section.dataset.newsCategory);
         const isDemo = allowDemo && !publications.length && Boolean(demoTitles[section.dataset.newsCategory]);
         const items = isDemo
-          ? demoTitles[section.dataset.newsCategory].map(titulo => ({ titulo, url: 'https://www.elterritorio.com.ar/' }))
+          ? demoTitles[section.dataset.newsCategory].map(titulo => ({ titulo }))
           : publications;
         if (isDemo) demoCount += items.length;
         const track = section.querySelector('.news-track');
