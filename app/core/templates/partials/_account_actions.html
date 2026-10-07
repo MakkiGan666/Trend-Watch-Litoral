@@ -5,7 +5,9 @@
     </button>
     <div class="account-notifications__panel glass glass--deep" id="account-notifications-panel" hidden>
       <strong>Notificaciones</strong>
-      <p>Las notificaciones estarán disponibles próximamente.</p>
+      <p data-notification-status>Todavía no configuraste las notificaciones.</p>
+      <p>El envío de avisos estará disponible próximamente.</p>
+      <button class="btn btn--ghost notification-preferences-button" type="button" data-notification-configure>Configurar notificaciones</button>
     </div>
   </div>
   {% if request.session.user_id %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ departamento.nombre }} · Noticias · TrendWatch Litoral{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/localidad.css' %}?v=1">
+{% endblock %}
+
+{% block content %}
+<div class="wrap locality-page">
+  <a class="btn btn--ghost locality-page__back" href="{% url 'categorias' %}#localidades">← Volver a Localidades</a>
+  <header class="locality-hero glass">
+    <img src="{% static departamento.imagen %}" alt="" width="1200" height="400">
+    <div class="locality-hero__title">
+      <p>Departamento de Misiones</p>
+      <h1>{{ departamento.nombre }}</h1>
+      <p>Noticias de Salud, Policiales, Turismo y Festividades.</p>
+    </div>
+  </header>
+  <div class="news-feed locality-page__feed" data-news-feed="{% url 'publicaciones_localidad' departamento.slug %}" data-news-demo="false" data-news-location="{{ departamento.nombre }}" aria-busy="false">
+    {% include "partials/_news_category.html" with category_key="salud" category_label="Salud" %}
+    {% include "partials/_news_category.html" with category_key="policiales" category_label="Policiales" %}
+    {% include "partials/_news_category.html" with category_key="turismo" category_label="Turismo" %}
+    {% include "partials/_news_category.html" with category_key="festividades" category_label="Festividades" %}
+    <div class="news-feed__status">
+      <p data-news-status role="status" aria-live="polite">Cargando noticias de {{ departamento.nombre }}…</p>
+      <button class="btn btn--ghost news-feed__retry" type="button" data-news-retry hidden>Reintentar</button>
+    </div>
+    <p class="locality-page__note">Se muestran publicaciones con una ubicación registrada que corresponde a este departamento. Las noticias sin ubicación identificada todavía no se incluyen.</p>
+    <noscript><p>Activá JavaScript para consultar las noticias del departamento.</p></noscript>
+  </div>
+</div>
+{% endblock %}
+
+{% block footer %}
+<footer class="locality-page__footer"><div class="wrap">TrendWatch Litoral · Noticias por departamento · Fuentes identificadas en cada publicación.</div></footer>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/landing-news.js' %}?v=6" defer></script>
+{% endblock %}

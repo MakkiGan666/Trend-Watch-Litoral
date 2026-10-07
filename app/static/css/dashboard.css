@@ -1,0 +1,22 @@
+.dashboard-page [hidden]{display:none!important}
+.dashboard-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:24px}
+.dashboard-summary>div{padding:22px;border-radius:22px}
+.dashboard-summary span{display:block;font-size:13px;color:var(--tx-2)}
+.dashboard-summary strong{display:block;margin-top:8px;font-size:32px;color:var(--mist)}
+.dashboard-filters{display:grid;grid-template-columns:2fr repeat(3,minmax(0,1fr));gap:14px;padding:22px;margin-bottom:24px;border-radius:22px;align-items:end}
+.dashboard-filters>div{min-width:0}
+.dashboard-filters label{display:block;font-size:13px;color:var(--tx-2);margin-bottom:8px}
+.dashboard-filters .select{width:100%;min-width:0}
+.dashboard-filters button{justify-self:start;font-size:13px}
+.dashboard-page .publication-table{min-width:1000px}
+.dashboard-page .publication-table th,.dashboard-page .publication-table td{overflow-wrap:anywhere}
+.dashboard-news{min-width:260px;max-width:430px}
+.dashboard-news>a{font-weight:600;color:var(--mist);line-height:1.5}
+.dashboard-news>a:hover{color:var(--aqua);text-decoration:underline}
+.dashboard-news p{margin-top:10px;line-height:1.6;font-size:13px;color:var(--tx-2)}
+.dashboard-note{display:block;font-size:12px;line-height:1.7;color:var(--tx-2);margin-top:8px}
+.dashboard-location{display:block;margin-bottom:6px}
+.dashboard-explanation{margin-top:20px}
+.dashboard-footer{padding:24px 0;border-top:1px solid var(--edge);color:var(--tx-2);font-size:13px}
+@media(max-width:1000px){.dashboard-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.dashboard-summary{grid-template-columns:1fr;gap:12px}.dashboard-summary>div{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px}.dashboard-summary strong{margin:0}.dashboard-filters{grid-template-columns:1fr;padding:18px}.dashboard-page .publication-list{padding:16px}.dashboard-page .publication-list__head{flex-direction:column}.dashboard-page .publication-table,.dashboard-page .publication-table tbody{display:block;min-width:0;width:100%}.dashboard-page .publication-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}.dashboard-page .publication-table tbody tr{display:block;padding:12px;margin-bottom:14px;border:1px solid var(--edge);border-radius:18px}.dashboard-page .publication-table td{display:block;padding:10px 0;border:0;min-width:0;max-width:none}.dashboard-page .publication-table td::before{content:attr(data-label);display:block;margin-bottom:6px;font-size:12px;color:var(--tx-2)}.dashboard-page .publication-table td.dashboard-news{display:block}.dashboard-news::before{display:block;margin-bottom:8px}.dashboard-page .publication-table td.publication-empty{display:block}.dashboard-page .publication-table td.publication-empty::before{display:none}}

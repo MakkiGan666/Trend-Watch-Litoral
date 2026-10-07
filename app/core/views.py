@@ -7,6 +7,14 @@ from django.utils import timezone
 from django.db.models import Count, F
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import check_password
+import re
+from html import unescape
+from urllib.parse import urlsplit
+from django.utils.html import strip_tags
+from django.views.decorators.http import require_safe
+from django.http import Http404
+from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
+from .services.cotizaciones import obtener_cotizaciones
 from django.contrib.auth.decorators import login_required
 
 # REST Framework
@@ -87,8 +95,85 @@ def categorias(request):
     return render(request, 'categorias.html')
 
 
+@require_safe
+def cotizaciones(request):
+    return JsonResponse(obtener_cotizaciones())
+
+
+@require_safe
+def noticia(request, pk):
+    """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
+    publicacion = get_object_or_404(Publicacion, pk=pk)
+    categorias_noticia = list(dict.fromkeys(
+        publicacion.temas.values_list('id_categoria__nombre_categoria', flat=True)
+    ))
+    if not categorias_noticia:
+        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
+        if coincidencia:
+            categorias_noticia = [coincidencia.group(1).strip()]
+    localidades_noticia = list(dict.fromkeys(
+        Locacion.objects.filter(id_publicacion_api=publicacion)
+        .exclude(location='').values_list('location', flat=True)
+    ))
+
+    def enlace_seguro(valor):
+        try:
+            url = (valor or '').strip()
+            partes = urlsplit(url)
+            return url if partes.scheme in ('http', 'https') and partes.netloc else None
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    return render(request, 'noticia.html', {
+        'publicacion': publicacion,
+        'categorias_noticia': categorias_noticia,
+        'localidades_noticia': localidades_noticia,
+        'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
+        'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'enlace_original': enlace_seguro(publicacion.url),
+    })
+
+
 def litoral(request):
     return render(request, 'litoral.html')
+
+
+def _departamento_o_404(slug):
+    departamento = next((d for d in DEPARTAMENTOS if d['slug'] == slug), None)
+    if departamento is None:
+        raise Http404('Departamento no encontrado')
+    return departamento
+
+
+@require_safe
+def localidad(request, slug):
+    return render(request, 'localidad.html', {'departamento': _departamento_o_404(slug)})
+
+
+@require_safe
+def publicaciones_localidad(request, slug):
+    departamento = _departamento_o_404(slug)
+    ubicaciones = [nombre for nombre in Locacion.objects.values_list('location', flat=True).distinct()
+                   if departamento_de_ubicacion(nombre) == slug]
+    publicaciones = (Publicacion.objects.filter(locacion__location__in=ubicaciones)
+                     .distinct().prefetch_related('temas__id_categoria')
+                     .order_by('-fecha_captura', '-id_publicacion_api'))
+    data = []
+    for publicacion in publicaciones:
+        categorias = list(dict.fromkeys(t.id_categoria.nombre_categoria for t in publicacion.temas.all()))
+        if not categorias:
+            coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
+            categorias = [coincidencia.group(1).strip()] if coincidencia else []
+        data.append({
+            'id': publicacion.id_publicacion_api,
+            'titulo': publicacion.titulo,
+            'fuente': publicacion.fuente,
+            'url': publicacion.url,
+            'categorias': categorias,
+            'fecha': publicacion.fecha_captura.isoformat() if publicacion.fecha_captura else None,
+        })
+    return JsonResponse({'status': 'success', 'departamento': departamento['nombre'],
+                         'total': len(data), 'data': data})
 
 
 def login_view(request):

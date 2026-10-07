@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ publicacion.titulo|default:"Noticia" }} · TrendWatch Litoral{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<div class="wrap news-detail">
+  <a class="btn btn--ghost news-detail__back" href="{% url 'landing' %}">← Volver a las noticias</a>
+  <article class="news-detail__article glass glass--sheen">
+    <header>
+      <div class="news-detail__tags">
+        {% for categoria in categorias_noticia %}<span class="tag">{{ categoria }}</span>{% empty %}<span class="tag tag--soft">Categoría sin identificar</span>{% endfor %}
+        {% for localidad in localidades_noticia %}<span class="tag tag--soft">{{ localidad }}</span>{% empty %}<span class="tag tag--soft">Localidad sin identificar</span>{% endfor %}
+      </div>
+      <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
+      <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if publicacion.fecha_captura %} · Incorporada el <time datetime="{{ publicacion.fecha_captura|date:'c' }}">{{ publicacion.fecha_captura|date:"d/m/Y H:i" }}</time>{% endif %}</p>
+    </header>
+    {% if imagen_noticia %}
+      <figure class="news-detail__media"><img src="{{ imagen_noticia }}" alt="Imagen de la noticia: {{ publicacion.titulo }}"></figure>
+    {% else %}
+      <div class="news-detail__placeholder" role="img" aria-label="Esta noticia no tiene imagen disponible">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg>
+        <span>Imagen no disponible</span>
+      </div>
+    {% endif %}
+    <div class="news-detail__content">
+      {% if contenido_noticia %}{{ contenido_noticia|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
+    </div>
+    <footer class="news-detail__source">
+      <p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>
+      {% if enlace_original %}<a class="btn btn--ghost" href="{{ enlace_original }}" target="_blank" rel="noopener noreferrer">Consultar publicación original ↗</a>{% endif %}
+    </footer>
+  </article>
+</div>
+{% endblock %}
+
+{% block footer %}
+<footer class="news-detail__footer"><div class="wrap">TrendWatch Litoral · Noticias de la región · Contenido atribuido a su fuente original.</div></footer>
+{% endblock %}

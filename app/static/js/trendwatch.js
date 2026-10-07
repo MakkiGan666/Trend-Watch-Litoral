@@ -217,7 +217,7 @@
           state.delete(key);
           const sel = form.querySelector('[name="' + key + '"]');
           if (sel) sel.selectedIndex = 0;
-          if (key === 'categoria') $$('.cat').forEach(c => c.setAttribute('aria-pressed', 'false'));
+          if (key === 'categoria') $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
           render();
         });
         active.insertBefore(chip, $('#clear-filters'));
@@ -236,7 +236,7 @@
         if (sel.value === '') state.delete(sel.name);
         else state.set(sel.name, label(sel));
         if (sel.name === 'categoria') {
-          $$('.cat').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.cat === sel.value)));
+          $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.cat === sel.value)));
         }
         render();
       });
@@ -245,16 +245,16 @@
     $('#clear-filters').addEventListener('click', () => {
       state.clear();
       $$('select', form).forEach(s => s.selectedIndex = 0);
-      $$('.cat').forEach(c => c.setAttribute('aria-pressed', 'false'));
+      $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
       render();
     });
 
     // las cards de categoría actúan como filtro rápido
-    $$('.cat').forEach(card => {
+    $$('[data-cat]').forEach(card => {
       card.addEventListener('click', () => {
         const on  = card.getAttribute('aria-pressed') === 'true';
         const sel = form.querySelector('[name="categoria"]');
-        $$('.cat').forEach(c => c.setAttribute('aria-pressed', 'false'));
+        $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
         if (on) { state.delete('categoria'); sel.selectedIndex = 0; }
         else {
           card.setAttribute('aria-pressed', 'true');

@@ -1,50 +1,86 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}Dashboard · TrendWatch{% endblock %}
 {% block body_class %}publications{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=1">
+{% endblock %}
+
 {% block content %}
-<section class="wrap publications-page">
+<section class="wrap publications-page dashboard-page" data-dashboard>
     <div class="page-head reveal">
         <h1>Dashboard</h1>
-        <p>Noticias y menciones registradas por las fuentes de TrendWatch Litoral.</p>
+        <p>Publicaciones reales de TrendWatch Litoral. Consultá las noticias y el estado de sus análisis.</p>
     </div>
+
+    <div class="dashboard-summary" data-dashboard-summary hidden aria-label="Resumen de los registros filtrados">
+        <div class="glass"><span>Coincidencias</span><strong data-dashboard-total>0</strong></div>
+        <div class="glass"><span>Con análisis de sentimiento</span><strong data-dashboard-analyzed>0</strong></div>
+        <div class="glass"><span>Pendientes de análisis</span><strong data-dashboard-pending>0</strong></div>
+    </div>
+
+    <form class="dashboard-filters glass glass--sheen" data-dashboard-filters hidden>
+        <div><label for="dashboard-search">Buscar noticias</label><input class="select" id="dashboard-search" type="search" placeholder="Título, contenido o fuente…"></div>
+        <div><label for="dashboard-source">Fuente</label><select class="select" id="dashboard-source"><option value="">Todas las fuentes</option></select></div>
+        <div><label for="dashboard-location">Localidad registrada</label><select class="select" id="dashboard-location"><option value="">Todas las localidades</option><option value="__missing">Sin ubicación identificada</option></select></div>
+        <div><label for="dashboard-analysis">Análisis de sentimiento</label><select class="select" id="dashboard-analysis"><option value="">Todos</option><option value="available">Disponible</option><option value="pending">Pendiente</option></select></div>
+        <button class="btn btn--ghost" type="reset">Limpiar filtros</button>
+    </form>
+    <noscript><p class="dashboard-note">Activá JavaScript para buscar y filtrar. Las publicaciones siguen disponibles en la tabla.</p></noscript>
 
     <div class="publication-list glass glass--sheen reveal">
         <div class="publication-list__head">
             <div>
                 <h2>Últimas publicaciones</h2>
-                <p>Mostrando hasta 100 registros, ordenados por fecha.</p>
+                <p>Últimos {{ publicaciones|length }} registros, hasta un máximo de 100. Los filtros y el resumen se aplican a este conjunto.</p>
             </div>
-            <span class="publication-count">{{ publicaciones|length }} registros</span>
+            <span class="publication-count" data-dashboard-count role="status" aria-live="polite">{{ publicaciones|length }} registros</span>
         </div>
 
         <div class="publication-table-wrap">
-            <table class="publication-table">
+            <table class="publication-table" aria-label="Publicaciones y análisis registrados">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th>Fecha</th>
-                        <th>Contenido</th>
-                        <th>Fuente / Registro</th>
+                        <th scope="col">ID</th>
+                        <th scope="col">Fecha de captura</th>
+                        <th scope="col">Noticia</th>
+                        <th scope="col">Fuente</th>
+                        <th scope="col">Localidad</th>
+                        <th scope="col">Sentimiento</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for pub in publicaciones %}
-                    <tr>
-                        <td>{{ pub.id_publicacion_api }}</td>
-                        <td>{{ pub.fecha|date:"d/m/Y H:i"|default:"Sin fecha" }}</td>
-                        <td>{{ pub.contenido }}</td>
-                        <td>{{ pub.id_registro.fuentes_api|default:"Sin registro" }}</td>
+                    {% with analisis=pub.sentimiento_set.all|first ubicaciones=pub.locacion_set.all %}
+                    <tr data-dashboard-row data-source="{{ pub.fuente|default:'Sin fuente identificada' }}" data-analysis="{% if analisis %}available{% else %}pending{% endif %}">
+                        <td data-label="ID">{{ pub.id_publicacion_api }}</td>
+                        <td data-label="Captura">{% if pub.fecha_captura %}<time datetime="{{ pub.fecha_captura|date:'c' }}">{{ pub.fecha_captura|date:"d/m/Y H:i" }}</time>{% else %}Sin fecha{% endif %}</td>
+                        <td data-label="Noticia" class="dashboard-news"><a href="{% url 'noticia' pub.id_publicacion_api %}">{{ pub.titulo|default:"Noticia sin título" }}</a><p>{{ pub.contenido|striptags|truncatechars:180 }}</p></td>
+                        <td data-label="Fuente">{{ pub.fuente|default:"Sin fuente identificada" }}<small class="dashboard-note">{% if pub.id_registro %}Registro #{{ pub.id_registro.id_registro }}{% else %}Sin registro de ingesta{% endif %}</small></td>
+                        <td data-label="Localidad">{% for ubicacion in ubicaciones %}{% if ubicacion.location %}<span class="dashboard-location" data-location="{{ ubicacion.location }}">{{ ubicacion.location }}</span>{% endif %}{% empty %}<span class="dashboard-note">Sin ubicación identificada</span>{% endfor %}</td>
+                        <td data-label="Sentimiento">{% if analisis %}<span class="tag">Análisis disponible</span><small class="dashboard-note">Polaridad: {{ analisis.polaridad|floatformat:2 }}<br>Confianza: {{ analisis.confianza|floatformat:2 }}</small>{% else %}<span class="tag tag--soft">Pendiente de análisis</span>{% endif %}</td>
                     </tr>
+                    {% endwith %}
                     {% empty %}
                     <tr>
-                        <td colspan="4" class="publication-empty">No hay publicaciones registradas todavía.</td>
+                        <td colspan="6" class="publication-empty">No hay publicaciones registradas todavía.</td>
                     </tr>
                     {% endfor %}
+                    <tr data-dashboard-empty hidden><td colspan="6" class="publication-empty">No hay publicaciones que coincidan con estos filtros.</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
+    <p class="dashboard-note dashboard-explanation">La fecha corresponde a la captura, no necesariamente a la publicación original. Polaridad: de −1 a 1; confianza: valor registrado por el análisis. La ausencia de ubicación no implica que la noticia sea ajena a Misiones.</p>
 </section>
+{% endblock %}
+
+{% block footer %}
+<footer class="dashboard-footer"><div class="wrap">TrendWatch Litoral · Panel de publicaciones registradas.</div></footer>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/dashboard.js' %}?v=1" defer></script>
 {% endblock %}

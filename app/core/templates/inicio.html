@@ -8,10 +8,12 @@
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
-        <link rel="icon" type="image/png" href="/static/img/favicon.png">
+        <link rel="icon" type="image/png" href="/static/img/favicon.png?v=2">
         <link rel="stylesheet" href="/static/css/trendwatch.css?v=13">
         <link rel="stylesheet" href="/static/css/landing-news.css?v=3">
+        <link rel="stylesheet" href="/static/css/exchange-rates.css?v=1">
         <link rel="stylesheet" href="/static/css/auth-flow.css?v=4">
+        <link rel="stylesheet" href="/static/css/notification-prompt.css?v=2">
     </head>
     <body class="landing-page">
         <a class="skip" href="#main">Saltar al contenido</a>
@@ -65,6 +67,7 @@
                         </div>
                         <noscript><p class="news-feed__status">Activá JavaScript para consultar las noticias.</p></noscript>
                     </div>
+                    <div class="news-sidebar">
                     <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">
                         <p class="news-trends__eyebrow">Conversación regional</p>
                         <h2 id="news-trends-title">Trends</h2>
@@ -80,6 +83,8 @@
                         <p class="news-trends__note">Tendencias de demostración.</p>
                         <a class="news-trends__more" href="/categorias/#resultados">Ver todas las tendencias →</a>
                     </aside>
+                    {% include "partials/_exchange_rates.html" %}
+                    </div>
                 </div>
             </div>
         </main>
@@ -92,6 +97,7 @@
                 {% include "partials/_auth_form.html" with heading_id="login-modal-title" description_id="login-modal-description" %}
             </section>
         </div>
+        {% include "partials/_notification_prompt.html" with auto_prompt=True %}
         <footer>
             <div class="wrap">
                 <div class="foot">
@@ -111,8 +117,7 @@
                         <h4>Plataforma</h4>
                         <a href="/categorias/">Categorías</a>
                         <a href="/dashboard/">Dashboard</a>
-                        <a href="/categorias/">Localidades</a>
-                        <a href="/categorias/">Fuentes</a>
+                        <a href="/categorias/#localidades">Localidades</a>
                     </div>
                     <div>
                         <h4>Cuenta</h4>
@@ -124,8 +129,10 @@
                 </div>
             </div>
         </footer>
-        <script src="/static/js/trendwatch.js?v=4" defer></script>
-        <script src="/static/js/landing-news.js?v=3" defer></script>
+        <script src="/static/js/trendwatch.js?v=6" defer></script>
+        <script src="/static/js/landing-news.js?v=6" defer></script>
+        <script src="/static/js/exchange-rates.js?v=1" defer></script>
         <script src="/static/js/auth-flow.js?v=2" defer></script>
+        <script src="/static/js/notification-prompt.js?v=2" defer></script>
     </body>
 </html>

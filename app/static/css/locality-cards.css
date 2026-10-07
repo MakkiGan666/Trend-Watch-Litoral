@@ -1,0 +1,15 @@
+/* Same photo-card composition as the Litoral department gallery. */
+.locality-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+.locality-card{display:block;text-decoration:none;position:relative;min-height:250px;overflow:hidden;padding:0;border:1px solid #8EB69B4D;border-radius:24px;color:#DAF1DE;text-align:left;cursor:pointer;background:#163832;box-shadow:0 18px 40px #0000002B;transition:transform .2s,border-color .2s}
+.locality-card:hover,.locality-card[aria-pressed="true"]{transform:translateY(-4px);border-color:#8EB69B}
+.locality-card:focus-visible{outline:2px solid var(--aqua);outline-offset:4px}
+.locality-card__photo{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.locality-card::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,#051F2010 35%,#051F20B8 100%);pointer-events:none}
+.locality-card__footer{position:absolute;inset:auto 12px 12px;z-index:1;display:flex;justify-content:space-between;align-items:end;gap:8px;padding:10px 12px;border:1px solid #8EB69B66;border-radius:14px;background:#051F20B8;backdrop-filter:blur(10px);font-size:.75rem}
+.locality-card__footer small{display:block;color:#8EB69B}
+.locality-card__footer strong{display:block;font-size:1.05rem;line-height:1.3}
+.locality-card__votes{flex-shrink:0;font-size:.95rem;white-space:nowrap}
+.locality-demo-note{margin-top:12px;font-size:12px}
+#localidades{scroll-margin-top:100px}
+@media(max-width:1100px){.locality-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.locality-grid{grid-template-columns:1fr;gap:12px}.locality-card{min-height:235px}}
