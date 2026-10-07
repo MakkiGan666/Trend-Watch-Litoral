@@ -8,6 +8,12 @@
   const sections = Array.from(feed.querySelectorAll('[data-news-category]'));
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const carousels = new Map();
+  // Muestras visuales locales: nunca se envían a la API ni se guardan en la base.
+  const demoTitles = {
+    salud: ['Prevención y cuidado de la salud en Misiones', 'Servicios de salud en las localidades', 'Hábitos para el bienestar de la comunidad'],
+    turismo: ['Destinos para descubrir en Misiones', 'Naturaleza y recorridos por la región', 'Experiencias de turismo local'],
+    festividades: ['Celebraciones y encuentros de la región', 'Cultura y tradiciones de las localidades', 'Actividades para compartir en comunidad']
+  };
 
   function safeUrl(value) {
     if (typeof value !== 'string' || !value.trim()) return null;
@@ -18,14 +24,14 @@
   }
 
   function categoryOf(publication) {
-    // El scraper actual guarda la categoría en fuente: "El Territorio (Cultura)".
+    // El scraper actual guarda la categoría en fuente: "El Territorio (Policiales)".
     // categoria e imagen_url quedan admitidas para una futura ampliación de la API.
     const match = String(publication.fuente || '').match(/\(([^)]+)\)\s*$/);
     const category = String(publication.categoria || (match ? match[1] : 'sin-categoria'));
     return category.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
   }
 
-  function card(publication) {
+  function card(publication, isDemo = false) {
     const article = document.createElement('article');
     article.className = 'news-card';
     const media = document.createElement('div');
@@ -34,6 +40,7 @@
     fallback.className = 'news-card__fallback';
     fallback.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span>El Territorio</span>';
     media.append(fallback);
+    if (isDemo) fallback.querySelector('span').textContent = 'Vista de ejemplo';
     const imageUrl = safeUrl(publication.imagen_url);
     if (imageUrl) {
       const image = document.createElement('img');
@@ -46,12 +53,12 @@
     const body = document.createElement('div');
     body.className = 'news-card__body';
     const source = document.createElement('span');
-    source.className = 'news-card__source';
-    source.textContent = publication.fuente || 'El Territorio';
+    source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
+    source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
     const heading = document.createElement('h3');
     const url = safeUrl(publication.url);
     const title = publication.titulo || 'Noticia sin título';
-    if (url) {
+    if (url && !isDemo) {
       const link = document.createElement('a');
       link.href = url;
       link.target = '_blank';
@@ -60,13 +67,19 @@
       heading.append(link);
     } else { heading.textContent = title; }
     body.append(source, heading);
+    if (isDemo) {
+      const note = document.createElement('p');
+      note.className = 'news-card__demo-note';
+      note.textContent = 'Contenido de ejemplo. No corresponde a una noticia publicada.';
+      body.append(note);
+    }
     if (url) {
       const link = document.createElement('a');
       link.className = 'news-card__link';
       link.href = url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = 'Leer en El Territorio ↗';
+      link.textContent = isDemo ? 'Visitar El Territorio ↗' : 'Leer en El Territorio ↗';
       body.append(link);
     }
     article.append(media, body);
@@ -140,26 +153,33 @@
       payload.data.forEach(publication => {
         if (!publication || typeof publication !== 'object') return;
         const category = categoryOf(publication);
-        const key = groups.has(category) ? category : 'sin-categoria';
-        groups.get(key).push(publication);
+        // Mostrar únicamente las categorías elegidas, sin reclasificar otras noticias.
+        if (groups.has(category)) groups.get(category).push(publication);
       });
+      let demoCount = 0;
       sections.forEach(section => {
         const publications = groups.get(section.dataset.newsCategory);
+        const isDemo = !publications.length && Boolean(demoTitles[section.dataset.newsCategory]);
+        const items = isDemo
+          ? demoTitles[section.dataset.newsCategory].map(titulo => ({ titulo, url: 'https://www.elterritorio.com.ar/' }))
+          : publications;
+        if (isDemo) demoCount += items.length;
         const track = section.querySelector('.news-track');
         const empty = section.querySelector('.news-category__empty');
-        section.hidden = section.dataset.newsCategory === 'sin-categoria' && !publications.length;
-        track.replaceChildren(...publications.map(card));
-        track.hidden = !publications.length;
-        empty.hidden = Boolean(publications.length);
+        track.replaceChildren(...items.map(publication => card(publication, isDemo)));
+        track.hidden = !items.length;
+        empty.hidden = Boolean(items.length);
         empty.querySelector('p').textContent = 'No hay noticias de esta categoría entre las publicaciones recibidas.';
-        if (publications.length) {
+        if (items.length) {
           if (!carousels.has(section)) carousels.set(section, carousel(section));
           else carousels.get(section)();
         }
       });
-      status.textContent = payload.data.length
-        ? 'El Territorio · Últimas ' + payload.data.length + ' noticias recibidas'
-        : 'Todavía no hay noticias disponibles.';
+      const visibleTotal = Array.from(groups.values()).reduce((total, publications) => total + publications.length, 0);
+      status.textContent = visibleTotal
+        ? 'El Territorio · ' + visibleTotal + ' noticias de las categorías seleccionadas'
+        : 'No hay noticias de estas categorías entre las publicaciones recibidas.';
+      if (demoCount) status.textContent += ' · ' + demoCount + ' tarjetas de demostración, fuera del conteo de noticias.';
     } catch (_) {
       status.textContent = 'No pudimos cargar las noticias. Intentá nuevamente.';
       retry.hidden = false;
