@@ -1,5 +1,9 @@
 from io import StringIO
+import hashlib
+import xml.etree.ElementTree as ET
+from urllib.error import URLError
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from django.contrib.auth import get_user_model
@@ -8,6 +12,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from unittest.mock import patch
 from core.models import Publicacion, RegistroDatos, Sentimiento
 from core.views import crear_o_ingestar_publicacion, disparar_ingesta
+from core.scrapers.noticias import fetch_elterritorio_news
 
 # Create your tests here.
 
@@ -403,3 +408,199 @@ class RolesPermisosTestCase(TestCase):
         for rol in ('Lector', 'Analista'):
             with self.assertRaises(CommandError):
                 call_command('configurar_roles', usuario='sin_rol', rol=rol, stdout=StringIO())
+
+
+class ScraperAlternativoTestCase(TestCase):
+    @patch('core.scrapers.noticias.Publicacion.objects.get_or_create')
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_error_lectura_se_propaga_sin_intentar_guardar(self, urlopen, guardar):
+        error = OSError('Lectura del feed interrumpida')
+        urlopen.return_value.__enter__.return_value.read.side_effect = error
+        with patch('builtins.print') as salida:
+            with self.assertRaises(OSError) as contexto:
+                fetch_elterritorio_news()
+        self.assertIs(contexto.exception, error)
+        guardar.assert_not_called()
+        salida.assert_not_called()
+
+    @patch('core.scrapers.noticias.Publicacion.objects.get_or_create')
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_error_persistencia_se_propaga_sin_anunciar_exito(self, urlopen, guardar):
+        xml = b'''<rss><channel><item>
+            <title>Noticia del feed</title>
+            <link>https://www.elterritorio.com.ar/noticias/918312-noticia</link>
+            <description>Contenido del feed</description>
+        </item></channel></rss>'''
+        urlopen.return_value.__enter__.return_value.read.return_value = xml
+        error = RuntimeError('Fallo al guardar la noticia')
+        guardar.side_effect = error
+        with patch('builtins.print') as salida:
+            with self.assertRaises(RuntimeError) as contexto:
+                fetch_elterritorio_news()
+        self.assertIs(contexto.exception, error)
+        guardar.assert_called_once()
+        self.assertEqual(guardar.call_args.kwargs['id_publicacion_api'], 918312)
+        salida.assert_not_called()
+
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_fallos_de_red_no_generan_publicaciones(self, urlopen):
+        for error in (URLError('Feed no disponible'), TimeoutError('Tiempo agotado')):
+            with self.subTest(error=type(error).__name__):
+                urlopen.side_effect = error
+                with patch('builtins.print') as salida:
+                    with self.assertRaises(type(error)) as contexto:
+                        fetch_elterritorio_news()
+                self.assertIs(contexto.exception, error)
+                self.assertFalse(Publicacion.objects.exists())
+                salida.assert_not_called()
+
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_xml_invalido_no_genera_publicaciones(self, urlopen):
+        urlopen.return_value.__enter__.return_value.read.return_value = b'<rss>'
+        with patch('builtins.print') as salida:
+            with self.assertRaises(ET.ParseError):
+                fetch_elterritorio_news()
+        self.assertFalse(Publicacion.objects.exists())
+        salida.assert_not_called()
+
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_rss_vacio_valido_devuelve_lista_vacia(self, urlopen):
+        urlopen.return_value.__enter__.return_value.read.return_value = b'<rss><channel /></rss>'
+        with patch('builtins.print'):
+            self.assertEqual(fetch_elterritorio_news(), [])
+        self.assertFalse(Publicacion.objects.exists())
+
+    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    def test_extrae_y_persiste_noticia_del_feed(self, urlopen):
+        enlace = 'https://www.elterritorio.com.ar/noticias/2026/10/07/918312-noticia'
+        xml = f'''<rss><channel><item>
+            <title> Noticia del feed </title><link>{enlace}</link>
+            <description>&lt;p&gt;Contenido del feed&lt;/p&gt;</description>
+        </item></channel></rss>'''
+        urlopen.return_value.__enter__.return_value.read.return_value = xml.encode('utf-8')
+        with patch('builtins.print'):
+            articulos = fetch_elterritorio_news(category='misiones', limit=1)
+        hash_origen = hashlib.sha256(enlace.encode('utf-8')).hexdigest()
+        self.assertEqual(articulos, [{
+            'id_noticia': 918312, 'hash_origen': hash_origen,
+            'title': 'Noticia del feed', 'link': enlace,
+            'summary': 'Contenido del feed', 'source': 'El Territorio',
+        }])
+        self.assertEqual(Publicacion.objects.count(), 1)
+        publicacion = Publicacion.objects.get(pk=918312)
+        self.assertEqual(publicacion.hash_origen, hash_origen)
+        self.assertEqual(publicacion.titulo, 'Noticia del feed')
+        self.assertEqual(publicacion.contenido, 'Contenido del feed')
+        self.assertEqual(publicacion.url, enlace)
+        self.assertEqual(publicacion.fuente, 'El Territorio')
+        self.assertFalse(publicacion.procesado_ia)
+
+
+class EjecutarScraperCommandTestCase(TestCase):
+    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news')
+    def test_error_preserva_causa_y_no_emite_exito(self, scraper):
+        error = URLError('Feed no disponible')
+        scraper.side_effect = error
+        salida = StringIO()
+        with self.assertRaisesMessage(CommandError, 'Feed no disponible') as contexto:
+            call_command('ejecutar_scraper', category='policiales', limit=2, stdout=salida)
+        self.assertIs(contexto.exception.__cause__, error)
+        scraper.assert_called_once_with(category='policiales', limit=2)
+        self.assertNotIn('Ingesta finalizada correctamente', salida.getvalue())
+        self.assertNotIn('[✔]', salida.getvalue())
+
+    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news', return_value=[])
+    def test_lista_vacia_es_finalizacion_valida(self, scraper):
+        salida = StringIO()
+        call_command('ejecutar_scraper', stdout=salida)
+        self.assertIn('Ingesta finalizada correctamente. Se procesaron 0 artículos.', salida.getvalue())
+        scraper.assert_called_once_with(category='misiones', limit=5)
+
+
+class RunPipelineCommandTestCase(TestCase):
+    def setUp(self):
+        ingesta = patch('core.management.commands.run_pipeline.fetch_and_store_elterritorio')
+        posterior = patch(
+            'core.management.commands.run_pipeline.procesar_publicaciones_con_ia',
+            return_value='Procesamiento completado',
+        )
+        self.ingesta = ingesta.start()
+        self.addCleanup(ingesta.stop)
+        self.posterior = posterior.start()
+        self.addCleanup(posterior.stop)
+        self.salida = StringIO()
+
+    def assert_sin_procesamiento_ni_exito(self):
+        self.posterior.assert_not_called()
+        texto = self.salida.getvalue()
+        for mensaje in ('Ingesta finalizada:', 'Ejecutando Análisis', 'IA finalizada:',
+                        'Pipeline completado exitosamente.'):
+            self.assertNotIn(mensaje, texto)
+
+    def test_exito_final_se_anuncia_despues_del_procesamiento_posterior(self):
+        self.ingesta.return_value = {'status': 'EXITO', 'capturados': 1, 'registro_id': 1}
+        mensaje = 'Pipeline completado exitosamente.'
+
+        def procesar(batch_size):
+            self.assertEqual(batch_size, 10)
+            self.assertNotIn(mensaje, self.salida.getvalue())
+            return 'Procesamiento completado'
+
+        self.posterior.side_effect = procesar
+        call_command('run_pipeline', stdout=self.salida)
+        self.posterior.assert_called_once_with(batch_size=10)
+        self.assertIn(mensaje, self.salida.getvalue())
+
+        self.salida = StringIO()
+        error = RuntimeError('Fallo del procesamiento posterior')
+        self.posterior.side_effect = error
+        with self.assertRaises(RuntimeError) as contexto:
+            call_command('run_pipeline', stdout=self.salida)
+        self.assertIs(contexto.exception, error)
+        self.assertNotIn(mensaje, self.salida.getvalue())
+        self.assertNotIn('IA finalizada:', self.salida.getvalue())
+
+    def test_error_ingesta_detiene_pipeline_sin_exito(self):
+        self.ingesta.return_value = {'status': 'ERROR', 'detalle': 'Feed no disponible'}
+        with self.assertRaisesMessage(CommandError, 'Feed no disponible'):
+            call_command('run_pipeline', stdout=self.salida)
+        self.assert_sin_procesamiento_ni_exito()
+
+    def test_excepcion_ingesta_preserva_causa_y_detiene_pipeline(self):
+        error = RuntimeError('Fallo técnico de ingesta')
+        self.ingesta.side_effect = error
+        with self.assertRaisesMessage(CommandError, 'Fallo técnico de ingesta') as contexto:
+            call_command('run_pipeline', stdout=self.salida)
+        self.assertIs(contexto.exception.__cause__, error)
+        self.assert_sin_procesamiento_ni_exito()
+
+    def test_estados_inesperados_detienen_pipeline(self):
+        for resultado in ({}, {'status': 'EN_PROCESO'}, {'status': None}, {'status': 'exito'}):
+            with self.subTest(resultado=resultado):
+                self.ingesta.return_value = resultado
+                with self.assertRaises(CommandError):
+                    call_command('run_pipeline', stdout=self.salida)
+                self.assert_sin_procesamiento_ni_exito()
+
+    def test_resultados_invalidos_detienen_pipeline(self):
+        for resultado in (None, [], 'EXITO', 0, True):
+            with self.subTest(resultado=resultado):
+                self.ingesta.return_value = resultado
+                with self.assertRaisesMessage(CommandError, 'se esperaba un diccionario'):
+                    call_command('run_pipeline', stdout=self.salida)
+                self.assert_sin_procesamiento_ni_exito()
+
+    def test_exito_con_cero_y_multiples_capturas_continua(self):
+        for capturados in (0, 3):
+            with self.subTest(capturados=capturados):
+                self.ingesta.reset_mock()
+                self.posterior.reset_mock()
+                salida = StringIO()
+                self.ingesta.return_value = {
+                    'status': 'EXITO', 'capturados': capturados, 'registro_id': 1,
+                }
+                call_command('run_pipeline', categoria='policiales', stdout=salida)
+                self.ingesta.assert_called_once_with('policiales')
+                self.posterior.assert_called_once_with(batch_size=10)
+                self.assertIn('Ingesta finalizada:', salida.getvalue())
+                self.assertIn('Pipeline completado exitosamente.', salida.getvalue())

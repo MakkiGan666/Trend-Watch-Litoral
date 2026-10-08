@@ -1,4 +1,4 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from core.services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 
@@ -8,24 +8,34 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         # Permite pasar la categoría como argumento opcional. Por defecto será "misiones".
         parser.add_argument(
-            '--categoria', 
-            type=str, 
-            default='misiones', 
+            '--categoria',
+            type=str,
+            default='misiones',
             help='Categoría RSS a ingestar (ej. policiales, misiones)'
         )
 
     def handle(self, *args, **options):
         categoria = options['categoria']
         self.stdout.write(self.style.WARNING(f"Iniciando Pipeline de TrendWatch (Categoría: {categoria})..."))
-        
+
         # 1. Ejecutar Ingesta
         self.stdout.write("Ejecutando Ingesta RSS...")
-        res_ingesta = fetch_and_store_elterritorio(categoria)
+        try:
+            res_ingesta = fetch_and_store_elterritorio(categoria)
+        except Exception as exc:
+            raise CommandError(f"Falló la ingesta RSS: {exc}") from exc
+        if not isinstance(res_ingesta, dict):
+            raise CommandError("Resultado de ingesta inválido: se esperaba un diccionario.")
+        if res_ingesta.get("status") != "EXITO":
+            detalle = res_ingesta.get("detalle") or "Sin detalle de error"
+            raise CommandError(
+                f"Falló la ingesta RSS (estado: {res_ingesta.get('status')!r}): {detalle}"
+            )
         self.stdout.write(self.style.SUCCESS(f"Ingesta finalizada: {res_ingesta}"))
-        
+
         # 2. Ejecutar IA
         self.stdout.write("Ejecutando Análisis con Gemini...")
         res_ia = procesar_publicaciones_con_ia(batch_size=10)
         self.stdout.write(self.style.SUCCESS(f"IA finalizada: {res_ia}"))
-        
+
         self.stdout.write(self.style.SUCCESS("Pipeline completado exitosamente."))
