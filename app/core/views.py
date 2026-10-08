@@ -37,7 +37,11 @@ from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacio
 from core.services import scraper as scraper_service
 from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
+from core.services.resultado_ia import respuesta_resultado_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
+from .services.integridad_sentimiento import (
+    ConflictoSentimiento, confianza_desde_porcentaje, guardar_sentimiento_local, sentimiento_unico,
+)
 
 
 _fetch_elterritorio_news_by_category = getattr(
@@ -231,10 +235,8 @@ def dashboard(request):
 def procesar_ia(request):
     """ Endpoint web para disparar manualmente la IA """
     resultado = procesar_publicaciones_con_ia(batch_size=10)
-    return JsonResponse({
-        "status": "success", 
-        "mensaje": resultado
-    })
+    data, codigo_http = respuesta_resultado_ia(resultado)
+    return JsonResponse(data, status=codigo_http)
 
 # ==========================================
 # ENDPOINTS API REST (CRUD)
@@ -292,32 +294,21 @@ def crear_o_ingestar_publicacion(request):
                 url=data['url'],
                 fecha_captura=data['fecha_publicacion'],
             )
+            # El alta, el resultado local y el estado forman una única operación.
+            texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+            polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+            confianza = confianza_desde_porcentaje(
+                compute_probabilistic_sentiment([{"message": texto_analizar}]),
+            )
+            obj_sentimiento = guardar_sentimiento_local(publicacion, polaridad, confianza)
+            publicacion.procesado_ia = True
+            publicacion.save(update_fields=['procesado_ia'])
     except IntegrityError as error:
         # Consultar sólo después de salir del bloque y restaurar la transacción.
         if not _es_colision_hash_origen(error):
             raise
         existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
         return _respuesta_publicacion_duplicada(existente)
-
-    # 2. CALCULAR SENTIMIENTO AUTOMÁTICAMENTE
-    texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
-    polaridad = float(analyze_sentiment_lexicon(texto_analizar))
-    
-    analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
-    confianza = float(analisis_lote.get("confidence_score", 0.0))
-
-    # 3. Guardar en la tabla Sentimiento
-    obj_sentimiento, _ = Sentimiento.objects.update_or_create(
-        id_publicacion_api=publicacion,
-        defaults={
-            'polaridad': polaridad,
-            'confianza': confianza,
-        }
-    )
-
-    # 4. Marcar como procesada por la IA
-    publicacion.procesado_ia = True
-    publicacion.save()
 
     # 5. Retornar la respuesta con el sentimiento incluido
     return Response({
@@ -346,11 +337,10 @@ def disparar_ingesta(request, categoria):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     resultado_ia = procesar_publicaciones_con_ia(batch_size=10)
     
-    return Response({
-        "status": "success", 
-        "mensaje_ingesta": resultado_ingesta,
-        "mensaje_ia": resultado_ia
-    }, status=status.HTTP_200_OK)
+    data, codigo_http = respuesta_resultado_ia(
+        resultado_ia, campo_mensaje='mensaje_ia', mensaje_ingesta=resultado_ingesta,
+    )
+    return Response(data, status=codigo_http)
 
 
 # 2. READ (Lectura)
@@ -467,30 +457,23 @@ class ProcesarSentimientoPublicacionView(APIView):
         Analiza el texto de una publicación específica de la DB 
         y registra/actualiza el resultado en la tabla Sentimiento.
         """
-        publicacion = get_object_or_404(Publicacion, pk=pk)
-        
-        # 1. Unimos el título y contenido para el análisis
-        texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
-        
-        # 2. Calculamos la polaridad léxica individual (convertida a float nativo)
-        polaridad = float(analyze_sentiment_lexicon(texto_analizar))
-        
-        # 3. Calculamos la métrica probabilística (convertida a float nativo)
-        analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
-        confianza = float(analisis_lote.get("confidence_score", 0.0))
-
-        # 4. Guardamos o actualizamos en la tabla Sentimiento de PostgreSQL
-        obj_sentimiento, created = Sentimiento.objects.update_or_create(
-            id_publicacion_api=publicacion,
-            defaults={
-                'polaridad': polaridad,
-                'confianza': confianza,
-            }
-        )
-
-        # 5. Marcamos la publicación como procesada por la IA
-        publicacion.procesado_ia = True
-        publicacion.save()
+        try:
+            with transaction.atomic():
+                publicacion = get_object_or_404(Publicacion.objects.select_for_update(), pk=pk)
+                sentimiento_unico(publicacion)
+                texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+                polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+                confianza = confianza_desde_porcentaje(
+                    compute_probabilistic_sentiment([{"message": texto_analizar}]),
+                )
+                obj_sentimiento = guardar_sentimiento_local(publicacion, polaridad, confianza)
+                publicacion.procesado_ia = True
+                publicacion.save(update_fields=['procesado_ia'])
+        except ConflictoSentimiento:
+            return Response({
+                'status': 'error', 'codigo': 'sentimientos_multiples',
+                'mensaje': 'La publicación tiene múltiples sentimientos; requiere revisión.',
+            }, status=status.HTTP_409_CONFLICT)
 
         return Response({
             "id_publicacion": publicacion.id_publicacion_api,
