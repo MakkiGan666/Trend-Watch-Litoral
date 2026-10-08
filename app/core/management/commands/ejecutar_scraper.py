@@ -1,4 +1,4 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from core.scrapers.noticias import fetch_elterritorio_news
 
 class Command(BaseCommand):
@@ -13,9 +13,12 @@ class Command(BaseCommand):
         categoria = options['category']
         limite = options['limit']
 
-        self.stdout.write(self.style.SUCCESS(f"[+] Iniciando scraper de El Territorio (Categoría: {categoria}, Límite: {limite})..."))
+        self.stdout.write(self.style.WARNING(f"[+] Iniciando scraper de El Territorio (Categoría: {categoria}, Límite: {limite})..."))
 
         # Llamamos a la función que ya construimos y probamos
-        articulos = fetch_elterritorio_news(category=categoria, limit=limite)
+        try:
+            articulos = fetch_elterritorio_news(category=categoria, limit=limite)
+        except Exception as exc:
+            raise CommandError(f"Falló la ingesta RSS: {exc}") from exc
 
         self.stdout.write(self.style.SUCCESS(f"[✔] Ingesta finalizada correctamente. Se procesaron {len(articulos)} artículos."))
