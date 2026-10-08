@@ -17,13 +17,7 @@ class EjecutarIngesta(PermisosDjango):
 
 
 class CrearPublicacion(PermisosDjango):
-    def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
-        data = request.data
-        if isinstance(data, dict) and 'titulo' in data and 'contenido' in data:
-            return request.user.has_perm('core.add_publicacion')
-        return request.user.has_perms(EjecutarIngesta.permisos)
+    permisos = ('core.add_publicacion',)
 
 
 class EditarPublicacion(PermisosDjango):

@@ -3,6 +3,7 @@ import hashlib
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, F
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import check_password
@@ -29,7 +30,7 @@ from core.models import (
     User, TemaTrend, Tema, PublicacionTema
 )
 from .forms import PublicacionForm
-from .serializers import UserMeSerializer
+from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -240,101 +241,97 @@ def procesar_ia(request):
 # ==========================================
 
 # 1. CREATE / INGESTA
+def _es_colision_hash_origen(error):
+    diagnostico = getattr(error.__cause__, 'diag', None)
+    tabla = Publicacion._meta.db_table
+    if (connection.vendor != 'postgresql'
+            or getattr(diagnostico, 'sqlstate', None) != '23505'
+            or getattr(diagnostico, 'table_name', None) != tabla):
+        return False
+    with connection.cursor() as cursor:
+        restricciones = connection.introspection.get_constraints(cursor, tabla)
+    restriccion = restricciones.get(getattr(diagnostico, 'constraint_name', None), {})
+    return (restriccion.get('unique', False)
+            and not restriccion.get('primary_key', False)
+            and restriccion.get('columns') == [Publicacion._meta.get_field('hash_origen').column])
+
+
+def _respuesta_publicacion_duplicada(publicacion):
+    data = {
+        'status': 'error',
+        'codigo': 'publicacion_duplicada',
+        'mensaje': 'Ya existe una publicación con esta identidad.',
+    }
+    if publicacion is not None:
+        data['id_publicacion_api'] = publicacion.pk
+    return Response(data, status=status.HTTP_409_CONFLICT)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, CrearPublicacion])
 def crear_o_ingestar_publicacion(request):
-    """
-    Crea una publicación (manual o RSS) y le calcula automáticamente el sentimiento.
-    """
-    data = request.data
+    """Crea una publicación manual y calcula automáticamente su sentimiento."""
+    serializer = PublicacionCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
+    # El hash representa el origen: editar el título no lo regenera.
+    base_hash = data['url'] or data['titulo']
+    hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
+    existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
+    if existente is not None:
+        return _respuesta_publicacion_duplicada(existente)
+    try:
+        with transaction.atomic():
+            publicacion = Publicacion.objects.create(
+                hash_origen=hash_gen,
+                titulo=data['titulo'],
+                contenido=data['contenido'],
+                fuente=data['fuente'],
+                url=data['url'],
+                fecha_captura=data['fecha_publicacion'],
+            )
+    except IntegrityError as error:
+        # Consultar sólo después de salir del bloque y restaurar la transacción.
+        if not _es_colision_hash_origen(error):
+            raise
+        existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
+        return _respuesta_publicacion_duplicada(existente)
+
+    # 2. CALCULAR SENTIMIENTO AUTOMÁTICAMENTE
+    texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+    polaridad = float(analyze_sentiment_lexicon(texto_analizar))
     
-    # CASO A: Creación manual vía JSON
-    if data and "titulo" in data and "contenido" in data:
-        # 1. Guardar la publicación en PostgreSQL
-        url_val = data.get("url", "")
-        
-        # Si la URL viene vacía, usamos el título para garantizar que no choque
-        base_hash = url_val if url_val else data.get("titulo", "")
-        hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
-    
-        publicacion = Publicacion.objects.create(
-            hash_origen=hash_gen,
-            titulo=data.get("titulo"),
-            contenido=data.get("contenido"),
-            fuente=data.get("fuente", "Manual"),
-            url=data.get("url", ""),
-            fecha_captura=data.get("fecha_publicacion", timezone.now())
-        )
-        
-        # 2. CALCULAR SENTIMIENTO AUTOMÁTICAMENTE
-        texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
-        polaridad = float(analyze_sentiment_lexicon(texto_analizar))
-        
-        analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
-        confianza = float(analisis_lote.get("confidence_score", 0.0))
+    analisis_lote = compute_probabilistic_sentiment([{"message": texto_analizar}])
+    confianza = float(analisis_lote.get("confidence_score", 0.0))
 
-        # 3. Guardar en la tabla Sentimiento
-        obj_sentimiento, _ = Sentimiento.objects.update_or_create(
-            id_publicacion_api=publicacion,
-            defaults={
-                'polaridad': polaridad,
-                'confianza': confianza,
-            }
-        )
+    # 3. Guardar en la tabla Sentimiento
+    obj_sentimiento, _ = Sentimiento.objects.update_or_create(
+        id_publicacion_api=publicacion,
+        defaults={
+            'polaridad': polaridad,
+            'confianza': confianza,
+        }
+    )
 
-        # 4. Marcar como procesada por la IA
-        publicacion.procesado_ia = True
-        publicacion.save()
+    # 4. Marcar como procesada por la IA
+    publicacion.procesado_ia = True
+    publicacion.save()
 
-        # 5. Retornar la respuesta con el sentimiento incluido
-        return Response({
-            "status": "ok",
-            "id_publicacion_api": publicacion.id_publicacion_api,
-            "titulo": publicacion.titulo,
-            "procesado_ia": publicacion.procesado_ia,
-            "sentimiento": {
-                "id_sentimiento": obj_sentimiento.id_sentimiento,
-                "polaridad": obj_sentimiento.polaridad,
-                "confianza": obj_sentimiento.confianza
-            },
-            "mensaje": "Publicación creada e ingerida con análisis de sentimiento automático."
-        }, status=status.HTTP_201_CREATED)
-
-    # CASO B: Ingesta masiva vía Scraper RSS
-    else:
-        resultado_ingesta = fetch_and_store_elterritorio()
-        if resultado_ingesta.get('status') != 'EXITO':
-            return Response({
-                'status': 'error',
-                'mensaje': 'La ingesta RSS falló; puede haber publicaciones guardadas parcialmente.',
-                'mensaje_ingesta': resultado_ingesta,
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        publicaciones_creadas = Publicacion.objects.filter(
-            id_registro_id=resultado_ingesta['registro_id']
-        )
-        
-        for pub in publicaciones_creadas:
-            if not pub.procesado_ia:
-                texto = f"{pub.titulo} {pub.contenido}"
-                pol = float(analyze_sentiment_lexicon(texto))
-                
-                res_prob = compute_probabilistic_sentiment([{"message": texto}])
-                conf = float(res_prob.get("confidence_score", 0.0))
-
-                Sentimiento.objects.update_or_create(
-                    id_publicacion_api=pub,
-                    defaults={'polaridad': pol, 'confianza': conf}
-                )
-                pub.procesado_ia = True
-                pub.save()
-
-        return Response({
-            "status": "ok",
-            "total_ingestadas": len(publicaciones_creadas),
-            "mensaje": f"Se procesaron {len(publicaciones_creadas)} publicaciones RSS con sentimiento automatizado."
-        }, status=status.HTTP_200_OK)
-
+    # 5. Retornar la respuesta con el sentimiento incluido
+    return Response({
+        "status": "ok",
+        "id_publicacion_api": publicacion.id_publicacion_api,
+        "titulo": publicacion.titulo,
+        "procesado_ia": publicacion.procesado_ia,
+        "sentimiento": {
+            "id_sentimiento": obj_sentimiento.id_sentimiento,
+            "polaridad": obj_sentimiento.polaridad,
+            "confianza": obj_sentimiento.confianza
+        },
+        "mensaje": "Publicación creada e ingerida con análisis de sentimiento automático."
+    }, status=status.HTTP_201_CREATED)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, EjecutarIngesta])
@@ -408,19 +405,14 @@ def actualizar_publicacion(request, pk):
     """ Modifica campos de una publicación recibiendo un JSON """
     if request.method in ['PUT', 'PATCH']:
         pub = get_object_or_404(Publicacion, pk=pk)
-        try:
-            body = request.data
-            
-            if 'titulo' in body:
-                pub.titulo = body['titulo']
-            if 'contenido' in body:
-                pub.contenido = body['contenido']
-
-            pub.save()
-            return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
-
-        except Exception as e:
-            return JsonResponse({"status": "error", "detalle": str(e)}, status=400)
+        serializer = PublicacionUpdateSerializer(
+            data=request.data, partial=request.method == 'PATCH',
+        )
+        serializer.is_valid(raise_exception=True)
+        for campo, valor in serializer.validated_data.items():
+            setattr(pub, campo, valor)
+        pub.save()
+        return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
 
 
