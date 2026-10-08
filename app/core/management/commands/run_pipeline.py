@@ -36,6 +36,12 @@ class Command(BaseCommand):
         # 2. Ejecutar IA
         self.stdout.write("Ejecutando Análisis con Gemini...")
         res_ia = procesar_publicaciones_con_ia(batch_size=10)
-        self.stdout.write(self.style.SUCCESS(f"IA finalizada: {res_ia}"))
+        if (not isinstance(res_ia, dict)
+                or res_ia.get('estado') not in ('EXITO', 'PARCIAL', 'FALLO', 'NO_DISPONIBLE', 'SIN_PENDIENTES')
+                or not isinstance(res_ia.get('mensaje'), str)):
+            raise CommandError('Resultado de IA inválido.')
+        self.stdout.write(f"IA finalizada: {res_ia['mensaje']} ({res_ia['estado']})")
+        if res_ia['estado'] not in ('EXITO', 'SIN_PENDIENTES'):
+            raise CommandError(f"Procesamiento IA {res_ia['estado']}: {res_ia['mensaje']}")
 
         self.stdout.write(self.style.SUCCESS("Pipeline completado exitosamente."))
