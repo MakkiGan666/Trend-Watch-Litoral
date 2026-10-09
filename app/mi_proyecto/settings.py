@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     # Rest Framework & JWT
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     
     'core',
 ]
@@ -159,6 +160,7 @@ REST_FRAMEWORK = {
 
 SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'core.serializers.LoginTokenObtainPairSerializer',
+    'TOKEN_REFRESH_SERIALIZER': 'core.serializers.RefreshJWTSerializer',
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     'ROTATE_REFRESH_TOKENS': True,

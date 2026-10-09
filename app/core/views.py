@@ -23,6 +23,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
@@ -31,7 +32,7 @@ from core.models import (
 )
 from .forms import PublicacionForm
 from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
-from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer
+from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -418,6 +419,17 @@ def eliminar_publicacion(request, pk):
         pub.delete()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} eliminada exitosamente."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
+
+class LogoutJWTView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = LogoutJWTSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.validated_data['token'].blacklist()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class UserMeView(APIView):
     permission_classes = [IsAuthenticated]

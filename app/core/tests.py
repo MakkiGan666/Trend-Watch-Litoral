@@ -221,6 +221,155 @@ class LoginIdentificadorTestCase(TestCase):
         self.assertTrue(self.usuario.has_perm('core.view_publicacion'))
 
 
+class JWTRevocacionTestCase(TestCase):
+    def setUp(self):
+        from rest_framework.test import APIClient
+        self.api = APIClient()
+        self.usuario = get_user_model().objects.create_user(
+            username='jwt_prueba', email='jwt@example.test', password='clave prueba',
+        )
+        self.par = self.obtener_par(self.usuario.username)
+        self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + self.par['access'])
+
+    def obtener_par(self, identificador):
+        respuesta = self.api.post('/api/auth/login/', {
+            'username': identificador, 'password': 'clave prueba',
+        }, format='json')
+        self.assertEqual(respuesta.status_code, 200)
+        return respuesta.data
+
+    def refrescar(self, token):
+        return self.api.post('/api/auth/refresh/', {'refresh': token}, format='json')
+
+    def cerrar(self, token):
+        return self.api.post('/api/auth/logout/', {'refresh': token}, format='json')
+
+    def test_rutas_y_nombres_publicos_conservados(self):
+        from django.urls import resolve, reverse
+        from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+        for nombre, ruta, vista in (
+            ('token_obtain_pair', '/api/auth/login/', TokenObtainPairView),
+            ('token_refresh', '/api/auth/refresh/', TokenRefreshView),
+        ):
+            self.assertEqual(reverse(nombre), ruta)
+            self.assertEqual(resolve(ruta).func.view_class, vista)
+        self.assertEqual(reverse('jwt_logout'), '/api/auth/logout/')
+
+    def test_rotacion_por_username_y_email_revoca_refresh_anterior(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+        for identificador in (self.usuario.username, self.usuario.email.upper()):
+            par = self.obtener_par(identificador)
+            anterior = RefreshToken(par['refresh'])
+            self.assertTrue(OutstandingToken.objects.filter(jti=anterior['jti']).exists())
+            respuesta = self.refrescar(par['refresh'])
+            self.assertEqual(respuesta.status_code, 200)
+            self.assertEqual(set(respuesta.data), {'access', 'refresh'})
+            nuevo = RefreshToken(respuesta.data['refresh'])
+            self.assertNotEqual(nuevo['jti'], anterior['jti'])
+            self.assertTrue(BlacklistedToken.objects.filter(token__jti=anterior['jti']).exists())
+            self.assertTrue(OutstandingToken.objects.filter(jti=nuevo['jti']).exists())
+            self.assertEqual(self.refrescar(par['refresh']).status_code, 401)
+            self.assertEqual(self.refrescar(respuesta.data['refresh']).status_code, 200)
+
+    def test_logout_propio_revoca_refresh_y_access_sigue_valido(self):
+        self.assertEqual(self.cerrar(self.par['refresh']).status_code, 204)
+        self.assertEqual(self.refrescar(self.par['refresh']).status_code, 401)
+        self.assertEqual(self.api.get('/api/auth/me/').status_code, 200)
+        segunda = self.cerrar(self.par['refresh'])
+        self.assertEqual(segunda.status_code, 400)
+        self.assertEqual(str(segunda.data['refresh'][0]), 'Refresh token inválido.')
+
+    def test_refresh_ajeno_no_se_revoca(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+        otro = get_user_model().objects.create_user(username='jwt_otro')
+        token = RefreshToken.for_user(otro)
+        self.assertEqual(self.cerrar(str(token)).status_code, 403)
+        self.assertFalse(BlacklistedToken.objects.filter(token__jti=token['jti']).exists())
+        self.assertEqual(self.refrescar(str(token)).status_code, 200)
+
+    def test_payload_invalido_no_revoca(self):
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+        for datos in ({}, {'refresh': ''}, {'refresh': '   '}, {'refresh': None},
+                      {'refresh': 123}, {'refresh': True}, {'refresh': []}, {'refresh': {}}, []):
+            self.assertEqual(self.api.post('/api/auth/logout/', datos, format='json').status_code, 400)
+        self.assertFalse(BlacklistedToken.objects.exists())
+
+    def test_refresh_invalido_expirado_tipo_incorrecto_y_firma_alterada(self):
+        from datetime import timedelta
+        from rest_framework_simplejwt.tokens import RefreshToken
+        expirado = RefreshToken.for_user(self.usuario)
+        expirado.set_exp(lifetime=timedelta(seconds=-1))
+        partes = self.par['refresh'].split('.')
+        partes[2] = ('A' if partes[2][0] != 'A' else 'B') + partes[2][1:]
+        for token in ('no-es-un-token', str(expirado), self.par['access'], '.'.join(partes)):
+            respuesta = self.cerrar(token)
+            self.assertEqual(respuesta.status_code, 400)
+            self.assertEqual(str(respuesta.data['refresh'][0]), 'Refresh token inválido.')
+
+    def test_access_ausente_invalido_expirado_y_sesion_html_no_bastan(self):
+        from datetime import timedelta
+        from rest_framework_simplejwt.tokens import AccessToken
+        expirado = AccessToken.for_user(self.usuario)
+        expirado.set_exp(lifetime=timedelta(seconds=-1))
+        self.api.force_login(self.usuario)
+        for token in (None, 'invalido', str(expirado)):
+            self.api.credentials(**({'HTTP_AUTHORIZATION': 'Bearer ' + token} if token else {}))
+            self.assertEqual(self.cerrar(self.par['refresh']).status_code, 401)
+        self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + self.par['access'])
+        self.assertEqual(self.refrescar(self.par['refresh']).status_code, 200)
+
+    def test_get_autenticado_no_revoca(self):
+        self.assertEqual(self.api.get('/api/auth/logout/').status_code, 405)
+        self.assertEqual(self.refrescar(self.par['refresh']).status_code, 200)
+
+    def test_logout_solo_afecta_refresh_presentado_y_preserva_sesion_html(self):
+        otro_par = self.obtener_par(self.usuario.email)
+        self.client.force_login(self.usuario)
+        self.assertEqual(self.cerrar(self.par['refresh']).status_code, 204)
+        self.assertEqual(int(self.client.session['_auth_user_id']), self.usuario.pk)
+        self.assertEqual(self.refrescar(otro_par['refresh']).status_code, 200)
+        self.assertRedirects(self.client.get('/logout/'), '/', fetch_redirect_response=False)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_refresh_usuario_eliminado_responde_401_generico(self):
+        from core.serializers import RefreshJWTSerializer
+        self.usuario.delete()
+        respuesta = self.refrescar(self.par['refresh'])
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertEqual(set(respuesta.data), {'detail'})
+        self.assertEqual(str(respuesta.data['detail']), str(RefreshJWTSerializer.default_error_messages['no_active_account']))
+        self.assertEqual(respuesta.data['detail'].code, 'no_active_account')
+        self.assertNotIn('access', respuesta.data)
+        self.assertNotIn('refresh', respuesta.data)
+
+    def test_refresh_usuario_inactivo_no_emite_ni_rota(self):
+        from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
+        from core.serializers import RefreshJWTSerializer
+        self.usuario.is_active = False
+        self.usuario.save(update_fields=['is_active'])
+        cantidad = OutstandingToken.objects.count()
+        respuesta = self.refrescar(self.par['refresh'])
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertEqual(set(respuesta.data), {'detail'})
+        self.assertEqual(str(respuesta.data['detail']), str(RefreshJWTSerializer.default_error_messages['no_active_account']))
+        self.assertEqual(OutstandingToken.objects.count(), cantidad)
+        self.assertFalse(BlacklistedToken.objects.exists())
+
+    def test_refresh_expirado_sigue_rechazado(self):
+        from datetime import timedelta
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
+        token = RefreshToken.for_user(self.usuario)
+        token.set_exp(lifetime=timedelta(seconds=-1))
+        respuesta = self.refrescar(str(token))
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertNotIn('access', respuesta.data)
+        self.assertNotIn('refresh', respuesta.data)
+        self.assertFalse(BlacklistedToken.objects.exists())
+
+
 def resultado_ia_simulado(estado='EXITO'):
     seleccionadas, procesadas, omitidas, fallidas = {
         'EXITO': (1, 1, 0, 0), 'PARCIAL': (2, 1, 0, 1), 'FALLO': (1, 0, 0, 1),
