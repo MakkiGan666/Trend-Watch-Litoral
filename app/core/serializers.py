@@ -2,7 +2,15 @@ from collections.abc import Mapping
 
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.contrib.auth.models import update_last_login
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.settings import api_settings
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
 
 
 class StrictCharField(serializers.CharField):
@@ -20,6 +28,65 @@ class StrictURLField(serializers.URLField):
         if not isinstance(data, str):
             self.fail('invalid')
         return super().to_internal_value(data)
+
+
+class PasswordLoginField(serializers.CharField):
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail('invalid')
+        return super().to_internal_value(data)
+
+
+class LoginTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # El padre crea estos campos en __init__; reemplazarlos antes de validar.
+        self.fields['username'] = StrictCharField(write_only=True)
+        self.fields['password'] = PasswordLoginField(
+            write_only=True, trim_whitespace=False, style={'input_type': 'password'},
+        )
+
+    def validate(self, attrs):
+        self.user = autenticar_identificador(
+            self.context.get('request'), attrs['username'], attrs['password'],
+        )
+        if not api_settings.USER_AUTHENTICATION_RULE(self.user):
+            raise AuthenticationFailed(ERROR_CREDENCIALES, code='no_active_account')
+        # La identidad ya fue comprobada por el módulo compartido antes de emitir.
+        refresh = self.get_token(self.user)
+        data = {'refresh': str(refresh), 'access': str(refresh.access_token)}
+        if api_settings.UPDATE_LAST_LOGIN:
+            update_last_login(None, self.user)
+        return data
+
+
+class RefreshJWTSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except get_user_model().DoesNotExist:
+            # Mantener la respuesta genérica del padre para cuentas no habilitadas.
+            raise AuthenticationFailed(
+                self.error_messages['no_active_account'], code='no_active_account',
+            ) from None
+
+
+class LogoutJWTSerializer(serializers.Serializer):
+    refresh = StrictCharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        try:
+            token = RefreshToken(attrs['refresh'])
+        except TokenError:
+            raise serializers.ValidationError({'refresh': ['Refresh token inválido.']})
+        identidad = token.get(api_settings.USER_ID_CLAIM)
+        if identidad is None:
+            raise serializers.ValidationError({'refresh': ['Refresh token inválido.']})
+        usuario = self.context['request'].user
+        if str(identidad) != str(getattr(usuario, api_settings.USER_ID_FIELD)):
+            raise PermissionDenied('No se puede revocar este token.')
+        attrs['token'] = token
+        return attrs
 
 
 class PublicacionInputSerializer(serializers.Serializer):

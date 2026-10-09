@@ -121,7 +121,11 @@
                     </div>
                     <div>
                         <h4>Cuenta</h4>
+                        {% if request.user.is_authenticated %}
+                        <a href="{% url 'logout' %}">Cerrar sesión</a>
+                        {% else %}
                         <a href="#login-modal" aria-haspopup="dialog">Iniciar sesión</a>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="foot__bot">

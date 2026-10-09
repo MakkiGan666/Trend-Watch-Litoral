@@ -36,6 +36,7 @@ urlpatterns = [
     # Autenticación
     path('api/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/auth/logout/', views.LogoutJWTView.as_view(), name='jwt_logout'),
     
     # Perfil de usuario
     path('api/auth/me/', UserMeView.as_view(), name='user_me'),

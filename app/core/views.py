@@ -5,7 +5,7 @@ from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, F
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import check_password
 import re
 from html import unescape
@@ -23,6 +23,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
@@ -30,7 +31,8 @@ from core.models import (
     User, TemaTrend, Tema, PublicacionTema
 )
 from .forms import PublicacionForm
-from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer
+from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
+from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -190,7 +192,7 @@ def login_view(request):
         identifier = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
         
-        user = authenticate(request, username=identifier, password=password)
+        user = autenticar_identificador(request, identifier, password)
         
         if user is not None:
             login(request, user)
@@ -204,7 +206,8 @@ def login_view(request):
             return render(request, 'inicio.html', {
                 'featured_trends': featured_trends,
                 'open_login_modal': True,
-                'login_error': 'Usuario o contraseña incorrectos.',
+                'login_error': ERROR_CREDENCIALES,
+                'login_identifier': identifier,
             })
 
     # Si entran por GET a /login/, redirigimos a la portada
@@ -416,6 +419,17 @@ def eliminar_publicacion(request, pk):
         pub.delete()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} eliminada exitosamente."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
+
+class LogoutJWTView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = LogoutJWTSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.validated_data['token'].blacklist()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class UserMeView(APIView):
     permission_classes = [IsAuthenticated]
