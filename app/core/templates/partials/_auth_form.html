@@ -12,13 +12,13 @@
     <span>TrendWatch <em>Litoral</em></span>
   </div>
   <h2 id="{{ heading_id }}" class="auth-flow__title" data-auth-title>Iniciá sesión o registrate</h2>
-  <p class="auth-flow__description" id="{{ description_id }}" data-auth-description>Continuá con tu email para acceder a TrendWatch.</p>
+  <p class="auth-flow__description" id="{{ description_id }}" data-auth-description>Continuá con tu usuario o email para acceder a TrendWatch.</p>
   <div data-auth-fields>
     <div class="field">
-      <label for="id_modal_username">Email</label>
+      <label for="id_modal_username">Usuario o email</label>
       <div class="input auth-flow__email">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 7 9 6 9-6"/></svg>
-        <input id="id_modal_username" name="username" type="email" autocomplete="username" placeholder="Ingresar email…" value="{{ login_identifier|default:'' }}" required>
+        <input id="id_modal_username" name="username" type="text" autocomplete="username" placeholder="Ingresar usuario o email…" value="{{ login_identifier|default:'' }}" required>
       </div>
     </div>
     <div class="auth-flow__providers" data-auth-providers>
@@ -42,7 +42,7 @@
         <button class="auth-flow__show" type="button" aria-label="Mostrar contraseña" aria-pressed="false" data-auth-password-toggle>Mostrar</button>
       </div>
     </div>
-    {% if error or login_error %}<p class="form-msg" role="alert">{% if error %}{{ error }}{% else %}{{ login_error }}{% endif %}</p>{% endif %}
+    {% if error or login_error %}<p class="form-msg" role="alert" data-auth-error-message>{% if error %}{{ error }}{% else %}{{ login_error }}{% endif %}</p>{% endif %}
     <button class="btn btn--primary btn--block auth-flow__next" type="submit" data-auth-next>Iniciar sesión</button>
     <button class="auth-flow__back" type="button" data-auth-back hidden>← Volver a las opciones de acceso</button>
     <p class="auth-foot">¿Todavía no tenés cuenta? <button type="button" data-auth-register>Registrate</button></p>
@@ -69,6 +69,6 @@
     <button class="btn btn--primary btn--block" type="submit">Crear cuenta</button>
     <button class="auth-flow__back" type="button" data-auth-return>¿Ya tenés cuenta? Iniciá sesión</button>
   </fieldset>
-  <noscript><p class="auth-flow__availability">Ingresá tu email y contraseña para iniciar sesión.</p></noscript>
+  <noscript><p class="auth-flow__availability">Ingresá tu usuario o email y contraseña para iniciar sesión.</p></noscript>
 </form>
 {% endif %}

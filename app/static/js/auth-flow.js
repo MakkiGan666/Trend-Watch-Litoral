@@ -3,6 +3,7 @@
   document.querySelectorAll('[data-auth-flow]').forEach(form => {
     const email = form.querySelector('[name="username"]');
     const password = form.querySelector('[name="password"]');
+    const errorMessage = form.querySelector('[data-auth-error-message]');
     const passwordStep = form.querySelector('[data-auth-password-step]');
     const providers = form.querySelector('[data-auth-providers]');
     const next = form.querySelector('[data-auth-next]');
@@ -33,8 +34,10 @@
       back.hidden = !signingIn;
       next.textContent = signingIn ? 'Iniciar sesión' : 'Siguiente';
       title.textContent = value === 'register' ? 'Registrate en TrendWatch' : (signingIn ? 'Ingresá tu contraseña' : 'Iniciá sesión o registrate');
-      description.textContent = value === 'register' ? 'Una cuenta para seguir la conversación del Litoral.' : (signingIn ? 'Accedé con tu cuenta de TrendWatch.' : 'Continuá con tu email para acceder a TrendWatch.');
+      description.textContent = value === 'register' ? 'Una cuenta para seguir la conversación del Litoral.' : (signingIn ? 'Accedé con tu cuenta de TrendWatch.' : 'Continuá con tu usuario o email para acceder a TrendWatch.');
       if (!signingIn) {
+        if (errorMessage) errorMessage.hidden = true;
+        delete form.dataset.authError;
         password.value = '';
         password.type = 'password';
         toggle.textContent = 'Mostrar';

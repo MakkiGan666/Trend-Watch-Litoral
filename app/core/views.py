@@ -5,7 +5,7 @@ from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, F
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import login, logout
 from django.contrib.auth.hashers import check_password
 import re
 from html import unescape
@@ -30,6 +30,7 @@ from core.models import (
     User, TemaTrend, Tema, PublicacionTema
 )
 from .forms import PublicacionForm
+from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 
@@ -190,7 +191,7 @@ def login_view(request):
         identifier = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
         
-        user = authenticate(request, username=identifier, password=password)
+        user = autenticar_identificador(request, identifier, password)
         
         if user is not None:
             login(request, user)
@@ -204,7 +205,8 @@ def login_view(request):
             return render(request, 'inicio.html', {
                 'featured_trends': featured_trends,
                 'open_login_modal': True,
-                'login_error': 'Usuario o contraseña incorrectos.',
+                'login_error': ERROR_CREDENCIALES,
+                'login_identifier': identifier,
             })
 
     # Si entran por GET a /login/, redirigimos a la portada

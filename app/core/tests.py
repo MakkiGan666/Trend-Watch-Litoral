@@ -18,6 +18,209 @@ from core.scrapers.noticias import fetch_elterritorio_news
 from core.serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer
 
 
+class LoginIdentificadorTestCase(TestCase):
+    def setUp(self):
+        from rest_framework.test import APIClient
+        self.api = APIClient()
+        self.password = '  clave de prueba  '
+        self.usuario = get_user_model().objects.create_user(
+            username='cuenta@local', email='Cuenta@example.test', password=self.password,
+        )
+
+    def comprobar_exito(self, identificador):
+        self.client.logout()
+        respuesta = self.client.post('/login/', {
+            'username': identificador, 'password': self.password,
+        })
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertEqual(int(self.client.session['_auth_user_id']), self.usuario.pk)
+        respuesta = self.api.post('/api/auth/login/', {
+            'username': identificador, 'password': self.password,
+        }, format='json')
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(set(respuesta.data), {'access', 'refresh'})
+        self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + respuesta.data['access'])
+        perfil = self.api.get('/api/auth/me/')
+        self.assertEqual(perfil.status_code, 200)
+        self.assertEqual(perfil.data['id'], self.usuario.pk)
+        self.api.credentials()
+
+    def comprobar_rechazo(self, identificador, password=None):
+        from core.services.autenticacion import ERROR_CREDENCIALES
+        self.client.logout()
+        datos = {'username': identificador, 'password': self.password if password is None else password}
+        respuesta = self.client.post('/login/', datos)
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.context['login_error'], ERROR_CREDENCIALES)
+        self.assertNotIn('_auth_user_id', self.client.session)
+        respuesta = self.api.post('/api/auth/login/', datos, format='json')
+        self.assertEqual(respuesta.status_code, 401)
+        self.assertEqual(str(respuesta.data['detail']), ERROR_CREDENCIALES)
+        self.assertNotIn('access', respuesta.data)
+
+    def test_username_email_case_y_espacios(self):
+        for identificador in ('cuenta@local', ' Cuenta@example.test ', 'CUENTA@EXAMPLE.TEST'):
+            with self.subTest(identificador=identificador):
+                self.comprobar_exito(identificador)
+        self.comprobar_rechazo('CUENTA@LOCAL')
+
+    def test_password_no_se_recorta(self):
+        self.comprobar_rechazo(self.usuario.username, self.password.strip())
+        self.usuario.set_password('   ')
+        self.usuario.save(update_fields=['password'])
+        self.password = '   '
+        self.comprobar_exito(self.usuario.email)
+
+    def test_username_sin_arroba_y_email_vacio(self):
+        self.usuario.username = 'cuenta_normal'
+        self.usuario.email = ''
+        self.usuario.save(update_fields=['username', 'email'])
+        get_user_model().objects.create_user(username='otra_sin_email', email='')
+        self.comprobar_exito(' cuenta_normal ')
+
+    def test_password_inutilizable(self):
+        self.usuario.set_unusable_password()
+        self.usuario.save(update_fields=['password'])
+        self.comprobar_rechazo(self.usuario.username)
+        self.comprobar_rechazo(self.usuario.email)
+
+    def test_inexistente_inactivo_y_password_incorrecto(self):
+        self.comprobar_rechazo('inexistente')
+        self.comprobar_rechazo(self.usuario.email, 'incorrecta')
+        self.usuario.is_active = False
+        self.usuario.save(update_fields=['is_active'])
+        self.comprobar_rechazo(self.usuario.username)
+        self.comprobar_rechazo(self.usuario.email)
+
+    def test_duplicados_incluyen_inactivos_y_no_eligen_por_password(self):
+        otro = get_user_model().objects.create_user(
+            username='otra', email=self.usuario.email, password='distinta', is_active=False,
+        )
+        self.comprobar_rechazo(self.usuario.email)
+        otro.email = self.usuario.email.upper()
+        otro.save(update_fields=['email'])
+        self.comprobar_rechazo(self.usuario.email)
+
+    def test_colision_email_username_y_misma_cuenta(self):
+        get_user_model().objects.create_user(username=self.usuario.email, password='distinta')
+        self.comprobar_rechazo(self.usuario.email)
+        self.usuario.email = self.usuario.username
+        self.usuario.save(update_fields=['email'])
+        self.comprobar_exito(self.usuario.username)
+
+    def test_tipos_invalidos_y_campos_ausentes(self):
+        from core.services.autenticacion import autenticar_identificador
+        for valor in (123, 1.5, True, [], {}, None):
+            self.assertIsNone(autenticar_identificador(None, valor, self.password))
+            for campo in ('username', 'password'):
+                datos = {'username': self.usuario.username, 'password': self.password, campo: valor}
+                self.assertEqual(self.api.post('/api/auth/login/', datos, format='json').status_code, 400)
+        for datos in ({}, {'username': self.usuario.username}, {'password': self.password}):
+            self.assertEqual(self.api.post('/api/auth/login/', datos, format='json').status_code, 400)
+
+    def test_identificador_vacio_o_solo_espacios(self):
+        from core.services.autenticacion import ERROR_CREDENCIALES
+        for identificador in ('', '   ', '\t\n '):
+            with self.subTest(identificador=repr(identificador)):
+                self.client.logout()
+                datos = {'username': identificador, 'password': self.password}
+                with patch('core.views.login') as iniciar_sesion, patch(
+                    'core.serializers.LoginTokenObtainPairSerializer.get_token'
+                ) as emitir:
+                    respuesta = self.client.post('/login/', datos)
+                    self.assertEqual(respuesta.status_code, 200)
+                    self.assertEqual(respuesta.context['login_error'], ERROR_CREDENCIALES)
+                    self.assertNotIn('_auth_user_id', self.client.session)
+                    respuesta = self.api.post('/api/auth/login/', datos, format='json')
+                    self.assertEqual(respuesta.status_code, 400)
+                    self.assertEqual(set(respuesta.data), {'username'})
+                    self.assertEqual(respuesta.data['username'][0].code, 'blank')
+                    iniciar_sesion.assert_not_called()
+                    emitir.assert_not_called()
+
+    def test_identidad_se_comprueba_antes_de_login_y_tokens(self):
+        otro = get_user_model().objects.create_user(username='otro')
+        with patch('core.services.autenticacion.authenticate', return_value=otro), patch(
+            'core.serializers.LoginTokenObtainPairSerializer.get_token'
+        ) as emitir, patch('core.views.login') as iniciar_sesion:
+            self.comprobar_rechazo(self.usuario.username)
+            iniciar_sesion.assert_not_called()
+            emitir.assert_not_called()
+
+    def test_navegacion_anonima_y_autenticada(self):
+        from django.shortcuts import render
+
+        def paginas():
+            portada = self.client.get('/')
+            # Categorías y Litoral ocultan los bloques nav/footer de base.html.
+            return portada, render(portada.wsgi_request, 'base.html')
+
+        for respuesta in paginas():
+            self.assertContains(respuesta, '<span>Ingresar</span>', html=True)
+            self.assertContains(respuesta, 'Iniciar sesión')
+            self.assertNotContains(respuesta, 'Cerrar sesión')
+        respuesta = self.client.post('/login/', {
+            'username': self.usuario.email, 'password': self.password,
+        }, follow=True)
+        self.assertEqual(respuesta.redirect_chain, [('/', 302)])
+        for respuesta in paginas():
+            self.assertContains(respuesta, 'Hola, ' + self.usuario.username)
+            self.assertContains(respuesta, 'Cerrar sesión')
+            self.assertNotContains(respuesta, '<span>Ingresar</span>', html=True)
+            self.assertNotContains(respuesta, '>Iniciar sesión</a>')
+
+    def test_error_anonimo_conserva_identificador_sin_password(self):
+        identificador = '  CUENTA@EXAMPLE.TEST  '
+        password_incorrecto = 'password-no-devolver'
+        respuesta = self.client.post('/login/', {
+            'username': identificador, 'password': password_incorrecto,
+        })
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotIn('Location', respuesta)
+        self.assertEqual(respuesta.context['login_identifier'], identificador.strip())
+        self.assertTrue(respuesta.context['open_login_modal'])
+        self.assertContains(respuesta, 'value="CUENTA@EXAMPLE.TEST"')
+        self.assertContains(respuesta, 'Usuario o contraseña incorrectos.')
+        self.assertContains(respuesta, '<p class="form-msg" role="alert" data-auth-error-message>Usuario o contraseña incorrectos.</p>', html=True)
+        self.assertNotContains(respuesta, password_incorrecto)
+        self.assertNotIn('_auth_user_id', self.client.session)
+
+    def test_autenticado_redirige_sin_revalidar_credenciales(self):
+        self.client.force_login(self.usuario)
+        with patch('core.views.autenticar_identificador') as autenticar:
+            for metodo in ('get', 'post'):
+                respuesta = getattr(self.client, metodo)('/login/', {
+                    'username': self.usuario.email, 'password': 'incorrecta',
+                })
+                self.assertRedirects(respuesta, '/', fetch_redirect_response=False)
+                self.assertEqual(int(self.client.session['_auth_user_id']), self.usuario.pk)
+            autenticar.assert_not_called()
+
+    def test_backend_recibe_username_canonico_y_password_intacto(self):
+        from core.services.autenticacion import autenticar_identificador
+        with patch('core.services.autenticacion.authenticate', return_value=self.usuario) as backend:
+            self.assertEqual(autenticar_identificador(None, self.usuario.email.upper(), self.password), self.usuario)
+            backend.assert_called_once_with(None, username=self.usuario.username, password=self.password)
+
+    def test_roles_grupos_historicos_y_permisos_se_preservan(self):
+        for rol in ('Usuario', 'Administrador', 'Lector'):
+            self.usuario.groups.add(Group.objects.create(name=rol))
+        permiso = Permission.objects.get(content_type__app_label='core', codename='view_publicacion')
+        self.usuario.user_permissions.add(permiso)
+        for identificador in (self.usuario.username, self.usuario.email):
+            self.comprobar_exito(identificador)
+            respuesta = self.api.post('/api/auth/login/', {
+                'username': identificador, 'password': self.password,
+            }, format='json')
+            self.api.credentials(HTTP_AUTHORIZATION='Bearer ' + respuesta.data['access'])
+            self.assertEqual(self.api.get('/api/auth/me/').data['roles'], ['ADMINISTRADOR', 'USUARIO'])
+            self.api.credentials()
+        self.usuario.refresh_from_db()
+        self.assertEqual(set(self.usuario.groups.values_list('name', flat=True)), {'Usuario', 'Administrador', 'Lector'})
+        self.assertTrue(self.usuario.user_permissions.filter(pk=permiso.pk).exists())
+        self.assertTrue(self.usuario.has_perm('core.view_publicacion'))
+
+
 def resultado_ia_simulado(estado='EXITO'):
     seleccionadas, procesadas, omitidas, fallidas = {
         'EXITO': (1, 1, 0, 0), 'PARCIAL': (2, 1, 0, 1), 'FALLO': (1, 0, 0, 1),

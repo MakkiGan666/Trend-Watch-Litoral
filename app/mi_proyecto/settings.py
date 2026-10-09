@@ -158,6 +158,7 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
+    'TOKEN_OBTAIN_SERIALIZER': 'core.serializers.LoginTokenObtainPairSerializer',
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     'ROTATE_REFRESH_TOKENS': True,

@@ -10,8 +10,8 @@
       <button class="btn btn--ghost notification-preferences-button" type="button" data-notification-configure>Configurar notificaciones</button>
     </div>
   </div>
-  {% if request.session.user_id %}
-    <span class="nav__user">Hola, {{ request.session.user_name }}</span>
+  {% if request.user.is_authenticated %}
+    <span class="nav__user">Hola, {{ request.user.get_username }}</span>
     <a class="btn btn--ghost account-enter" href="{% url 'logout' %}">Cerrar sesión</a>
   {% else %}
     <a class="btn btn--ghost account-enter" href="{% url 'landing' %}#login-modal" aria-haspopup="dialog">

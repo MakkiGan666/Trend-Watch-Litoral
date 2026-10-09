@@ -3,6 +3,11 @@ from collections.abc import Mapping
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.contrib.auth.models import update_last_login
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.settings import api_settings
+from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
 
 
 class StrictCharField(serializers.CharField):
@@ -20,6 +25,36 @@ class StrictURLField(serializers.URLField):
         if not isinstance(data, str):
             self.fail('invalid')
         return super().to_internal_value(data)
+
+
+class PasswordLoginField(serializers.CharField):
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail('invalid')
+        return super().to_internal_value(data)
+
+
+class LoginTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # El padre crea estos campos en __init__; reemplazarlos antes de validar.
+        self.fields['username'] = StrictCharField(write_only=True)
+        self.fields['password'] = PasswordLoginField(
+            write_only=True, trim_whitespace=False, style={'input_type': 'password'},
+        )
+
+    def validate(self, attrs):
+        self.user = autenticar_identificador(
+            self.context.get('request'), attrs['username'], attrs['password'],
+        )
+        if not api_settings.USER_AUTHENTICATION_RULE(self.user):
+            raise AuthenticationFailed(ERROR_CREDENCIALES, code='no_active_account')
+        # La identidad ya fue comprobada por el módulo compartido antes de emitir.
+        refresh = self.get_token(self.user)
+        data = {'refresh': str(refresh), 'access': str(refresh.access_token)}
+        if api_settings.UPDATE_LAST_LOGIN:
+            update_last_login(None, self.user)
+        return data
 
 
 class PublicacionInputSerializer(serializers.Serializer):
