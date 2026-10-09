@@ -1,9 +1,9 @@
 (function () {
   'use strict';
+
   document.querySelectorAll('[data-auth-flow]').forEach(form => {
     const email = form.querySelector('[name="username"]');
     const password = form.querySelector('[name="password"]');
-    const errorMessage = form.querySelector('[data-auth-error-message]');
     const passwordStep = form.querySelector('[data-auth-password-step]');
     const providers = form.querySelector('[data-auth-providers]');
     const next = form.querySelector('[data-auth-next]');
@@ -34,10 +34,8 @@
       back.hidden = !signingIn;
       next.textContent = signingIn ? 'Iniciar sesión' : 'Siguiente';
       title.textContent = value === 'register' ? 'Registrate en TrendWatch' : (signingIn ? 'Ingresá tu contraseña' : 'Iniciá sesión o registrate');
-      description.textContent = value === 'register' ? 'Una cuenta para seguir la conversación del Litoral.' : (signingIn ? 'Accedé con tu cuenta de TrendWatch.' : 'Continuá con tu usuario o email para acceder a TrendWatch.');
+      description.textContent = value === 'register' ? 'Una cuenta para seguir la conversación del Litoral.' : (signingIn ? 'Accedé con tu cuenta de TrendWatch.' : 'Continuá con tu email para acceder a TrendWatch.');
       if (!signingIn) {
-        if (errorMessage) errorMessage.hidden = true;
-        delete form.dataset.authError;
         password.value = '';
         password.type = 'password';
         toggle.textContent = 'Mostrar';
@@ -59,36 +57,33 @@
         }
       }
     });
-    // Evita enviar una contraseña para otro email editado en el segundo paso.
-    email.addEventListener('input', () => { if (step === 'password') setStep('email', false); });
-    back.addEventListener('click', () => setStep('email'));
-    form.querySelector('[data-auth-register]').addEventListener('click', () => setStep('register'));
-    form.querySelector('[data-auth-return]').addEventListener('click', () => setStep('email'));
-    toggle.addEventListener('click', () => {
-      const show = password.type === 'password';
-      password.type = show ? 'text' : 'password';
-      toggle.textContent = show ? 'Ocultar' : 'Mostrar';
-      toggle.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
-      toggle.setAttribute('aria-pressed', String(show));
-      password.focus();
-    });
+
     const modal = form.closest('.login-modal');
-    if (modal) modal.addEventListener('auth:reset', () => {
-      registerPassword.value = '';
-      registerConfirm.value = '';
-      registerConfirm.setCustomValidity('');
-      setStep('email', false);
-    });
-    setStep(form.dataset.authError ? 'password' : 'email', false);
+    if (modal) {
+      modal.addEventListener('auth:reset', () => setMode('login', false));
+    }
+    setMode('login', false);
   });
+
   const bell = document.querySelector('[data-account-notifications]');
   if (bell) {
     const panel = document.getElementById(bell.getAttribute('aria-controls'));
-    const close = () => { panel.hidden = true; bell.setAttribute('aria-expanded', 'false'); };
-    bell.addEventListener('click', () => { panel.hidden = !panel.hidden; bell.setAttribute('aria-expanded', String(!panel.hidden)); });
-    document.addEventListener('click', event => { if (!bell.parentElement.contains(event.target)) close(); });
+    const close = () => {
+      panel.hidden = true;
+      bell.setAttribute('aria-expanded', 'false');
+    };
+    bell.addEventListener('click', () => {
+      panel.hidden = !panel.hidden;
+      bell.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+    document.addEventListener('click', event => {
+      if (!bell.parentElement.contains(event.target)) close();
+    });
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !panel.hidden) { close(); bell.focus(); }
+      if (event.key === 'Escape' && !panel.hidden) {
+        close();
+        bell.focus();
+      }
     });
   }
 })();

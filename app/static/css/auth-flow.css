@@ -40,3 +40,8 @@
 
 .auth-flow__registration{border:0;padding:0;margin:0;min-width:0}
 .auth-flow__registration .input input{background:transparent;color:var(--tx);border:0;outline:0;font:inherit}
+.account-logout-form{display:inline-flex;margin:0}
+.foot__link{display:block;border:0;background:none;color:var(--tx-2);font:inherit;font-size:14px;padding:4px 0;cursor:pointer}
+.foot__link:hover{color:var(--tx)}
+@media(max-width:660px){.account-actions .nav__user{display:inline-block;font-size:12px}.account-logout-form .account-enter{padding:10px 8px;font-size:12px}}
+@media(max-width:420px){.account-logout-form .account-enter{min-width:0;padding:0 7px;font-size:11px}}

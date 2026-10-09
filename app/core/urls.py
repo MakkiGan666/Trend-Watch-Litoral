@@ -20,6 +20,7 @@ urlpatterns = [
     path('localidad/<slug:slug>/', views.localidad, name='localidad'),
     path('api/localidades/<slug:slug>/publicaciones/', views.publicaciones_localidad, name='publicaciones_localidad'),
     path('login/', views.login_view, name='login'),
+    path('registro/', views.registro_view, name='registro'),
     path('logout/', views.logout_view, name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),

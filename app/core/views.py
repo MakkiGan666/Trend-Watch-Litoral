@@ -5,14 +5,18 @@ from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, F
-from django.contrib.auth import login, logout
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.hashers import check_password
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 import re
 from html import unescape
 from urllib.parse import urlsplit
 from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .services.cotizaciones import obtener_cotizaciones
 from django.contrib.auth.decorators import login_required, permission_required
@@ -184,15 +188,14 @@ def publicaciones_localidad(request, slug):
 
 
 def login_view(request):
-    # Si ya está logueado, redirige directamente al inicio
-    if request.user.is_authenticated:
-        return redirect('landing')
+    if request.method != 'POST':
+        return redirect(f"{reverse('landing')}#login-modal")
 
     if request.method == 'POST':
         identifier = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
         
-        user = autenticar_identificador(request, identifier, password)
+        user = authenticate(request, username=identifier, password=password)
         
         if user is not None:
             login(request, user)
@@ -206,8 +209,7 @@ def login_view(request):
             return render(request, 'inicio.html', {
                 'featured_trends': featured_trends,
                 'open_login_modal': True,
-                'login_error': ERROR_CREDENCIALES,
-                'login_identifier': identifier,
+                'login_error': 'Usuario o contraseña incorrectos.',
             })
 
     # Si entran por GET a /login/, redirigimos a la portada
@@ -215,9 +217,15 @@ def login_view(request):
 
 
 def logout_view(request):
-    logout(request) # Limpia la sesión
-    return redirect('landing')
-
+    logout(request)
+    destination = request.POST.get('next', '')
+    if not url_has_allowed_host_and_scheme(
+        destination,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        destination = 'landing'
+    return redirect(destination)
 
 @login_required(login_url='login')
 @permission_required('core.view_publicacion', raise_exception=True)
