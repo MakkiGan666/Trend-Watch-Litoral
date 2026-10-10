@@ -181,7 +181,12 @@ class LoginIdentificadorTestCase(TestCase):
         self.assertTrue(respuesta.context['open_login_modal'])
         self.assertContains(respuesta, 'value="CUENTA@EXAMPLE.TEST"')
         self.assertContains(respuesta, 'Usuario o contraseña incorrectos.')
-        self.assertContains(respuesta, '<p class="form-msg" role="alert" data-auth-error-message>Usuario o contraseña incorrectos.</p>', html=True)
+        self.assertContains(respuesta, 'id="login-modal"')
+        self.assertNotContains(
+            respuesta,
+            'aria-describedby="login-modal-description" hidden',
+        )
+        self.assertContains(respuesta, '<p class="form-msg" role="alert" data-login-message>Usuario o contraseña incorrectos.</p>', html=True)
         self.assertNotContains(respuesta, password_incorrecto)
         self.assertNotIn('_auth_user_id', self.client.session)
 
