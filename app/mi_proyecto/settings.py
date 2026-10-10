@@ -13,21 +13,31 @@ import os
 from dotenv import load_dotenv 
 from pathlib import Path
 from datetime import timedelta  
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Cargar las variables del archivo .env antes de leer cualquier configuración.
+load_dotenv()
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--2$(sznj-f#b=1z#5l^-487u$6zujfi@-*itzxonz1ouctd1%f'
+SECRET_KEY = os.getenv('SECRET_KEY', '').strip()
+if not SECRET_KEY:
+    raise ImproperlyConfigured('Definir SECRET_KEY en el entorno o en .env.')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False').strip().lower() in ('1', 'true', 'yes')
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '*']
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
 
 
 # Application definition
@@ -81,8 +91,6 @@ WSGI_APPLICATION = 'mi_proyecto.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-# Cargar las variables del archivo .env
-load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
 # Con Docker Compose se define DB_HOST y se usa PostgreSQL/PostGIS.
@@ -93,7 +101,7 @@ if os.environ.get('DB_HOST'):
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': os.getenv('DB_NAME', 'db'),
             'USER': os.getenv('DB_USER', 'postgres'),
-            'PASSWORD': os.getenv('DB_PASSWORD', 'Aesnyapt'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
             'HOST': os.getenv('DB_HOST', 'localhost'),
             'PORT': os.getenv('DB_PORT', '5432'),
         }

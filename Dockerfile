@@ -12,5 +12,6 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia el resto del código del proyecto al contenedor
-COPY . /app/
+# Copia el código de la aplicación (mismo layout que el volumen ./app:/app de Compose).
+# .env y otros archivos locales quedan fuera por .dockerignore.
+COPY app/ /app/

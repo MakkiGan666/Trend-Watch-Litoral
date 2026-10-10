@@ -1,0 +1,23 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+
+# Control de versiones y editores
+.git
+.gitignore
+.vscode
+.devcontainer
+
+# Entornos virtuales y artefactos de Python
+venv
+.venv
+**/__pycache__
+**/*.pyc
+**/db.sqlite3
+app/staticfiles
+
+# Material de referencia que no se sirve
+docs
+drawio
+*.csv

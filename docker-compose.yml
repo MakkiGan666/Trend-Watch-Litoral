@@ -4,15 +4,16 @@ services:
     container_name: trendwatch_litoral_db
     restart: always
     environment:
-      POSTGRES_DB: db
-      POSTGRES_USER: postgres  
-      POSTGRES_PASSWORD: django_password
+      POSTGRES_DB: ${DB_NAME:-db}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Definir DB_PASSWORD en .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Sólo accesible desde esta máquina (desarrollo local sin Docker).
+      - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -26,13 +27,10 @@ services:
       - ./app:/app
     ports:
       - "8000:8000"
+    # El resto de la configuración (SECRET_KEY, DB_*, GEMINI_API_KEY, ...) llega desde .env.
     environment:
-      DB_NAME: db
-      DB_USER: postgres
-      DB_PASSWORD: django_password
       DB_HOST: db
       DB_PORT: 5432
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
     depends_on:
       db:
         condition: service_healthy
