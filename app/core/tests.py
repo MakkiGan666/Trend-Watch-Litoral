@@ -2694,3 +2694,58 @@ class ConsumidoresResultadoIATestCase(TestCase):
         with patch('core.views.procesar_publicaciones_con_ia', return_value='Procesado'):
             with self.assertRaises(TypeError):
                 self.client.post('/procesar-ia/')
+
+
+class AdminPublicacionTemaTrendTestCase(TestCase):
+    def setUp(self):
+        self.admin = get_user_model().objects.create_superuser(
+            username='admin-prueba', email='admin@example.test', password='clave-admin-prueba',
+        )
+        self.client.force_login(self.admin)
+
+    def crear_desde_admin(self, url, titulo='Título admin'):
+        return self.client.post('/admin/core/publicacion/add/', {
+            'fuente': 'Manual', 'titulo': titulo, 'contenido': 'Contenido',
+            'url': url, 'fecha_captura_0': '2026-10-09', 'fecha_captura_1': '12:00:00',
+        })
+
+    def test_admin_genera_hash_origen_desde_url(self):
+        respuesta = self.crear_desde_admin('https://example.com/admin-1')
+        self.assertEqual(respuesta.status_code, 302)
+        publicacion = Publicacion.objects.get(url='https://example.com/admin-1')
+        self.assertEqual(publicacion.hash_origen, hashlib.sha256(b'https://example.com/admin-1').hexdigest())
+
+        self.assertEqual(self.crear_desde_admin('https://example.com/admin-2').status_code, 302)
+        self.assertEqual(Publicacion.objects.count(), 2)
+
+    def test_admin_rechaza_origen_duplicado_sin_error_500(self):
+        self.crear_desde_admin('https://example.com/duplicada')
+        respuesta = self.crear_desde_admin('https://example.com/duplicada', titulo='Otro título')
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'Ya existe una publicación con el mismo origen')
+        self.assertEqual(Publicacion.objects.count(), 1)
+
+    def test_admin_edicion_conserva_hash_origen(self):
+        self.crear_desde_admin('https://example.com/original')
+        publicacion = Publicacion.objects.get()
+        hash_original = publicacion.hash_origen
+        respuesta = self.client.post(f'/admin/core/publicacion/{publicacion.pk}/change/', {
+            'fuente': 'Manual', 'titulo': 'Título editado', 'contenido': 'Contenido',
+            'url': 'https://example.com/editada', 'fecha_captura_0': '2026-10-09', 'fecha_captura_1': '12:00:00',
+        })
+        self.assertEqual(respuesta.status_code, 302)
+        publicacion.refresh_from_db()
+        self.assertEqual(publicacion.hash_origen, hash_original)
+
+    def test_admin_busqueda_tematrend_por_tema_y_trend(self):
+        from core.models import Categoria, Tema, TemaTrend, Trend
+        categoria = Categoria.objects.create(nombre_categoria='Economía')
+        tema = Tema.objects.create(descripcion='Inflación regional', id_categoria=categoria)
+        trend = Trend.objects.create(relevancia='Alta', intervalos_periodo='Semanal')
+        TemaTrend.objects.create(id_temas=tema, id_trends=trend)
+        for termino in ('Inflación', 'Alta'):
+            respuesta = self.client.get('/admin/core/tematrend/', {'q': termino})
+            self.assertEqual(respuesta.status_code, 200)
+            self.assertEqual(respuesta.context['cl'].result_count, 1)
+        respuesta = self.client.get('/admin/core/tematrend/', {'q': 'inexistente'})
+        self.assertEqual(respuesta.context['cl'].result_count, 0)

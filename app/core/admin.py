@@ -2,6 +2,7 @@ from django.contrib import admin
 from django import forms
 from django.db import transaction
 from django.core.exceptions import PermissionDenied
+from .services.scraper import generar_hash
 from .services.integridad_sentimiento import (
     ConflictoSentimiento, sentimiento_unico, validar_numero,
 )
@@ -17,8 +18,27 @@ from .models import (
 )
 
 
+class PublicacionAdminForm(forms.ModelForm):
+    class Meta:
+        model = Publicacion
+        fields = '__all__'
+
+    def clean(self):
+        data = super().clean()
+        # El hash representa el origen: se genera sólo al crear, igual que la API.
+        if self.instance.pk is None:
+            base_hash = data.get('url') or data.get('titulo')
+            if base_hash:
+                hash_origen = generar_hash(base_hash)
+                if Publicacion.objects.filter(hash_origen=hash_origen).exists():
+                    raise forms.ValidationError('Ya existe una publicación con el mismo origen (URL o título).')
+                self.instance.hash_origen = hash_origen
+        return data
+
+
 @admin.register(Publicacion)
 class PublicacionAdmin(admin.ModelAdmin):
+    form = PublicacionAdminForm
     list_display = ('id_publicacion_api', 'titulo', 'fuente', 'procesado_ia')
     list_filter = ('fuente', 'procesado_ia')
     search_fields = ('titulo', 'contenido', 'url')
@@ -113,7 +133,8 @@ class RegistroDatosAdmin(admin.ModelAdmin):
 
 @admin.register(TemaTrend)
 class TemaTrendAdmin(admin.ModelAdmin):
-    search_fields = ('id_tema',)
+    list_display = ('id_temas', 'id_trends')
+    search_fields = ('id_temas__descripcion', 'id_trends__relevancia', 'id_trends__intervalos_periodo')
 
 
 @admin.register(PublicacionTema)
