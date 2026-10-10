@@ -17,7 +17,7 @@ Run these commands from the repository root:
 - `docker compose exec web python manage.py test core`: run core tests.
 - `docker compose exec web python manage.py makemigrations core`: generate migrations after model changes.
 
-For local development, install `requirements.txt` in a virtual environment and configure `DB_HOST` and related database variables before running `python app/manage.py runserver`. The README describes a SQLite fallback, but current settings do not implement it.
+For local development, copy `.env.example` to `.env`, install `requirements.txt` in a virtual environment (Python 3.12+), and run `python app/manage.py runserver`. An empty `DB_HOST` uses SQLite (`app/db.sqlite3`); a non-empty one uses PostgreSQL with the `DB_*` variables.
 
 ## Coding Style & Naming Conventions
 

@@ -1,11 +1,13 @@
-Django>=5.0
-psycopg2-binary>=2.9
-pandas
-feedparser
-newspaper3k
-scipy
-google-genai
-python-dotenv
-lxml_html_clean
-djangorestframework
-djangorestframework-simplejwt
+# Versiones validadas con Python 3.13+ (Django 6.1 requiere Python >= 3.12).
+Django==6.1.2
+psycopg2-binary==2.9.13
+djangorestframework==3.18.3
+djangorestframework-simplejwt==5.5.1
+python-dotenv==1.2.4
+google-genai==2.29.0
+newspaper3k==0.2.8
+lxml_html_clean==0.4.5
+feedparser==6.0.14
+pandas==3.0.6
+scipy==1.18.1
+numpy==2.5.3
