@@ -52,7 +52,7 @@ python -c "import secrets; print(secrets.token_urlsafe(50))"   # pegar como SECR
 
 > **Base existente:** PostgreSQL sólo aplica `POSTGRES_PASSWORD` al crear el
 > volumen. Si ya existe `postgres_data`, `DB_PASSWORD` debe coincidir con la
-> contraseña con la que se creó (antes `django_password`, fijada en Compose).
+> contraseña con la que se creó (la que estaba fijada en el `docker-compose.yml` anterior).
 
 ## Instalación inicial con Docker (PostgreSQL/PostGIS)
 
