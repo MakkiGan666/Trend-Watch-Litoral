@@ -14,14 +14,49 @@ trendwatch-litoral/
 │   └── static/             # css/, js/, mockup/ (fondos de departamentos)
 ├── docs/                   # mockups y prototipos (no se sirven en la web)
 ├── drawio/                 # diagrama entidad-relación
+├── .env.example            # plantilla de configuración (copiar a .env)
 ├── Dockerfile
 ├── docker-compose.yml
 └── requirements.txt
 ```
 
+## Requisitos
+
+- Docker Desktop con Docker Compose v2 (opción recomendada), o
+- Python 3.12 o superior para desarrollo local sin Docker (Django 6.1 no
+  soporta versiones anteriores). La imagen Docker usa Python 3.13.
+
+Las dependencias están fijadas en `requirements.txt` con las versiones validadas.
+
+## Configuración (`.env`)
+
+Toda la configuración sensible se lee de variables de entorno; no hay claves ni
+contraseñas en el código. Desde la raíz del repositorio:
+
+```bash
+cp .env.example .env            # Windows (PowerShell): Copy-Item .env.example .env
+python -c "import secrets; print(secrets.token_urlsafe(50))"   # pegar como SECRET_KEY
+```
+
+| Variable | Obligatoria | Uso |
+|---|---|---|
+| `SECRET_KEY` | Sí | Clave de Django. Sin ella la aplicación no arranca. |
+| `DEBUG` | No (`False`) | `True` sólo en desarrollo. |
+| `ALLOWED_HOSTS` | No (`localhost,127.0.0.1`) | Hosts separados por coma. |
+| `DB_PASSWORD` | Sí con Docker | Contraseña de PostgreSQL; Compose no inicia sin ella. |
+| `DB_HOST` | No | Con valor usa PostgreSQL; vacío usa SQLite (`app/db.sqlite3`). Compose lo fuerza a `db`. |
+| `DB_NAME`, `DB_USER`, `DB_PORT` | No (`db`, `postgres`, `5432`) | Conexión a PostgreSQL. |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Para IA | Procesamiento con Gemini. |
+
+`.env` está en `.gitignore` y `.dockerignore`: no se commitea ni se copia a la imagen.
+
+> **Base existente:** PostgreSQL sólo aplica `POSTGRES_PASSWORD` al crear el
+> volumen. Si ya existe `postgres_data`, `DB_PASSWORD` debe coincidir con la
+> contraseña con la que se creó (la que estaba fijada en el `docker-compose.yml` anterior).
+
 ## Instalación inicial con Docker (PostgreSQL/PostGIS)
 
-Ejecutar desde la raíz, con la configuración de entorno preparada. Compose
+Ejecutar desde la raíz, con `.env` preparado. Compose
 monta `./app` en `/app`; los comandos puntuales siguientes sustituyen `runserver`
 y no publican los puertos de web. Iniciar sólo la base y aplicar las migraciones
 antes de habilitar web para atender tráfico:
@@ -82,14 +117,32 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Preparar también PostgreSQL/PostGIS para desarrollo local.
-La configuración actual define PostgreSQL cuando está presente `DB_HOST`; no
-define una base SQLite cuando falta esa variable. Para ejecutar
-`python app/manage.py migrate` o `runserver` localmente,
-preparar las dependencias y una base de desarrollo con las variables `DB_*`
-correspondientes. No utilizar la base compartida para pruebas que escriban datos.
-La validación aislada con SQLite requiere una configuración específica desde el
-arranque de Django, distinta de la configuración habitual.
+Elegir la base según `DB_HOST` en `.env`:
+
+- **SQLite (más simple):** dejar `DB_HOST=` vacío. Se crea `app/db.sqlite3`
+  (ignorado por git).
+- **PostgreSQL local:** `DB_HOST=localhost` y las variables `DB_*`. Puede usarse
+  la base del Compose con `docker compose up -d db` (publicada sólo en
+  `127.0.0.1:5432`).
+
+```bash
+python app/manage.py migrate
+python app/manage.py configurar_roles
+python app/manage.py createsuperuser
+python app/manage.py runserver
+```
+
+Tests:
+
+```bash
+python app/manage.py test core
+```
+
+Con SQLite, 6 tests que dependen de PostgreSQL (concurrencia e introspección de
+restricciones de `PublicacionDuplicadosTestCase` y `PublicacionConcurrenciaTestCase`)
+fallan; ejecutar la suite completa contra PostgreSQL
+(`docker compose exec web python manage.py test core`).
+No utilizar la base compartida para pruebas que escriban datos.
 
 ## Rutas
 
@@ -111,9 +164,7 @@ Si el identificador corresponde a varias cuentas distintas, incluidas inactivas,
 se rechaza sin elegir una cuenta. Credenciales incorrectas, cuentas inexistentes,
 inactivas o identificadores ambiguos reciben un error genérico.
 
-La versión validada es **Simple JWT 5.5.1**. `requirements.txt` no fija esa versión;
-una instalación nueva debe comprobar las versiones efectivas antes de asumir la
-misma compatibilidad.
+La versión validada es **Simple JWT 5.5.1**, fijada en `requirements.txt`.
 
 ### Endpoints JWT
 
