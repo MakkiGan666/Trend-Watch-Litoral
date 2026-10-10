@@ -1,5 +1,5 @@
 # Usa una imagen oficial de Python como base
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Evita que Python escriba archivos .pyc y fuerza el output de logs
 ENV PYTHONDONTWRITEBYTECODE=1

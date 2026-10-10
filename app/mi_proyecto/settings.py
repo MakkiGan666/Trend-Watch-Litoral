@@ -93,17 +93,24 @@ WSGI_APPLICATION = 'mi_proyecto.wsgi.application'
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 
-# Con Docker Compose se define DB_HOST y se usa PostgreSQL/PostGIS.
-# Sin DB_HOST (por ejemplo `python manage.py runserver` en tu PC) usa SQLite.
-if os.environ.get('DB_HOST'):
+# Con DB_HOST (Docker Compose o una base local) se usa PostgreSQL.
+# Sin DB_HOST se usa SQLite en app/db.sqlite3, sólo para desarrollo y pruebas locales.
+if os.getenv('DB_HOST', '').strip():
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': os.getenv('DB_NAME', 'db'),
             'USER': os.getenv('DB_USER', 'postgres'),
             'PASSWORD': os.getenv('DB_PASSWORD', ''),
-            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'HOST': os.getenv('DB_HOST').strip(),
             'PORT': os.getenv('DB_PORT', '5432'),
+        }
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
 
