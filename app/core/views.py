@@ -1,14 +1,13 @@
-import json
 import hashlib
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, F
-from django.contrib.auth import authenticate, login, logout
-from django.contrib.auth.hashers import check_password
+from django.db.models import Count
+from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 import re
 from html import unescape
 from urllib.parse import urlsplit
@@ -31,16 +30,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, RegistroDatos, Sentimiento, Locacion, 
-    User, TemaTrend, Tema, PublicacionTema
+    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema
 )
 from .forms import PublicacionForm
-from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
+from .services.autenticacion import autenticar_identificador
 
 # Servicios (Scrapers, Sentiment & Gemini)
-from core.services import scraper as scraper_service
 from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
@@ -50,39 +47,10 @@ from .services.integridad_sentimiento import (
 )
 
 
-_fetch_elterritorio_news_by_category = getattr(
-    scraper_service,
-    'fetch_elterritorio_news_by_category',
-    None,
-)
-if _fetch_elterritorio_news_by_category is not None:
-    fetch_elterritorio_news_by_category = _fetch_elterritorio_news_by_category
-else:
-    def fetch_elterritorio_news_by_category(*args, **kwargs) -> list[dict]:
-        raise NotImplementedError(
-            'La función fetch_elterritorio_news_by_category no está disponible en core.services.scraper.'
-        )
-
-_fetch_and_store_elterritorio = getattr(
-    scraper_service,
-    'fetch_and_store_elterritorio',
-    None,
-)
-if _fetch_and_store_elterritorio is not None:
-    fetch_and_store_elterritorio = _fetch_and_store_elterritorio
-else:
-    def fetch_and_store_elterritorio(*args, **kwargs) -> str:
-        raise NotImplementedError(
-            'La función fetch_and_store_elterritorio no está disponible en core.services.scraper.'
-        )
-
-
 # ==========================================
 # VISTAS WEB Y PLANTILLAS HTML
 # ==========================================
 
-from django.db.models import Count
-from core.models import TemaTrend
 
 def landing(request):
     """
@@ -111,13 +79,27 @@ def cotizaciones(request):
     return JsonResponse(obtener_cotizaciones())
 
 
+def _categorias_de_publicacion(publicacion):
+    """Devuelve, sin duplicados, las categorías vinculadas a una publicación."""
+    categorias = []
+    vistos = set()
+    for relacion in (
+        PublicacionTema.objects.filter(id_publicacion_api=publicacion)
+        .select_related('id_temas__id_categoria')
+    ):
+        tema = getattr(relacion, 'id_temas', None)
+        categoria = getattr(tema, 'id_categoria', None)
+        nombre = getattr(categoria, 'nombre_categoria', None)
+        if nombre and nombre not in vistos:
+            categorias.append(nombre)
+            vistos.add(nombre)
+    return categorias
+
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
     publicacion = get_object_or_404(Publicacion, pk=pk)
-    categorias_noticia = list(dict.fromkeys(
-        publicacion.temas.values_list('id_categoria__nombre_categoria', flat=True)
-    ))
+    categorias_noticia = _categorias_de_publicacion(publicacion)
     if not categorias_noticia:
         coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
         if coincidencia:
@@ -171,7 +153,9 @@ def publicaciones_localidad(request, slug):
                      .order_by('-fecha_captura', '-id_publicacion_api'))
     data = []
     for publicacion in publicaciones:
-        categorias = list(dict.fromkeys(t.id_categoria.nombre_categoria for t in publicacion.temas.all()))
+        categorias = list(dict.fromkeys(
+            t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
+        ))
         if not categorias:
             coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
             categorias = [coincidencia.group(1).strip()] if coincidencia else []
@@ -187,33 +171,99 @@ def publicaciones_localidad(request, slug):
                          'total': len(data), 'data': data})
 
 
+@require_POST
+def registro_view(request):
+    username = request.POST.get('username', '').strip()
+    email = request.POST.get('email', '').strip()
+    password = request.POST.get('password', '')
+
+    if not username or not email or not password:
+        return JsonResponse(
+            {'success': False, 'message': 'Completá todos los campos.'},
+            status=400,
+        )
+
+    user_model = get_user_model()
+    username_field = user_model._meta.get_field('username')
+    email_field = user_model._meta.get_field('email')
+    if len(username) > username_field.max_length:
+        return JsonResponse(
+            {'success': False, 'message': 'El nombre de usuario es demasiado largo.'},
+            status=400,
+        )
+    if len(email) > email_field.max_length:
+        return JsonResponse(
+            {'success': False, 'message': 'El email es demasiado largo.'},
+            status=400,
+        )
+
+    if user_model.objects.filter(username__iexact=username).exists():
+        return JsonResponse(
+            {'success': False, 'message': 'Ese nombre de usuario ya está en uso.'},
+            status=400,
+        )
+    if user_model.objects.filter(email__iexact=email).exists():
+        return JsonResponse(
+            {'success': False, 'message': 'Ese email ya está registrado.'},
+            status=400,
+        )
+
+    try:
+        EmailValidator()(email)
+        validate_password(password, user=user_model(username=username, email=email))
+    except ValidationError as error:
+        return JsonResponse(
+            {'success': False, 'message': ' '.join(error.messages)},
+            status=400,
+        )
+
+    user = user_model.objects.create_user(
+        username=username,
+        email=email,
+        password=password,
+    )
+    login(request, user)
+    return JsonResponse({
+        'success': True,
+        'message': 'Cuenta creada correctamente.',
+        'username': user.username,
+    })
+
+
 def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('landing')
     if request.method != 'POST':
         return redirect(f"{reverse('landing')}#login-modal")
 
-    if request.method == 'POST':
-        identifier = request.POST.get('username', '').strip()
-        password = request.POST.get('password', '')
-        
-        user = authenticate(request, username=identifier, password=password)
-        
-        if user is not None:
-            login(request, user)
-            return redirect('landing')
-        else:
-            # Si falla el login, recarga inicio.html pasando las tendencias y abriendo el modal con error
-            featured_trends = TemaTrend.objects.select_related(
-                'id_temas', 'id_trends', 'id_temas__id_categoria'
-            ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
+    identifier = request.POST.get('username', '').strip()
+    password = request.POST.get('password', '')
+    user = autenticar_identificador(request, identifier, password)
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
 
-            return render(request, 'inicio.html', {
-                'featured_trends': featured_trends,
-                'open_login_modal': True,
-                'login_error': 'Usuario o contraseña incorrectos.',
-            })
+    if user is not None:
+        login(request, user)
+        if is_ajax:
+            return JsonResponse({'success': True, 'username': user.username})
+        return redirect('landing')
 
-    # Si entran por GET a /login/, redirigimos a la portada
-    return redirect('landing')
+    error_message = 'Usuario o contraseña incorrectos.'
+    if is_ajax:
+        return JsonResponse(
+            {'success': False, 'message': error_message},
+            status=400,
+        )
+
+    featured_trends = TemaTrend.objects.select_related(
+        'id_temas', 'id_trends', 'id_temas__id_categoria'
+    ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
+
+    return render(request, 'inicio.html', {
+        'featured_trends': featured_trends,
+        'open_login_modal': True,
+        'login_identifier': identifier,
+        'login_error': error_message,
+    })
 
 
 def logout_view(request):
@@ -262,7 +312,7 @@ def _es_colision_hash_origen(error):
             or getattr(diagnostico, 'table_name', None) != tabla):
         return False
     with connection.cursor() as cursor:
-        restricciones = connection.introspection.get_constraints(cursor, tabla)
+        restricciones = dict(connection.introspection.get_constraints(cursor, tabla) or {})
     restriccion = restricciones.get(getattr(diagnostico, 'constraint_name', None), {})
     return (restriccion.get('unique', False)
             and not restriccion.get('primary_key', False)
@@ -286,11 +336,16 @@ def crear_o_ingestar_publicacion(request):
     """Crea una publicación manual y calcula automáticamente su sentimiento."""
     serializer = PublicacionCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    # `validated_data` puede inferirse como `empty` por el tipado del serializer en el analizador.
+    # Convertimos explícitamente a dict para evitar falsos positivos y mantener la lógica.
+    validated_data = serializer.validated_data
+    data: dict = dict(validated_data) if isinstance(validated_data, dict) else {}
 
     # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
     # El hash representa el origen: editar el título no lo regenera.
-    base_hash = data['url'] or data['titulo']
+    titulo = data.get('titulo') or ''
+    url = data.get('url')
+    base_hash = (url or titulo).strip()
     hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
     existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
     if existente is not None:
@@ -299,11 +354,11 @@ def crear_o_ingestar_publicacion(request):
         with transaction.atomic():
             publicacion = Publicacion.objects.create(
                 hash_origen=hash_gen,
-                titulo=data['titulo'],
-                contenido=data['contenido'],
-                fuente=data['fuente'],
-                url=data['url'],
-                fecha_captura=data['fecha_publicacion'],
+                titulo=titulo,
+                contenido=data.get('contenido') or '',
+                fuente=data.get('fuente'),
+                url=url,
+                fecha_captura=data.get('fecha_publicacion'),
             )
             # El alta, el resultado local y el estado forman una única operación.
             texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
@@ -340,6 +395,12 @@ def crear_o_ingestar_publicacion(request):
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
+    if not isinstance(resultado_ingesta, dict):
+        return Response({
+            'status': 'error',
+            'mensaje': 'El servicio de ingesta devolvió un resultado con formato inesperado.',
+            'mensaje_ingesta': str(resultado_ingesta),
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     if resultado_ingesta.get('status') != 'EXITO':
         return Response({
             'status': 'error',
@@ -410,7 +471,8 @@ def actualizar_publicacion(request, pk):
             data=request.data, partial=request.method == 'PATCH',
         )
         serializer.is_valid(raise_exception=True)
-        for campo, valor in serializer.validated_data.items():
+        validated_data = serializer.validated_data or {}
+        for campo, valor in validated_data.items():
             setattr(pub, campo, valor)
         pub.save()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
@@ -435,7 +497,11 @@ class LogoutJWTView(APIView):
     def post(self, request):
         serializer = LogoutJWTSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        serializer.validated_data['token'].blacklist()
+        validated_data = serializer.validated_data if isinstance(serializer.validated_data, dict) else {}
+        token = validated_data.get('token')
+        if token is None:
+            return Response({"detail": "Token no válido."}, status=status.HTTP_400_BAD_REQUEST)
+        token.blacklist()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

@@ -28,6 +28,14 @@ class ModalAuthenticationViewsTests(TestCase):
         self.assertTrue(user.check_password(self.password))
         self.assertIn('_auth_user_id', self.client.session)
 
+        self.client.logout()
+        login_response = self.client.post(self.login_url, {
+            'username': user.email,
+            'password': self.password,
+        })
+        self.assertRedirects(login_response, '/')
+        self.assertEqual(int(self.client.session['_auth_user_id']), user.pk)
+
     def test_registration_rejects_missing_fields_and_duplicate_username_or_email(self):
         missing = self.client.post(self.register_url, {
             'username': '',
@@ -81,7 +89,7 @@ class ModalAuthenticationViewsTests(TestCase):
             response = self.client.post(self.login_url, {
                 'username': identifier,
                 'password': self.password,
-            })
+            }, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json(), {
                 'success': True,
@@ -92,7 +100,7 @@ class ModalAuthenticationViewsTests(TestCase):
         response = self.client.post(self.login_url, {
             'username': 'inexistente',
             'password': 'incorrecta',
-        })
+        }, HTTP_X_REQUESTED_WITH='XMLHttpRequest')
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()['success'])
@@ -114,7 +122,7 @@ class ModalAuthenticationViewsTests(TestCase):
 
         self.assertContains(authenticated_response, 'Hola, sofialitoral')
         self.assertContains(authenticated_response, 'Cerrar sesión')
-        self.assertNotContains(authenticated_response, 'Ingresar')
+        self.assertNotContains(authenticated_response, '<span>Ingresar</span>', html=True)
 
     def test_logout_ends_session_and_returns_to_safe_requested_page(self):
         user = self.user_model.objects.create_user(

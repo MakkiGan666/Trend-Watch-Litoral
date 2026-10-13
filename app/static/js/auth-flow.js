@@ -2,63 +2,74 @@
   'use strict';
 
   document.querySelectorAll('[data-auth-flow]').forEach(form => {
-    const email = form.querySelector('[name="username"]');
-    const password = form.querySelector('[name="password"]');
-    const passwordStep = form.querySelector('[data-auth-password-step]');
-    const providers = form.querySelector('[data-auth-providers]');
-    const next = form.querySelector('[data-auth-next]');
-    const back = form.querySelector('[data-auth-back]');
-    const title = form.querySelector('[data-auth-title]');
-    const description = form.querySelector('[data-auth-description]');
+    const loginUrl = form.dataset.loginUrl;
+    const registerUrl = form.dataset.registerUrl;
     const fields = form.querySelector('[data-auth-fields]');
     const registration = form.querySelector('[data-auth-registration]');
-    const toggle = form.querySelector('[data-auth-password-toggle]');
-    const registerPassword = registration.querySelector('[name="registration_password"]');
-    const registerConfirm = registration.querySelector('[name="password_confirmation"]');
+    const title = form.querySelector('[data-auth-title]');
+    const description = form.querySelector('[data-auth-description]');
+    const loginMessage = form.querySelector('[data-login-message]');
     const registerMessage = registration.querySelector('[data-registration-message]');
-    const validateConfirmation = () => registerConfirm.setCustomValidity(registerConfirm.value !== registerPassword.value ? 'Las contraseñas deben coincidir.' : '');
-    registerPassword.addEventListener('input', validateConfirmation);
-    registerConfirm.addEventListener('input', validateConfirmation);
-    let step = 'email';
-    function setStep(value, focus = true) {
-      step = value;
-      const signingIn = value === 'password';
-      fields.hidden = value === 'register';
-      registration.hidden = value !== 'register';
-      registration.disabled = value !== 'register';
+    const registerButton = form.querySelector('[data-auth-register]');
+    const loginButton = form.querySelector('[data-auth-login]');
+    const modal = form.closest('.login-modal');
+    let mode = 'login';
+
+    function setMode(value, focus = true) {
+      mode = value;
+      const registering = mode === 'register';
+      fields.hidden = registering;
+      fields.querySelectorAll('input').forEach(input => {
+        input.disabled = registering;
+      });
+      registration.hidden = !registering;
+      registration.disabled = !registering;
+      form.action = registering ? registerUrl : loginUrl;
+      title.textContent = registering ? 'Registrate en TrendWatch' : 'Iniciá sesión o registrate';
+      description.textContent = registering
+        ? 'Una cuenta para seguir la conversación del Litoral.'
+        : 'Continuá con tu email o nombre de usuario para acceder a TrendWatch.';
       registerMessage.hidden = true;
-      providers.hidden = signingIn;
-      passwordStep.hidden = !signingIn;
-      password.disabled = !signingIn;
-      email.disabled = value === 'register';
-      back.hidden = !signingIn;
-      next.textContent = signingIn ? 'Iniciar sesión' : 'Siguiente';
-      title.textContent = value === 'register' ? 'Registrate en TrendWatch' : (signingIn ? 'Ingresá tu contraseña' : 'Iniciá sesión o registrate');
-      description.textContent = value === 'register' ? 'Una cuenta para seguir la conversación del Litoral.' : (signingIn ? 'Accedé con tu cuenta de TrendWatch.' : 'Continuá con tu email para acceder a TrendWatch.');
-      if (!signingIn) {
-        password.value = '';
-        password.type = 'password';
-        toggle.textContent = 'Mostrar';
-        toggle.setAttribute('aria-label', 'Mostrar contraseña');
-        toggle.setAttribute('aria-pressed', 'false');
+      loginMessage.hidden = true;
+      if (focus) {
+        const selector = registering ? '[name="username"]' : '#id_modal_username';
+        (registering ? registration : fields).querySelector(selector).focus();
       }
-      if (focus) (value === 'register' ? registration.querySelector('[name="nombre"]') : (signingIn ? password : email)).focus();
     }
-    form.addEventListener('submit', event => {
-      if (step !== 'password') {
-        event.preventDefault();
-        if (step === 'email' && email.reportValidity()) setStep('password');
-        if (step === 'register') {
-          validateConfirmation();
-          if (form.reportValidity()) {
-            registerMessage.textContent = 'Los datos son válidos. La creación de cuentas estará disponible cuando se conecte el registro.';
-            registerMessage.hidden = false;
-          }
+
+    registerButton.addEventListener('click', () => setMode('register'));
+    loginButton.addEventListener('click', () => setMode('login'));
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const registering = mode === 'register';
+      const submitButton = form.querySelector(registering ? '[data-auth-submit]' : '[data-auth-next]');
+      const message = registering ? registerMessage : loginMessage;
+      submitButton.disabled = true;
+      message.hidden = true;
+
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          body: new FormData(form),
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          message.textContent = result.message || 'No se pudo completar la solicitud.';
+          message.hidden = false;
+          return;
         }
+        window.location.assign('/');
+      } catch (error) {
+        message.textContent = 'No se pudo conectar con el servidor. Intentá nuevamente.';
+        message.hidden = false;
+      } finally {
+        submitButton.disabled = false;
       }
     });
 
-    const modal = form.closest('.login-modal');
     if (modal) {
       modal.addEventListener('auth:reset', () => setMode('login', false));
     }

@@ -1,5 +1,5 @@
 <div class="login-modal" id="login-modal" role="dialog" aria-modal="true"
-     aria-labelledby="login-modal-title" aria-describedby="login-modal-description" hidden>
+     aria-labelledby="login-modal-title" aria-describedby="login-modal-description"{% if not open_login_modal %} hidden{% endif %}>
   <div class="login-modal__backdrop" data-login-close></div>
   <section class="login-modal__panel glass glass--deep glass--sheen">
     <button class="login-modal__close icon-btn" type="button" aria-label="Cerrar autenticación" data-login-close>

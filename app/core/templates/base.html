@@ -93,7 +93,7 @@
         </div>
         <div>
           <h4>Cuenta</h4>
-          {% if request.session.user_id %}
+          {% if request.user.is_authenticated %}
             <a href="{% url 'logout' %}">Cerrar sesión</a>
           {% else %}
             <a href="#login-modal">Iniciar sesión</a>
@@ -109,7 +109,7 @@
   {% endblock %}
 
   <script src="{% static 'js/trendwatch.js' %}?v=6" defer></script>
-  <script src="{% static 'js/auth-flow.js' %}?v=3" defer></script>
+  <script src="{% static 'js/auth-flow.js' %}?v=4" defer></script>
   <script src="{% static 'js/notification-prompt.js' %}?v=2" defer></script>
   {% block extra_js %}{% endblock %}
 </body>

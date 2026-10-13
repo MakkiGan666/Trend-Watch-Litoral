@@ -9,10 +9,10 @@
   <p class="auth-flow__description" id="{{ description_id }}" data-auth-description>Continuá con tu email para acceder a TrendWatch.</p>
   <div data-auth-fields>
     <div class="field">
-      <label for="id_modal_username">Email</label>
+      <label for="id_modal_username">Email o nombre de usuario</label>
       <div class="input auth-flow__email">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 7 9 6 9-6"/></svg>
-        <input id="id_modal_username" name="username" type="email" autocomplete="username" placeholder="Ingresar email…" value="{{ login_identifier|default:'' }}" required>
+        <input id="id_modal_username" name="username" type="text" autocomplete="username" placeholder="Ingresar email o usuario…" value="{{ login_identifier|default:'' }}" required>
       </div>
     </div>
     <div class="field">
@@ -21,15 +21,15 @@
         <input id="id_modal_password" name="password" type="password" autocomplete="current-password" placeholder="Tu contraseña" required>
       </div>
     </div>
-    {% if error or login_error %}<p class="form-msg" role="alert">{% if error %}{{ error }}{% else %}{{ login_error }}{% endif %}</p>{% endif %}
+    <p class="form-msg" role="alert" data-login-message{% if not error and not login_error %} hidden{% endif %}>{% if error %}{{ error }}{% elif login_error %}{{ login_error }}{% endif %}</p>
     <button class="btn btn--primary btn--block auth-flow__next" type="submit" data-auth-next>Iniciar sesión</button>
     <button class="auth-flow__back" type="button" data-auth-back hidden>← Volver a las opciones de acceso</button>
     <p class="auth-foot">¿Todavía no tenés cuenta? <button type="button" data-auth-register>Registrate</button></p>
   </div>
   <fieldset class="auth-flow__registration" data-auth-registration hidden disabled>
     <div class="field">
-      <label for="register-name">Nombre de usuario</label>
-      <div class="input"><input id="register-name" name="username" autocomplete="username" maxlength="150" placeholder="Elegí un usuario" required></div>
+      <label for="register-username">Nombre de usuario</label>
+      <div class="input"><input id="register-username" name="username" autocomplete="username" maxlength="150" placeholder="Elegí un usuario" required></div>
     </div>
     <div class="field">
       <label for="register-email">Email</label>
