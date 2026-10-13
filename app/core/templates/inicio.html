@@ -43,7 +43,7 @@
                 <div class="nav__links">
                     <a href="/" aria-current="page">Inicio</a>
                     <a href="/categorias/">Categorías</a>
-                    <a href="/dashboard/">Dashboard</a>
+                    {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
                     <a href="/litoral/">Litoral</a>
                 </div>
                 <div class="nav__act">
@@ -108,7 +108,7 @@
                     <div>
                         <h4>Plataforma</h4>
                         <a href="/categorias/">Categorías</a>
-                        <a href="/dashboard/">Dashboard</a>
+                        {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
                         <a href="/categorias/#localidades">Localidades</a>
                     </div>
                     <div>

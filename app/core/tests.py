@@ -1296,13 +1296,18 @@ class RolesPermisosTestCase(TestCase):
                 self.assertEqual(self.client.get(f'/noticia/{self.publicacion.pk}/').status_code, 200)
                 self.assertEqual(self.api.get('/api/publicaciones/').status_code, 200)
                 self.assertEqual(self.api.get(f'/api/publicaciones/{self.publicacion.pk}/').status_code, 200)
-                esperado = 302 if rol is None else (403 if rol == 'Sin rol' else 200)
+                # El Dashboard es el panel de gestión: sólo Administrador.
+                esperado = 302 if rol is None else (200 if rol == 'Administrador' else 403)
                 self.assertEqual(self.client.get('/dashboard/').status_code, esperado)
 
     def test_mutaciones_denegadas_no_tienen_efectos(self):
         pk = self.publicacion.pk
         operaciones = (
             lambda: self.client.post('/publicaciones/crear/', {'titulo': 'No autorizado', 'contenido': 'Texto', 'fuente': 'Manual', 'url': 'https://example.com'}),
+            lambda: self.client.get('/publicaciones/crear/'),
+            lambda: self.client.get(f'/publicaciones/{pk}/editar/'),
+            lambda: self.client.post(f'/publicaciones/{pk}/editar/', {'titulo': 'No autorizado', 'contenido': 'Texto', 'fuente': 'Manual'}),
+            lambda: self.client.post(f'/publicaciones/{pk}/eliminar/'),
             lambda: self.api.post('/api/publicaciones/crear/', {'titulo': 'No autorizado', 'contenido': 'Texto'}, format='json'),
             lambda: self.api.post('/api/publicaciones/crear/', {}, format='json'),
             lambda: self.api.patch(f'/api/publicaciones/{pk}/actualizar/', {'titulo': 'No autorizado'}, format='json'),
@@ -1350,6 +1355,203 @@ class RolesPermisosTestCase(TestCase):
                 self.assertFalse(Publicacion.objects.filter(pk=pk).exists())
         self.mocks['fetch_and_store_elterritorio'].assert_called()
         self.mocks['procesar_publicaciones_con_ia'].assert_called()
+
+    def test_dashboard_denegado_muestra_403_y_anonimo_va_al_login(self):
+        self.autenticar('Usuario')
+        response = self.client.get('/dashboard/')
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, 'Acceso denegado', status_code=403)
+        self.autenticar(None)
+        response = self.client.get('/dashboard/')
+        self.assertRedirects(response, '/login/?next=/dashboard/', fetch_redirect_response=False)
+
+    def test_enlace_dashboard_solo_visible_para_administrador(self):
+        for rol in (None, *self.usuarios):
+            self.autenticar(rol)
+            for ruta in ('/', '/categorias/', f'/noticia/{self.publicacion.pk}/'):
+                with self.subTest(rol=rol, ruta=ruta):
+                    contenido = self.client.get(ruta).content.decode()
+                    if rol == 'Administrador':
+                        self.assertIn('href="/dashboard/"', contenido)
+                    else:
+                        self.assertNotIn('href="/dashboard/"', contenido)
+
+    def test_dashboard_administrador_muestra_acciones_crud(self):
+        self.autenticar('Administrador')
+        response = self.client.get('/dashboard/')
+        self.assertContains(response, 'href="/publicaciones/crear/"')
+        self.assertContains(response, f'href="/publicaciones/{self.publicacion.pk}/editar/"')
+        self.assertContains(response, f'action="/publicaciones/{self.publicacion.pk}/eliminar/"')
+
+    def test_crear_web_unifica_hash_duplicados_sentimiento_y_categoria(self):
+        from core.models import Categoria, PublicacionTema
+        categoria = Categoria.objects.create(nombre_categoria='Política')
+        self.autenticar('Administrador')
+        datos = {
+            'titulo': ' Título web ', 'contenido': 'Texto', 'fuente': 'Manual',
+            'url': 'https://example.com/web', 'categorias': [categoria.pk],
+        }
+        response = self.client.post('/publicaciones/crear/', datos)
+        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        publicacion = Publicacion.objects.get(url='https://example.com/web')
+        # Misma identidad que la API y el admin: URL o, si falta, título sin recortar.
+        self.assertEqual(publicacion.hash_origen, hashlib.sha256(b'https://example.com/web').hexdigest())
+        self.assertTrue(publicacion.procesado_ia)
+        sentimiento = Sentimiento.objects.get(id_publicacion_api=publicacion)
+        self.assertEqual((sentimiento.polaridad, sentimiento.confianza), (0.5, 0.8))
+        self.assertTrue(PublicacionTema.objects.filter(
+            id_publicacion_api=publicacion, id_temas__id_categoria=categoria,
+        ).exists())
+
+        antes = self.estado_datos()
+        response = self.client.post('/publicaciones/crear/', dict(datos, titulo='Otro título'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Ya existe una publicación')
+        self.assertEqual(self.estado_datos(), antes)
+
+        response = self.client.post('/publicaciones/crear/', {
+            'titulo': ' Sin URL ', 'contenido': 'Texto', 'fuente': 'Manual', 'url': '',
+        })
+        self.assertEqual(response.status_code, 302)
+        # El formulario web recorta espacios (comportamiento estándar de Django);
+        # el hash se calcula sobre el título guardado, sin recortes adicionales.
+        self.assertEqual(Publicacion.objects.get(titulo='Sin URL').hash_origen,
+                         hashlib.sha256(b'Sin URL').hexdigest())
+
+    def test_crear_web_y_api_detectan_el_mismo_duplicado(self):
+        self.autenticar('Administrador')
+        response = self.api.post('/api/publicaciones/crear/', {
+            'titulo': 'Compartida', 'contenido': 'Texto', 'url': 'https://example.com/compartida',
+        }, format='json')
+        self.assertEqual(response.status_code, 201)
+        response = self.client.post('/publicaciones/crear/', {
+            'titulo': 'Compartida web', 'contenido': 'Texto', 'fuente': 'Manual',
+            'url': 'https://example.com/compartida',
+        })
+        self.assertContains(response, 'Ya existe una publicación')
+        self.assertEqual(Publicacion.objects.filter(url='https://example.com/compartida').count(), 1)
+
+    def _crear_web(self, **extra):
+        datos = {'titulo': 'Antes', 'contenido': 'Texto', 'fuente': 'Manual',
+                 'url': 'https://example.com/editar'}
+        datos.update(extra)
+        self.assertEqual(self.client.post('/publicaciones/crear/', datos).status_code, 302)
+        return Publicacion.objects.get(titulo=datos['titulo'])
+
+    def test_editar_web_actualiza_campos_sin_cambiar_hash(self):
+        self.autenticar('Administrador')
+        publicacion = self._crear_web()
+        hash_original = publicacion.hash_origen
+        response = self.client.post(f'/publicaciones/{publicacion.pk}/editar/', {
+            'titulo': 'Después', 'contenido': 'Nuevo texto', 'fuente': 'Otra fuente',
+            'url': 'https://example.com/editada',
+        })
+        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        publicacion.refresh_from_db()
+        self.assertEqual(
+            (publicacion.titulo, publicacion.contenido, publicacion.fuente, publicacion.url),
+            ('Después', 'Nuevo texto', 'Otra fuente', 'https://example.com/editada'),
+        )
+        self.assertEqual(publicacion.hash_origen, hash_original)
+
+    def test_editar_web_categorias_aplica_solo_la_diferencia(self):
+        from core.models import Categoria, PublicacionTema, Tema
+        economia = Categoria.objects.create(nombre_categoria='Economía')
+        politica = Categoria.objects.create(nombre_categoria='Política')
+        deportes = Categoria.objects.create(nombre_categoria='Deportes')
+        self.autenticar('Administrador')
+        publicacion = self._crear_web(categorias=[economia.pk])
+        # Vínculo previo con un Tema específico (p. ej. de la ingesta): debe conservarse tal cual.
+        tema_ingesta = Tema.objects.create(id_categoria=politica, descripcion='Tema de ingesta')
+        vinculo_politica = PublicacionTema.objects.create(id_publicacion_api=publicacion, id_temas=tema_ingesta)
+        ruta = f'/publicaciones/{publicacion.pk}/editar/'
+
+        response = self.client.get(ruta)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['form'].initial['categorias'], [economia, politica])
+
+        datos = {'titulo': 'Antes', 'contenido': 'Texto', 'fuente': 'Manual', 'url': 'https://example.com/editar'}
+        self.client.post(ruta, dict(datos, categorias=[politica.pk, deportes.pk]))
+        vinculos = PublicacionTema.objects.filter(id_publicacion_api=publicacion)
+        self.assertEqual(set(vinculos.values_list('id_temas__id_categoria', flat=True)), {politica.pk, deportes.pk})
+        self.assertTrue(vinculos.filter(pk=vinculo_politica.pk, id_temas=tema_ingesta).exists())
+        self.assertTrue(Tema.objects.filter(id_categoria=economia).exists())
+
+        # Editar otros campos sin tocar categorías no altera los vínculos.
+        antes = set(vinculos.values_list('pk', flat=True))
+        self.client.post(ruta, dict(datos, fuente='Otra', categorias=[politica.pk, deportes.pk]))
+        self.assertEqual(set(vinculos.values_list('pk', flat=True)), antes)
+
+        self.client.post(ruta, datos)
+        self.assertFalse(vinculos.exists())
+
+    def test_editar_web_titulo_o_contenido_recalcula_sentimiento(self):
+        self.autenticar('Administrador')
+        publicacion = self._crear_web()
+        analizar = self.mocks['analyze_sentiment_lexicon']
+        analizar.reset_mock()
+        analizar.return_value = -0.25
+        self.mocks['compute_probabilistic_sentiment'].return_value = {'confidence_score': 40.0}
+        self.client.post(f'/publicaciones/{publicacion.pk}/editar/', {
+            'titulo': 'Después', 'contenido': 'Nuevo texto', 'fuente': 'Manual',
+            'url': 'https://example.com/editar',
+        })
+        analizar.assert_called_once_with('Después Nuevo texto')
+        sentimiento = Sentimiento.objects.get(id_publicacion_api=publicacion)
+        self.assertEqual((sentimiento.polaridad, sentimiento.confianza), (-0.25, 0.4))
+        publicacion.refresh_from_db()
+        self.assertTrue(publicacion.procesado_ia)
+
+    def test_editar_web_sin_cambiar_texto_conserva_sentimiento(self):
+        self.autenticar('Administrador')
+        publicacion = self._crear_web()
+        previo = Sentimiento.objects.get(id_publicacion_api=publicacion)
+        self.mocks['analyze_sentiment_lexicon'].reset_mock()
+        self.client.post(f'/publicaciones/{publicacion.pk}/editar/', {
+            'titulo': 'Antes', 'contenido': 'Texto', 'fuente': 'Otra fuente',
+            'url': 'https://example.com/editar',
+        })
+        self.mocks['analyze_sentiment_lexicon'].assert_not_called()
+        actual = Sentimiento.objects.get(id_publicacion_api=publicacion)
+        self.assertEqual((actual.pk, actual.polaridad, actual.confianza),
+                         (previo.pk, previo.polaridad, previo.confianza))
+        publicacion.refresh_from_db()
+        self.assertEqual(publicacion.fuente, 'Otra fuente')
+
+    def test_editar_web_con_sentimientos_multiples_no_guarda_nada(self):
+        self.autenticar('Administrador')
+        for polaridad in (0.1, 0.2):
+            Sentimiento.objects.create(id_publicacion_api=self.publicacion, polaridad=polaridad, confianza=0.5)
+        antes = self.estado_datos()
+        response = self.client.post(f'/publicaciones/{self.publicacion.pk}/editar/', {
+            'titulo': 'Cambio', 'contenido': 'Contenido', 'fuente': 'Manual', 'url': '',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'múltiples sentimientos')
+        self.assertEqual(self.estado_datos(), antes)
+
+
+    def test_editar_web_invalido_no_modifica(self):
+        self.autenticar('Administrador')
+        antes = self.estado_datos()
+        response = self.client.post(f'/publicaciones/{self.publicacion.pk}/editar/', {
+            'titulo': '', 'contenido': 'Texto', 'fuente': 'Manual', 'url': 'no es url',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.estado_datos(), antes)
+        self.assertEqual(self.client.get('/publicaciones/999999/editar/').status_code, 404)
+
+    def test_eliminar_web_solo_por_post(self):
+        self.autenticar('Administrador')
+        Sentimiento.objects.create(id_publicacion_api=self.publicacion, polaridad=0.1, confianza=0.5)
+        ruta = f'/publicaciones/{self.publicacion.pk}/eliminar/'
+        self.assertEqual(self.client.get(ruta).status_code, 405)
+        self.assertTrue(Publicacion.objects.filter(pk=self.publicacion.pk).exists())
+        response = self.client.post(ruta)
+        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        self.assertFalse(Publicacion.objects.filter(pk=self.publicacion.pk).exists())
+        self.assertFalse(Sentimiento.objects.filter(id_publicacion_api=self.publicacion.pk).exists())
+        self.assertEqual(self.client.post(ruta).status_code, 404)
 
     def test_get_no_ejecuta_scraping_ni_ia(self):
         for rol in (None, *self.usuarios):
