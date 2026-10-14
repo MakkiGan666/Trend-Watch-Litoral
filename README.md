@@ -152,7 +152,10 @@ No utilizar la base compartida para pruebas que escriban datos.
 | `/categorias/` | categorías   |
 | `/litoral/`    | mapa Litoral |
 | `/login/`      | login        |
-| `/dashboard/`  | publicaciones (datos reales de la BD) |
+| `/dashboard/`  | panel de gestión de noticias (sólo Administrador) |
+| `/publicaciones/crear/` | alta de noticia desde el panel |
+| `/publicaciones/<id>/editar/` | edición de noticia desde el panel |
+| `/publicaciones/<id>/eliminar/` | baja de noticia (sólo POST) |
 | `/admin/`      | admin Django |
 
 ## Autenticación HTML y JWT (PR4)
@@ -217,8 +220,19 @@ No borrar registros vigentes de blacklist, porque se perdería su revocación.
 ## Roles y permisos
 
 La autenticación utiliza usuarios Django, sesiones para el sitio y JWT para la
-API. Las consultas públicas de noticias se mantienen públicas. El dashboard
-requiere `core.view_publicacion`.
+API. Las consultas públicas de noticias se mantienen públicas. El dashboard es
+el panel de gestión de noticias de la plataforma (independiente de `/admin/`) y
+requiere `PERMISOS_PANEL` (`view`, `add`, `change` y `delete` de
+`publicacion`), que sólo tiene Administrador. Sin sesión redirige al login;
+con sesión y sin permisos responde 403. El enlace sólo se muestra a quien puede
+gestionar noticias, pero la restricción efectiva está en las vistas.
+
+Desde el panel, el alta usa la misma lógica que `POST /api/publicaciones/crear/`
+(identidad por URL o título, rechazo de duplicados y sentimiento local). La
+edición no regenera `hash_origen`; si cambian título o contenido recalcula el
+sentimiento local (igual que `procesar-sentimiento`) y, si la publicación tiene
+sentimientos múltiples, no guarda nada. Las categorías son múltiples y al editar
+sólo se agregan o quitan las que cambian, conservando los vínculos existentes.
 
 Después de completar el procedimiento seguro de migraciones de
 [instalación inicial](#instalación-inicial-con-docker-postgresqlpostgis) o
@@ -231,9 +245,9 @@ docker compose exec web python manage.py configurar_roles
 
 El comando crea/reutiliza únicamente los roles activos `Usuario` y
 `Administrador`, con los permisos exactos definidos en `core/roles.py`.
-Es idempotente. Usuario sólo puede consultar noticias y dashboard;
-Administrador puede además crear, editar, eliminar, ejecutar scraping e IA y
-administrar usuarios/grupos en Django Admin.
+Es idempotente. Usuario sólo puede consultar noticias públicas;
+Administrador puede además usar el dashboard, crear, editar, eliminar,
+ejecutar scraping e IA y administrar usuarios/grupos en Django Admin.
 
 La asignación explícita reemplaza grupos y limpia permisos individuales:
 

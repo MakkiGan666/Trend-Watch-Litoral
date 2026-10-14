@@ -20,6 +20,7 @@ urlpatterns = [
     path('localidad/<slug:slug>/', views.localidad, name='localidad'),
     path('api/localidades/<slug:slug>/publicaciones/', views.publicaciones_localidad, name='publicaciones_localidad'),
     path('login/', views.login_view, name='login'),
+    path('registro/', views.registro_view, name='registro'),
     path('logout/', views.logout_view, name='logout'),
     path('dashboard/', views.dashboard, name='dashboard'),
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),
@@ -41,13 +42,12 @@ urlpatterns = [
     # Perfil de usuario
     path('api/auth/me/', UserMeView.as_view(), name='user_me'),
     
-    # Análisis de Sentimiento
-    path('api/sentiment/batch-analyze/', BatchSentimentAnalysisView.as_view(), name='sentiment_batch_analyze'),
-    
     # Análisis de Sentimiento e IA
     path('api/sentiment/batch-analyze/', BatchSentimentAnalysisView.as_view(), name='sentiment_batch_analyze'),
     path('api/publicaciones/<int:pk>/procesar-sentimiento/', ProcesarSentimientoPublicacionView.as_view(), name='procesar_sentimiento_publicacion'),
-    
-    
-    path('publicaciones/crear/', crear_publicacion_view, name='crear_publicacion'),
+
+    # Panel web de gestión de noticias (sesión del sitio)
+    path('publicaciones/crear/', crear_publicacion_view, name='crear_publicacion_web'),
+    path('publicaciones/<int:pk>/editar/', views.editar_publicacion_view, name='editar_publicacion_web'),
+    path('publicaciones/<int:pk>/eliminar/', views.eliminar_publicacion_view, name='eliminar_publicacion_web'),
 ]

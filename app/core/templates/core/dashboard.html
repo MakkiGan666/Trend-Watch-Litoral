@@ -5,7 +5,7 @@
 {% block body_class %}publications{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -13,7 +13,14 @@
     <div class="page-head reveal">
         <h1>Dashboard</h1>
         <p>Publicaciones reales de TrendWatch Litoral. Consultá las noticias y el estado de sus análisis.</p>
+        <a class="btn btn--primary dashboard-new" href="{% url 'crear_publicacion_web' %}">Nueva publicación</a>
     </div>
+
+    {% if messages %}
+    <div class="dashboard-messages" role="status">
+        {% for message in messages %}<p class="glass dashboard-message">{{ message }}</p>{% endfor %}
+    </div>
+    {% endif %}
 
     <div class="dashboard-summary" data-dashboard-summary hidden aria-label="Resumen de los registros filtrados">
         <div class="glass"><span>Coincidencias</span><strong data-dashboard-total>0</strong></div>
@@ -49,6 +56,7 @@
                         <th scope="col">Fuente</th>
                         <th scope="col">Localidad</th>
                         <th scope="col">Sentimiento</th>
+                        <th scope="col">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -61,14 +69,21 @@
                         <td data-label="Fuente">{{ pub.fuente|default:"Sin fuente identificada" }}<small class="dashboard-note">{% if pub.id_registro %}Registro #{{ pub.id_registro.id_registro }}{% else %}Sin registro de ingesta{% endif %}</small></td>
                         <td data-label="Localidad">{% for ubicacion in ubicaciones %}{% if ubicacion.location %}<span class="dashboard-location" data-location="{{ ubicacion.location }}">{{ ubicacion.location }}</span>{% endif %}{% empty %}<span class="dashboard-note">Sin ubicación identificada</span>{% endfor %}</td>
                         <td data-label="Sentimiento">{% if analisis %}<span class="tag">Análisis disponible</span><small class="dashboard-note">Polaridad: {{ analisis.polaridad|floatformat:2 }}<br>Confianza: {{ analisis.confianza|floatformat:2 }}</small>{% else %}<span class="tag tag--soft">Pendiente de análisis</span>{% endif %}</td>
+                        <td data-label="Acciones" class="dashboard-actions" data-dashboard-actions>
+                            <a class="btn btn--ghost" href="{% url 'editar_publicacion_web' pub.id_publicacion_api %}">Editar</a>
+                            <form method="post" action="{% url 'eliminar_publicacion_web' pub.id_publicacion_api %}" data-confirm="¿Eliminar la publicación #{{ pub.id_publicacion_api }}? Se borran también su sentimiento y sus localidades.">
+                                {% csrf_token %}
+                                <button class="btn btn--ghost" type="submit">Eliminar</button>
+                            </form>
+                        </td>
                     </tr>
                     {% endwith %}
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="publication-empty">No hay publicaciones registradas todavía.</td>
+                        <td colspan="7" class="publication-empty">No hay publicaciones registradas todavía.</td>
                     </tr>
                     {% endfor %}
-                    <tr data-dashboard-empty hidden><td colspan="6" class="publication-empty">No hay publicaciones que coincidan con estos filtros.</td></tr>
+                    <tr data-dashboard-empty hidden><td colspan="7" class="publication-empty">No hay publicaciones que coincidan con estos filtros.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -82,5 +97,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/dashboard.js' %}?v=1" defer></script>
+<script src="{% static 'js/dashboard.js' %}?v=2" defer></script>
 {% endblock %}

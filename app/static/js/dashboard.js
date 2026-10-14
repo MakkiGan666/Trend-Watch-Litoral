@@ -11,7 +11,9 @@
   const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   const records = rows.map(row => ({
     row,
-    text: normalize(row.textContent),
+    text: normalize(Array.from(row.cells)
+      .filter(cell => !cell.hasAttribute('data-dashboard-actions'))
+      .map(cell => cell.textContent).join(' ')),
     source: row.dataset.source,
     locations: Array.from(row.querySelectorAll('[data-location]')).map(el => el.dataset.location),
     analysis: row.dataset.analysis
@@ -46,6 +48,11 @@
     page.querySelector('[data-dashboard-count]').textContent = total + ' de ' + records.length + ' registros';
     page.querySelector('[data-dashboard-empty]').hidden = total > 0 || records.length === 0;
   }
+  page.querySelectorAll('form[data-confirm]').forEach(deleteForm => {
+    deleteForm.addEventListener('submit', event => {
+      if (!window.confirm(deleteForm.dataset.confirm)) event.preventDefault();
+    });
+  });
   form.addEventListener('submit', event => event.preventDefault());
   form.addEventListener('input', render);
   form.addEventListener('change', render);

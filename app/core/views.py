@@ -1,21 +1,25 @@
-import json
 import hashlib
 from django.shortcuts import render, redirect, get_object_or_404
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, F
-from django.contrib.auth import login, logout
-from django.contrib.auth.hashers import check_password
+from django.db.models import Count
+from django.contrib.auth import get_user_model, login, logout
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import EmailValidator
 import re
 from html import unescape
 from urllib.parse import urlsplit
 from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .services.cotizaciones import obtener_cotizaciones
 from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib import messages
 
 # REST Framework
 from rest_framework.views import APIView
@@ -27,16 +31,15 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, RegistroDatos, Sentimiento, Locacion, 
-    User, TemaTrend, Tema, PublicacionTema
+    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria
 )
 from .forms import PublicacionForm
-from .services.autenticacion import autenticar_identificador, ERROR_CREDENCIALES
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
+from .roles import PERMISOS_PANEL
+from .services.autenticacion import autenticar_identificador
 
 # Servicios (Scrapers, Sentiment & Gemini)
-from core.services import scraper as scraper_service
 from .services.scraper import fetch_and_store_elterritorio
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
@@ -46,39 +49,10 @@ from .services.integridad_sentimiento import (
 )
 
 
-_fetch_elterritorio_news_by_category = getattr(
-    scraper_service,
-    'fetch_elterritorio_news_by_category',
-    None,
-)
-if _fetch_elterritorio_news_by_category is not None:
-    fetch_elterritorio_news_by_category = _fetch_elterritorio_news_by_category
-else:
-    def fetch_elterritorio_news_by_category(*args, **kwargs) -> list[dict]:
-        raise NotImplementedError(
-            'La función fetch_elterritorio_news_by_category no está disponible en core.services.scraper.'
-        )
-
-_fetch_and_store_elterritorio = getattr(
-    scraper_service,
-    'fetch_and_store_elterritorio',
-    None,
-)
-if _fetch_and_store_elterritorio is not None:
-    fetch_and_store_elterritorio = _fetch_and_store_elterritorio
-else:
-    def fetch_and_store_elterritorio(*args, **kwargs) -> str:
-        raise NotImplementedError(
-            'La función fetch_and_store_elterritorio no está disponible en core.services.scraper.'
-        )
-
-
 # ==========================================
 # VISTAS WEB Y PLANTILLAS HTML
 # ==========================================
 
-from django.db.models import Count
-from core.models import TemaTrend
 
 def landing(request):
     """
@@ -107,13 +81,27 @@ def cotizaciones(request):
     return JsonResponse(obtener_cotizaciones())
 
 
+def _categorias_de_publicacion(publicacion):
+    """Devuelve, sin duplicados, las categorías vinculadas a una publicación."""
+    categorias = []
+    vistos = set()
+    for relacion in (
+        PublicacionTema.objects.filter(id_publicacion_api=publicacion)
+        .select_related('id_temas__id_categoria')
+    ):
+        tema = getattr(relacion, 'id_temas', None)
+        categoria = getattr(tema, 'id_categoria', None)
+        nombre = getattr(categoria, 'nombre_categoria', None)
+        if nombre and nombre not in vistos:
+            categorias.append(nombre)
+            vistos.add(nombre)
+    return categorias
+
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
     publicacion = get_object_or_404(Publicacion, pk=pk)
-    categorias_noticia = list(dict.fromkeys(
-        publicacion.temas.values_list('id_categoria__nombre_categoria', flat=True)
-    ))
+    categorias_noticia = _categorias_de_publicacion(publicacion)
     if not categorias_noticia:
         coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
         if coincidencia:
@@ -167,7 +155,9 @@ def publicaciones_localidad(request, slug):
                      .order_by('-fecha_captura', '-id_publicacion_api'))
     data = []
     for publicacion in publicaciones:
-        categorias = list(dict.fromkeys(t.id_categoria.nombre_categoria for t in publicacion.temas.all()))
+        categorias = list(dict.fromkeys(
+            t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
+        ))
         if not categorias:
             coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
             categorias = [coincidencia.group(1).strip()] if coincidencia else []
@@ -183,44 +173,114 @@ def publicaciones_localidad(request, slug):
                          'total': len(data), 'data': data})
 
 
+@require_POST
+def registro_view(request):
+    username = request.POST.get('username', '').strip()
+    email = request.POST.get('email', '').strip()
+    password = request.POST.get('password', '')
+
+    if not username or not email or not password:
+        return JsonResponse(
+            {'success': False, 'message': 'Completá todos los campos.'},
+            status=400,
+        )
+
+    user_model = get_user_model()
+    username_field = user_model._meta.get_field('username')
+    email_field = user_model._meta.get_field('email')
+    if len(username) > username_field.max_length:
+        return JsonResponse(
+            {'success': False, 'message': 'El nombre de usuario es demasiado largo.'},
+            status=400,
+        )
+    if len(email) > email_field.max_length:
+        return JsonResponse(
+            {'success': False, 'message': 'El email es demasiado largo.'},
+            status=400,
+        )
+
+    if user_model.objects.filter(username__iexact=username).exists():
+        return JsonResponse(
+            {'success': False, 'message': 'Ese nombre de usuario ya está en uso.'},
+            status=400,
+        )
+    if user_model.objects.filter(email__iexact=email).exists():
+        return JsonResponse(
+            {'success': False, 'message': 'Ese email ya está registrado.'},
+            status=400,
+        )
+
+    try:
+        EmailValidator()(email)
+        validate_password(password, user=user_model(username=username, email=email))
+    except ValidationError as error:
+        return JsonResponse(
+            {'success': False, 'message': ' '.join(error.messages)},
+            status=400,
+        )
+
+    user = user_model.objects.create_user(
+        username=username,
+        email=email,
+        password=password,
+    )
+    login(request, user)
+    return JsonResponse({
+        'success': True,
+        'message': 'Cuenta creada correctamente.',
+        'username': user.username,
+    })
+
+
 def login_view(request):
-    # Si ya está logueado, redirige directamente al inicio
     if request.user.is_authenticated:
         return redirect('landing')
+    if request.method != 'POST':
+        return redirect(f"{reverse('landing')}#login-modal")
 
-    if request.method == 'POST':
-        identifier = request.POST.get('username', '').strip()
-        password = request.POST.get('password', '')
-        
-        user = autenticar_identificador(request, identifier, password)
-        
-        if user is not None:
-            login(request, user)
-            return redirect('landing')
-        else:
-            # Si falla el login, recarga inicio.html pasando las tendencias y abriendo el modal con error
-            featured_trends = TemaTrend.objects.select_related(
-                'id_temas', 'id_trends', 'id_temas__id_categoria'
-            ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
+    identifier = request.POST.get('username', '').strip()
+    password = request.POST.get('password', '')
+    user = autenticar_identificador(request, identifier, password)
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
 
-            return render(request, 'inicio.html', {
-                'featured_trends': featured_trends,
-                'open_login_modal': True,
-                'login_error': ERROR_CREDENCIALES,
-                'login_identifier': identifier,
-            })
+    if user is not None:
+        login(request, user)
+        if is_ajax:
+            return JsonResponse({'success': True, 'username': user.username})
+        return redirect('landing')
 
-    # Si entran por GET a /login/, redirigimos a la portada
-    return redirect('landing')
+    error_message = 'Usuario o contraseña incorrectos.'
+    if is_ajax:
+        return JsonResponse(
+            {'success': False, 'message': error_message},
+            status=400,
+        )
+
+    featured_trends = TemaTrend.objects.select_related(
+        'id_temas', 'id_trends', 'id_temas__id_categoria'
+    ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
+
+    return render(request, 'inicio.html', {
+        'featured_trends': featured_trends,
+        'open_login_modal': True,
+        'login_identifier': identifier,
+        'login_error': error_message,
+    })
 
 
 def logout_view(request):
-    logout(request) # Limpia la sesión
-    return redirect('landing')
-
+    logout(request)
+    destination = request.POST.get('next', '')
+    if not url_has_allowed_host_and_scheme(
+        destination,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        destination = 'landing'
+    return redirect(destination)
 
 @login_required(login_url='login')
-@permission_required('core.view_publicacion', raise_exception=True)
+@permission_required(PERMISOS_PANEL, raise_exception=True)
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
@@ -254,7 +314,7 @@ def _es_colision_hash_origen(error):
             or getattr(diagnostico, 'table_name', None) != tabla):
         return False
     with connection.cursor() as cursor:
-        restricciones = connection.introspection.get_constraints(cursor, tabla)
+        restricciones = dict(connection.introspection.get_constraints(cursor, tabla) or {})
     restriccion = restricciones.get(getattr(diagnostico, 'constraint_name', None), {})
     return (restriccion.get('unique', False)
             and not restriccion.get('primary_key', False)
@@ -272,46 +332,90 @@ def _respuesta_publicacion_duplicada(publicacion):
     return Response(data, status=status.HTTP_409_CONFLICT)
 
 
+class PublicacionDuplicada(Exception):
+    def __init__(self, existente):
+        super().__init__('Ya existe una publicación con esta identidad.')
+        self.existente = existente
+
+
+def _vincular_categoria(publicacion, categoria):
+    """Vincula la publicación a la categoría a través de un Tema existente o uno automático."""
+    tema = Tema.objects.filter(id_categoria=categoria).first()
+    if not tema:
+        tema = Tema.objects.create(
+            id_categoria=categoria,
+            descripcion=f'Tema automático para {categoria.nombre_categoria}'
+        )
+    PublicacionTema.objects.get_or_create(id_publicacion_api=publicacion, id_temas=tema)
+
+
+def _analizar_y_guardar_sentimiento(publicacion):
+    """Sentimiento local de título y contenido; el llamador mantiene la transacción y el bloqueo."""
+    sentimiento_unico(publicacion)
+    texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
+    polaridad = float(analyze_sentiment_lexicon(texto_analizar))
+    confianza = confianza_desde_porcentaje(
+        compute_probabilistic_sentiment([{"message": texto_analizar}]),
+    )
+    obj_sentimiento = guardar_sentimiento_local(publicacion, polaridad, confianza)
+    publicacion.procesado_ia = True
+    publicacion.save(update_fields=['procesado_ia'])
+    return obj_sentimiento
+
+
+def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=()):
+    """Alta manual compartida por la API y el panel web: identidad, duplicados y sentimiento."""
+    # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
+    # El hash representa el origen: editar el título no lo regenera.
+    base_hash = url or titulo
+    hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
+    existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
+    if existente is not None:
+        raise PublicacionDuplicada(existente)
+    try:
+        with transaction.atomic():
+            publicacion = Publicacion.objects.create(
+                hash_origen=hash_gen,
+                titulo=titulo,
+                contenido=contenido,
+                fuente=fuente,
+                url=url,
+                fecha_captura=fecha_captura,
+            )
+            # El alta, el resultado local y el estado forman una única operación.
+            obj_sentimiento = _analizar_y_guardar_sentimiento(publicacion)
+            for categoria in categorias:
+                _vincular_categoria(publicacion, categoria)
+    except IntegrityError as error:
+        # Consultar sólo después de salir del bloque y restaurar la transacción.
+        if not _es_colision_hash_origen(error):
+            raise
+        existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
+        raise PublicacionDuplicada(existente) from error
+    return publicacion, obj_sentimiento
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, CrearPublicacion])
 def crear_o_ingestar_publicacion(request):
     """Crea una publicación manual y calcula automáticamente su sentimiento."""
     serializer = PublicacionCreateSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    # `validated_data` puede inferirse como `empty` por el tipado del serializer en el analizador.
+    # Convertimos explícitamente a dict para evitar falsos positivos y mantener la lógica.
+    validated_data = serializer.validated_data
+    data: dict = dict(validated_data) if isinstance(validated_data, dict) else {}
 
-    # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
-    # El hash representa el origen: editar el título no lo regenera.
-    base_hash = data['url'] or data['titulo']
-    hash_gen = hashlib.sha256(base_hash.encode('utf-8')).hexdigest()
-    existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
-    if existente is not None:
-        return _respuesta_publicacion_duplicada(existente)
     try:
-        with transaction.atomic():
-            publicacion = Publicacion.objects.create(
-                hash_origen=hash_gen,
-                titulo=data['titulo'],
-                contenido=data['contenido'],
-                fuente=data['fuente'],
-                url=data['url'],
-                fecha_captura=data['fecha_publicacion'],
-            )
-            # El alta, el resultado local y el estado forman una única operación.
-            texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
-            polaridad = float(analyze_sentiment_lexicon(texto_analizar))
-            confianza = confianza_desde_porcentaje(
-                compute_probabilistic_sentiment([{"message": texto_analizar}]),
-            )
-            obj_sentimiento = guardar_sentimiento_local(publicacion, polaridad, confianza)
-            publicacion.procesado_ia = True
-            publicacion.save(update_fields=['procesado_ia'])
-    except IntegrityError as error:
-        # Consultar sólo después de salir del bloque y restaurar la transacción.
-        if not _es_colision_hash_origen(error):
-            raise
-        existente = Publicacion.objects.filter(hash_origen=hash_gen).first()
-        return _respuesta_publicacion_duplicada(existente)
+        publicacion, obj_sentimiento = _crear_publicacion_con_sentimiento(
+            titulo=data.get('titulo') or '',
+            contenido=data.get('contenido') or '',
+            fuente=data.get('fuente'),
+            url=data.get('url'),
+            fecha_captura=data.get('fecha_publicacion'),
+        )
+    except PublicacionDuplicada as duplicada:
+        return _respuesta_publicacion_duplicada(duplicada.existente)
 
     # 5. Retornar la respuesta con el sentimiento incluido
     return Response({
@@ -332,6 +436,12 @@ def crear_o_ingestar_publicacion(request):
 def disparar_ingesta(request, categoria):
     """ Endpoint directo para ejecutar la función de ingesta general """
     resultado_ingesta = fetch_and_store_elterritorio(categoria)
+    if not isinstance(resultado_ingesta, dict):
+        return Response({
+            'status': 'error',
+            'mensaje': 'El servicio de ingesta devolvió un resultado con formato inesperado.',
+            'mensaje_ingesta': str(resultado_ingesta),
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     if resultado_ingesta.get('status') != 'EXITO':
         return Response({
             'status': 'error',
@@ -402,7 +512,8 @@ def actualizar_publicacion(request, pk):
             data=request.data, partial=request.method == 'PATCH',
         )
         serializer.is_valid(raise_exception=True)
-        for campo, valor in serializer.validated_data.items():
+        validated_data = serializer.validated_data or {}
+        for campo, valor in validated_data.items():
             setattr(pub, campo, valor)
         pub.save()
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
@@ -427,7 +538,11 @@ class LogoutJWTView(APIView):
     def post(self, request):
         serializer = LogoutJWTSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        serializer.validated_data['token'].blacklist()
+        validated_data = serializer.validated_data if isinstance(serializer.validated_data, dict) else {}
+        token = validated_data.get('token')
+        if token is None:
+            return Response({"detail": "Token no válido."}, status=status.HTTP_400_BAD_REQUEST)
+        token.blacklist()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -474,15 +589,7 @@ class ProcesarSentimientoPublicacionView(APIView):
         try:
             with transaction.atomic():
                 publicacion = get_object_or_404(Publicacion.objects.select_for_update(), pk=pk)
-                sentimiento_unico(publicacion)
-                texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
-                polaridad = float(analyze_sentiment_lexicon(texto_analizar))
-                confianza = confianza_desde_porcentaje(
-                    compute_probabilistic_sentiment([{"message": texto_analizar}]),
-                )
-                obj_sentimiento = guardar_sentimiento_local(publicacion, polaridad, confianza)
-                publicacion.procesado_ia = True
-                publicacion.save(update_fields=['procesado_ia'])
+                obj_sentimiento = _analizar_y_guardar_sentimiento(publicacion)
         except ConflictoSentimiento:
             return Response({
                 'status': 'error', 'codigo': 'sentimientos_multiples',
@@ -500,42 +607,90 @@ class ProcesarSentimientoPublicacionView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+# ==========================================
+# PANEL WEB DE GESTIÓN DE NOTICIAS (CRUD)
+# ==========================================
+
+def _categorias_actuales(publicacion):
+    return list(Categoria.objects.filter(
+        tema__publicaciontema__id_publicacion_api=publicacion,
+    ).distinct().order_by('nombre_categoria'))
+
+
+def _actualizar_categorias(publicacion, seleccionadas):
+    """Aplica sólo la diferencia: conserva los vínculos de las categorías que siguen elegidas."""
+    actuales = set(_categorias_actuales(publicacion))
+    seleccionadas = set(seleccionadas)
+    quitadas = actuales - seleccionadas
+    if quitadas:
+        PublicacionTema.objects.filter(
+            id_publicacion_api=publicacion, id_temas__id_categoria__in=quitadas,
+        ).delete()
+    for categoria in seleccionadas - actuales:
+        _vincular_categoria(publicacion, categoria)
+
+
 @login_required(login_url='login')
 @permission_required('core.add_publicacion', raise_exception=True)
 def crear_publicacion_view(request):
-    if request.method == 'POST':
-        form = PublicacionForm(request.POST)
-        if form.is_valid():
-            publicacion = form.save(commit=False)
-            
-            # Generar hash_origen si está vacío
-            if not publicacion.hash_origen:
-                semilla = f"{publicacion.titulo}{timezone.now().timestamp()}"
-                publicacion.hash_origen = hashlib.sha256(semilla.encode('utf-8')).hexdigest()
-            
-            publicacion.save()
+    form = PublicacionForm(request.POST or None)
+    if request.method == 'POST' and form.is_valid():
+        datos = form.cleaned_data
+        try:
+            _crear_publicacion_con_sentimiento(
+                titulo=datos['titulo'],
+                contenido=datos['contenido'],
+                fuente=datos['fuente'],
+                url=datos['url'],
+                fecha_captura=timezone.now(),
+                categorias=datos['categorias'],
+            )
+        except PublicacionDuplicada:
+            form.add_error(None, 'Ya existe una publicación con la misma URL (o el mismo título si no tiene URL).')
+        else:
+            messages.success(request, 'Publicación creada con análisis de sentimiento.')
+            return redirect('dashboard')
 
-            # Vincular la categoría seleccionada a través de Tema
-            categoria_seleccionada = form.cleaned_data.get('categoria')
-            if categoria_seleccionada:
-                # Buscar si ya existe algún Tema para esta categoría
-                tema = Tema.objects.filter(id_categoria=categoria_seleccionada).first()
-                
-                # Si no existe ninguno, creamos uno nuevo
-                if not tema:
-                    tema = Tema.objects.create(
-                        id_categoria=categoria_seleccionada,
-                        descripcion=f'Tema automático para {categoria_seleccionada.nombre_categoria}'
-                    )
+    return render(request, 'core/crear_publicacion.html', {
+        'form': form, 'titulo_formulario': 'Nueva publicación', 'texto_boton': 'Guardar publicación',
+    })
 
-                # Crear el vínculo en la tabla intermedia
-                PublicacionTema.objects.create(
-                    id_publicacion_api=publicacion,
-                    id_temas=tema
-                )
 
-            return redirect('landing')
-    else:
-        form = PublicacionForm()
+@login_required(login_url='login')
+@permission_required('core.change_publicacion', raise_exception=True)
+def editar_publicacion_view(request, pk):
+    publicacion = get_object_or_404(Publicacion, pk=pk)
+    form = PublicacionForm(request.POST or None, instance=publicacion,
+                           initial={'categorias': _categorias_actuales(publicacion)})
+    if request.method == 'POST' and form.is_valid():
+        try:
+            with transaction.atomic():
+                # Mismo bloqueo que el reprocesamiento de sentimiento por la API.
+                Publicacion.objects.select_for_update().get(pk=publicacion.pk)
+                # El hash representa el origen: editar título o URL no lo regenera.
+                form.save()
+                if {'titulo', 'contenido'} & set(form.changed_data):
+                    _analizar_y_guardar_sentimiento(publicacion)
+                if 'categorias' in form.changed_data:
+                    _actualizar_categorias(publicacion, form.cleaned_data['categorias'])
+        except ConflictoSentimiento:
+            form.add_error(None, 'La publicación tiene múltiples sentimientos y requiere revisión; '
+                                 'no se guardaron los cambios.')
+        else:
+            messages.success(request, f'Publicación {publicacion.pk} actualizada.')
+            return redirect('dashboard')
 
-    return render(request, 'core/crear_publicacion.html', {'form': form})
+    return render(request, 'core/crear_publicacion.html', {
+        'form': form, 'publicacion': publicacion,
+        'titulo_formulario': f'Editar publicación #{publicacion.pk}', 'texto_boton': 'Guardar cambios',
+    })
+
+
+@require_POST
+@login_required(login_url='login')
+@permission_required('core.delete_publicacion', raise_exception=True)
+def eliminar_publicacion_view(request, pk):
+    publicacion = get_object_or_404(Publicacion, pk=pk)
+    publicacion.delete()
+    messages.success(request, f'Publicación {pk} eliminada.')
+    return redirect('dashboard')

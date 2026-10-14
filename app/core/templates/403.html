@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Acceso denegado · TrendWatch{% endblock %}
+
+{% block content %}
+<section class="wrap">
+    <div class="page-head">
+        <h1>Acceso denegado</h1>
+        <p>Tu cuenta no tiene permisos para ver esta sección de TrendWatch Litoral.</p>
+        <a class="btn btn--ghost" href="{% url 'landing' %}">Volver al inicio</a>
+    </div>
+</section>
+{% endblock %}
