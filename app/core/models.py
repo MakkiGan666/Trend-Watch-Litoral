@@ -47,7 +47,13 @@ class Publicacion(models.Model):
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
     titulo = models.CharField(max_length=255, default="")
     contenido = models.TextField()
-    url = models.URLField(default="")
+    # El Territorio usa slugs largos: 200 (el valor por defecto) descartaba noticias reales.
+    url = models.URLField(max_length=500, default="")
+    # Se enlaza la foto original del medio (no se copia); la web le superpone el crédito.
+    imagen_url = models.URLField(max_length=500, blank=True, default="")
+    fecha_publicacion = models.DateTimeField(null=True, blank=True)
+    # Slug de core.localidades.DEPARTAMENTOS; vacío si no se pudo identificar.
+    departamento = models.CharField(max_length=30, blank=True, default="")
     fecha_captura = models.DateTimeField(default=timezone.now)
     procesado_ia = models.BooleanField(default=False)
     id_registro = models.ForeignKey('RegistroDatos', on_delete=models.CASCADE, null=True, blank=True)

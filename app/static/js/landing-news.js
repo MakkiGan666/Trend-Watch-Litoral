@@ -26,11 +26,15 @@
   }
 
   function categoryOf(publication) {
-    // El scraper actual guarda la categoría en fuente: "El Territorio (Policiales)".
-    // categoria e imagen_url quedan admitidas para una futura ampliación de la API.
+    // Las APIs envían categorias; si falta, se usa la sección guardada en fuente: "El Territorio (Policiales)".
     const match = String(publication.fuente || '').match(/\(([^)]+)\)\s*$/);
     const category = String(publication.categoria || (match ? match[1] : 'sin-categoria'));
     return category.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  }
+
+  function sourceName(fuente) {
+    // "El Territorio (Misiones)" -> "El Territorio": el crédito es del medio, no de la sección.
+    return String(fuente || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Fuente original';
   }
 
   function card(publication, isDemo = false) {
@@ -48,9 +52,12 @@
       const image = document.createElement('img');
       image.alt = ''; // El título contiguo identifica la noticia.
       image.loading = 'lazy';
-      image.addEventListener('error', () => image.remove(), { once: true });
+      const credit = document.createElement('span');
+      credit.className = 'photo-credit';
+      credit.textContent = '© Foto: ' + sourceName(publication.fuente);
+      image.addEventListener('error', () => { image.remove(); credit.remove(); }, { once: true });
       image.src = imageUrl;
-      media.append(image);
+      media.append(image, credit);
     }
     const body = document.createElement('div');
     body.className = 'news-card__body';

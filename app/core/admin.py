@@ -130,6 +130,20 @@ class RegistroDatosAdmin(admin.ModelAdmin):
     list_display = ('id_registro', 'fecha_ejecucion', 'estado')
     list_filter = ('estado',)
 
+    # Publicacion.id_registro usa CASCADE: borrar un registro eliminaría su histórico.
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        acciones = super().get_actions(request)
+        acciones.pop('delete_selected', None)
+        return acciones
+
+    def changelist_view(self, request, extra_context=None):
+        if request.method == 'POST' and request.POST.get('action') == 'delete_selected':
+            raise PermissionDenied('La eliminación administrativa de registros de ingesta está deshabilitada.')
+        return super().changelist_view(request, extra_context)
+
 
 @admin.register(TemaTrend)
 class TemaTrendAdmin(admin.ModelAdmin):

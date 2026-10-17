@@ -3,7 +3,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count
+from django.db.models import Count, F, Q
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -41,6 +41,7 @@ from .services.autenticacion import autenticar_identificador
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from .services.scraper import fetch_and_store_elterritorio
+from .services.clasificacion import vincular_categoria as _vincular_categoria
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
@@ -97,6 +98,11 @@ def _categorias_de_publicacion(publicacion):
             vistos.add(nombre)
     return categorias
 
+def credito_fuente(fuente):
+    """Nombre del medio sin la sección: "El Territorio (Misiones)" -> "El Territorio"."""
+    return re.sub(r'\s*\([^)]*\)\s*$', '', fuente or '').strip() or 'Fuente original'
+
+
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
@@ -125,6 +131,7 @@ def noticia(request, pk):
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
         'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
     })
 
@@ -145,29 +152,42 @@ def localidad(request, slug):
     return render(request, 'localidad.html', {'departamento': _departamento_o_404(slug)})
 
 
+def _categorias_listado(publicacion):
+    """Categorías ya precargadas (prefetch temas__id_categoria); si no hay, la del nombre de fuente."""
+    categorias = list(dict.fromkeys(
+        t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
+    ))
+    if not categorias:
+        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
+        categorias = [coincidencia.group(1).strip()] if coincidencia else []
+    return categorias
+
+
+def _orden_por_publicacion():
+    # Las noticias históricas se capturan hoy: se ordena por fecha del medio cuando existe.
+    return (F('fecha_publicacion').desc(nulls_last=True), '-fecha_captura', '-id_publicacion_api')
+
+
 @require_safe
 def publicaciones_localidad(request, slug):
     departamento = _departamento_o_404(slug)
     ubicaciones = [nombre for nombre in Locacion.objects.values_list('location', flat=True).distinct()
                    if departamento_de_ubicacion(nombre) == slug]
-    publicaciones = (Publicacion.objects.filter(locacion__location__in=ubicaciones)
+    # Departamento detectado al ingerir o, después de la IA, por las localidades guardadas.
+    publicaciones = (Publicacion.objects.filter(Q(departamento=slug) | Q(locacion__location__in=ubicaciones))
                      .distinct().prefetch_related('temas__id_categoria')
-                     .order_by('-fecha_captura', '-id_publicacion_api'))
+                     .order_by(*_orden_por_publicacion()))
     data = []
     for publicacion in publicaciones:
-        categorias = list(dict.fromkeys(
-            t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
-        ))
-        if not categorias:
-            coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
-            categorias = [coincidencia.group(1).strip()] if coincidencia else []
+        fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
         data.append({
             'id': publicacion.id_publicacion_api,
             'titulo': publicacion.titulo,
             'fuente': publicacion.fuente,
             'url': publicacion.url,
-            'categorias': categorias,
-            'fecha': publicacion.fecha_captura.isoformat() if publicacion.fecha_captura else None,
+            'imagen_url': publicacion.imagen_url or None,
+            'categorias': _categorias_listado(publicacion),
+            'fecha': fecha.isoformat() if fecha else None,
         })
     return JsonResponse({'status': 'success', 'departamento': departamento['nombre'],
                          'total': len(data), 'data': data})
@@ -338,17 +358,6 @@ class PublicacionDuplicada(Exception):
         self.existente = existente
 
 
-def _vincular_categoria(publicacion, categoria):
-    """Vincula la publicación a la categoría a través de un Tema existente o uno automático."""
-    tema = Tema.objects.filter(id_categoria=categoria).first()
-    if not tema:
-        tema = Tema.objects.create(
-            id_categoria=categoria,
-            descripcion=f'Tema automático para {categoria.nombre_categoria}'
-        )
-    PublicacionTema.objects.get_or_create(id_publicacion_api=publicacion, id_temas=tema)
-
-
 def _analizar_y_guardar_sentimiento(publicacion):
     """Sentimiento local de título y contenido; el llamador mantiene la transacción y el bloqueo."""
     sentimiento_unico(publicacion)
@@ -457,10 +466,15 @@ def disparar_ingesta(request, categoria):
 
 
 # 2. READ (Lectura)
+LIMITE_LISTADO = 150
+
+
 def listar_publicaciones(request):
-    """ Retorna un listado JSON con las últimas 20 publicaciones y sus análisis de sentimiento """
+    """ Retorna un listado JSON con las últimas publicaciones y sus análisis de sentimiento """
     if request.method == 'GET':
-        publicaciones = Publicacion.objects.all().order_by('-fecha_captura')[:20]
+        # Alcanza para llenar los carruseles de las 12 categorías de la portada.
+        publicaciones = (Publicacion.objects.prefetch_related('temas__id_categoria')
+                         .order_by(*_orden_por_publicacion())[:LIMITE_LISTADO])
         
         data = []
         for p in publicaciones:
@@ -471,8 +485,12 @@ def listar_publicaciones(request):
                 "titulo": p.titulo,
                 "fuente": p.fuente,
                 "url": p.url,
+                "imagen_url": p.imagen_url or None,
+                "categorias": _categorias_listado(p),
+                "departamento": p.departamento or None,
                 "procesado_ia": p.procesado_ia,
                 "fecha": p.fecha_captura.strftime("%Y-%m-%d %H:%M:%S") if p.fecha_captura else None,
+                "fecha_publicacion": p.fecha_publicacion.isoformat() if p.fecha_publicacion else None,
                 "sentimiento": {
                     "polaridad": sentimiento_obj.polaridad if sentimiento_obj else None,
                     "confianza": sentimiento_obj.confianza if sentimiento_obj else None
