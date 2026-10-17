@@ -856,10 +856,10 @@ class PublicacionSerializersTestCase(SimpleTestCase):
                 self.assert_invalid(
                     PublicacionCreateSerializer(data=self.payload(**{field: 'a' * (limit + 1)})), field,
                 )
-        for length in (200, 201):
+        for length in (500, 501):
             url = 'https://example.com/' + 'a' * (length - len('https://example.com/'))
             serializer = PublicacionCreateSerializer(data=self.payload(url=url))
-            self.assertEqual(serializer.is_valid(), length == 200, serializer.errors)
+            self.assertEqual(serializer.is_valid(), length == 500, serializer.errors)
 
     def test_url_normalizada_y_opcional(self):
         for value, expected in (('', ''), ('   ', ''),
@@ -1814,7 +1814,8 @@ class ScraperAlternativoTestCase(TestCase):
 
 
 class EjecutarScraperCommandTestCase(TestCase):
-    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news')
+    # TW-03: el comando delega en el scraper oficial (core.services.scraper); se simula ese servicio.
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio')
     def test_error_preserva_causa_y_no_emite_exito(self, scraper):
         error = URLError('Feed no disponible')
         scraper.side_effect = error
@@ -1822,16 +1823,27 @@ class EjecutarScraperCommandTestCase(TestCase):
         with self.assertRaisesMessage(CommandError, 'Feed no disponible') as contexto:
             call_command('ejecutar_scraper', category='policiales', limit=2, stdout=salida)
         self.assertIs(contexto.exception.__cause__, error)
-        scraper.assert_called_once_with(category='policiales', limit=2)
+        scraper.assert_called_once_with('policiales', limit=2, usar_ia=True)
         self.assertNotIn('Ingesta finalizada correctamente', salida.getvalue())
         self.assertNotIn('[✔]', salida.getvalue())
 
-    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news', return_value=[])
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio', return_value={
+        'status': 'ERROR', 'detalle': 'Feed no disponible', 'capturados': 0,
+    })
+    def test_resultado_error_del_servicio_no_emite_exito(self, scraper):
+        salida = StringIO()
+        with self.assertRaisesMessage(CommandError, 'Feed no disponible'):
+            call_command('ejecutar_scraper', stdout=salida)
+        self.assertNotIn('[✔]', salida.getvalue())
+
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio', return_value={
+        'status': 'EXITO', 'capturados': 0, 'registro_id': 1, 'omitidas': 0, 'errores': [],
+    })
     def test_lista_vacia_es_finalizacion_valida(self, scraper):
         salida = StringIO()
         call_command('ejecutar_scraper', stdout=salida)
         self.assertIn('Ingesta finalizada correctamente. Se procesaron 0 artículos.', salida.getvalue())
-        scraper.assert_called_once_with(category='misiones', limit=5)
+        scraper.assert_called_once_with('misiones', limit=30, usar_ia=True)
 
 
 class RunPipelineCommandTestCase(TestCase):

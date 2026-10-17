@@ -15,6 +15,8 @@
 .news-card:hover{border-color:var(--aqua-line);transform:translateY(-2px)}
 .news-card__media{aspect-ratio:4/3;margin:10px 10px 0;border-radius:var(--r-sm);overflow:hidden;background:var(--ink-800);display:grid;place-items:center;position:relative}
 .news-card__media img{position:absolute;width:100%;height:100%;object-fit:cover;inset:0}
+/* Crédito superpuesto: la foto se enlaza desde el medio y se le reconoce la autoría. */
+.photo-credit{position:absolute;right:6px;bottom:6px;z-index:1;max-width:calc(100% - 12px);padding:3px 8px;border-radius:var(--r-pill,999px);background:rgba(0,0,0,.62);color:#fff;font-size:10px;font-weight:600;line-height:1.3;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .news-card__fallback{display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--sage);font-size:11px}
 .news-card__fallback svg{width:34px;height:34px;opacity:.65}
 .news-card__body{padding:16px;display:flex;flex-direction:column;gap:10px;flex:1}
