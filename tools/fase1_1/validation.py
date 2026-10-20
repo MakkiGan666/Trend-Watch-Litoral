@@ -50,6 +50,9 @@ PR24_LABELS = (
 )
 
 
+FASE32_LABELS = ('core.test_identidad', 'core.test_auth_views')
+
+
 @contextmanager
 def sin_red_python():
     """libpq usa C y queda sujeto a los controles de identidad del runner.
@@ -86,3 +89,6 @@ def ejecutar_plan(call_command):
 
     print('Integración PR #24: frontend, imágenes, perfil y consumidores', flush=True)
     call_command('test', *PR24_LABELS, verbosity=2, interactive=False)
+
+    print('Fase 3.2: identidad y autenticación', flush=True)
+    call_command('test', *FASE32_LABELS, verbosity=2, interactive=False)

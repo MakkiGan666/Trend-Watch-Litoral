@@ -70,7 +70,7 @@ class PerfilPersistenciaTests(unittest.TestCase):
         self.perfil_modelo.objects.filter.return_value.first.return_value = None
         contexto = dict(
             PerfilUsuario=self.perfil_modelo, PerfilForm=Formulario, PasswordChangeForm=Mock(),
-            transaction=SimpleNamespace(atomic=atomic), messages=Mock(),
+            transaction=SimpleNamespace(atomic=atomic), serializar_identidad=atomic, messages=Mock(),
             get_user_model=lambda: SimpleNamespace(objects=Mock()),
             get_object_or_404=lambda *args, **kwargs: Usuario(),
             PermissionDenied=RuntimeError,

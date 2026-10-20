@@ -49,7 +49,8 @@ class CredencialesTests(unittest.TestCase):
                             keywords=[], body=[clean], decorator_list=[])
         manager = Mock()
         manager.exclude.return_value.filter.return_value.exists.return_value = False
-        contexto_clean = {'BaseClean': BaseClean, 'get_user_model': lambda: SimpleNamespace(objects=manager)}
+        contexto_clean = {'BaseClean': BaseClean, 'get_user_model': lambda: SimpleNamespace(objects=manager),
+                          'errores_identidad': lambda **kwargs: {}}
         exec(compile(ast.fix_missing_locations(ast.Module(body=[nodo], type_ignores=[])),
                      '<clean-email-real>', 'exec'), contexto_clean)
 
@@ -120,7 +121,7 @@ class CredencialesTests(unittest.TestCase):
         self.permission_error = type('PermissionDenied', (RuntimeError,), {})
         contexto = dict(
             PerfilForm=Formulario, PasswordChangeForm=PasswordFormulario, PerfilUsuario=self.modelo_perfil,
-            transaction=SimpleNamespace(atomic=atomic), get_user_model=lambda: SimpleNamespace(objects=Mock()),
+            transaction=SimpleNamespace(atomic=atomic), serializar_identidad=atomic, get_user_model=lambda: SimpleNamespace(objects=Mock()),
             get_object_or_404=obtener, PermissionDenied=self.permission_error, update_session_auth_hash=self.sesion,
             messages=Mock(), redirect=lambda nombre: ('redirect', nombre),
             render=lambda request, template, data, **kwargs: ('render', kwargs.get('status', 200)),

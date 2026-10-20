@@ -4,6 +4,8 @@ from django import forms
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from .services.identidad import errores_identidad
+
 
 class PerfilForm(forms.ModelForm):
     email = forms.EmailField(label='Email', max_length=254)
@@ -43,10 +45,15 @@ class PerfilForm(forms.ModelForm):
         data = super().clean()
         email = data.get('email')
         if email:
-            if get_user_model().objects.exclude(pk=self.instance.pk).filter(email__iexact=email).exists():
+            cambia_email = email.casefold() != self.instance.email.casefold()
+            if cambia_email:
+                for campo, mensaje in errores_identidad(email=email, excluir_pk=self.instance.pk).items():
+                    self.add_error(campo, mensaje)
+            elif get_user_model().objects.exclude(pk=self.instance.pk).filter(email__iexact=email).exists():
+                # Conservar el rechazo previo de emails duplicados, sin reclasificar
+                # un cruce histórico con username al editar solo nombre/teléfono.
                 self.add_error('email', 'Ese email ya está registrado.')
-            # El email también permite iniciar sesión: comprobar la contraseña al cambiarlo.
-            if email.casefold() != self.instance.email.casefold():
+            if cambia_email:
                 if not self.instance.check_password(data.get('confirmar_password', '')):
                     self.add_error('confirmar_password', 'Ingresá tu contraseña actual para cambiar el email.')
         return data

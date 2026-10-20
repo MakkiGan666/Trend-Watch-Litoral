@@ -43,6 +43,7 @@ from .roles import PERMISOS_PANEL
 from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
 from .services.autenticacion import autenticar_identificador
+from .services.identidad import con_identidad_serializada, errores_identidad
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from .services.scraper import fetch_and_store_elterritorio
@@ -185,6 +186,7 @@ def publicaciones_localidad(request, slug):
 
 
 @require_POST
+@con_identidad_serializada
 def registro_view(request):
     username = request.POST.get('username', '').strip()
     email = request.POST.get('email', '').strip()
@@ -197,6 +199,8 @@ def registro_view(request):
         )
 
     user_model = get_user_model()
+    # UserManager normaliza NFKC al guardar: comprobar el mismo valor antes.
+    username = user_model.normalize_username(username)
     username_field = user_model._meta.get_field('username')
     email_field = user_model._meta.get_field('email')
     if len(username) > username_field.max_length:
@@ -220,6 +224,10 @@ def registro_view(request):
             {'success': False, 'message': 'Ese email ya está registrado.'},
             status=400,
         )
+
+    conflictos = errores_identidad(username=username, email=email)
+    if conflictos:
+        return JsonResponse({'success': False, 'message': next(iter(conflictos.values()))}, status=400)
 
     try:
         EmailValidator()(email)

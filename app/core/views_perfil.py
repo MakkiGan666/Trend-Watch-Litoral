@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms_perfil import PerfilForm
+from .services.identidad import serializar_identidad
 from .models import PerfilUsuario, Publicacion, PublicacionGuardada
 
 
@@ -30,7 +31,8 @@ def perfil(request, seccion='datos'):
         # Releer bajo bloqueo antes de validar: request.user puede tener un hash viejo.
         # La fila queda bloqueada hasta terminar la escritura, incluso ante una
         # rotación externa que solo haga UPDATE y no use select_for_update().
-        with transaction.atomic():
+        # Para datos: identidad global antes de fila; contraseña no cambia identidad.
+        with serializar_identidad() if accion == 'datos' else transaction.atomic():
             usuario_actual = get_object_or_404(
                 get_user_model().objects.select_for_update(), pk=request.user.pk,
             )

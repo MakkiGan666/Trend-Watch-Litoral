@@ -1,5 +1,8 @@
 from django.contrib import admin
 from django import forms
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin
+from .services.identidad import errores_identidad, serializar_identidad
 from django.db import transaction
 from django.core.exceptions import PermissionDenied
 from .services.scraper import generar_hash
@@ -164,3 +167,53 @@ class UserAuditoriaAdmin(admin.ModelAdmin):
 @admin.register(VotoPublicacion)
 class VotoPublicacionAdmin(admin.ModelAdmin):
     list_display = ('id_publicacion_api',)
+
+
+class IdentidadUsuarioMixin:
+    def clean(self):
+        data = super().clean()
+        nuevos = {}
+        for campo in ('username', 'email'):
+            valor = data.get(campo)
+            anterior = getattr(self.instance, campo, '') or ''
+            if valor is not None and (not self.instance.pk or valor.casefold() != anterior.casefold()):
+                nuevos[campo] = valor
+        if nuevos:
+            for campo, mensaje in errores_identidad(excluir_pk=self.instance.pk, **nuevos).items():
+                self.add_error(campo, mensaje)
+        return data
+
+
+class UsuarioAltaForm(IdentidadUsuarioMixin, UserAdmin.add_form):
+    pass
+
+
+class UsuarioCambioForm(IdentidadUsuarioMixin, UserAdmin.form):
+    pass
+
+
+# Conservar campos, widgets, permisos, grupos y flujo de contraseña del UserAdmin.
+Usuario = get_user_model()
+if admin.site.is_registered(Usuario):
+    admin.site.unregister(Usuario)
+
+
+@admin.register(Usuario)
+class UsuarioAdmin(UserAdmin):
+    add_form = UsuarioAltaForm
+    form = UsuarioCambioForm
+
+    def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
+        if request.method == 'POST':
+            with serializar_identidad():
+                return super().changeform_view(request, object_id, form_url, extra_context)
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+
+    def user_change_password(self, request, id, form_url=''):
+        # El formulario de Django puede guardar User completo según su versión.
+        # Coordinar antes de su lectura, sin cambiar el contrato de contraseña.
+        if request.method == 'POST':
+            with serializar_identidad():
+                return super().user_change_password(request, id, form_url)
+        return super().user_change_password(request, id, form_url)
