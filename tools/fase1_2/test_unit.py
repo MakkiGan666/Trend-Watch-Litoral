@@ -123,7 +123,7 @@ class ServicioTest(SinRed):
         modelos.Publicacion.objects.filter.return_value.values_list.return_value = []
         clasificacion = ModuleType('core.services.clasificacion')
         clasificacion.clasificar_lote = MagicMock(side_effect=lambda datos, **kw: [
-            {'categoria': 'Sociedad', 'departamento': None} for _ in datos])
+            {'categoria': 'Sociedad', 'departamento': ''} for _ in datos])
         clasificacion.vincular_categoria_por_nombre = MagicMock()
         spec = importlib.util.spec_from_file_location('scraper_bajo_prueba', APP / 'core/services/scraper.py')
         self.s = importlib.util.module_from_spec(spec)

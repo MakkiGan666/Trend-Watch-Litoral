@@ -17,6 +17,7 @@
       </div>
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
       <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if publicacion.fecha_captura %} · Incorporada el <time datetime="{{ publicacion.fecha_captura|date:'c' }}">{{ publicacion.fecha_captura|date:"d/m/Y H:i" }}</time>{% endif %}</p>
+      {% if fecha_navegacion.fecha_efectiva %}<p class="news-detail__meta">{% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_navegacion.fecha_dia }}</time>{% if fecha_navegacion.fecha_precision == 'dia' %} · Hora no verificada{% endif %}</p>{% endif %}
     </header>
     {% if imagen_noticia %}
       <figure class="news-detail__media"><img src="{{ imagen_noticia }}" alt="Imagen de la noticia: {{ publicacion.titulo }}"><figcaption class="photo-credit">© Foto: {{ credito_imagen }}</figcaption></figure>

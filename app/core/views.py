@@ -3,7 +3,9 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, Q
+from django.db.models.functions import Coalesce
+from .fechas import datos_fecha
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -127,6 +129,7 @@ def noticia(request, pk):
 
     return render(request, 'noticia.html', {
         'publicacion': publicacion,
+        'fecha_navegacion': datos_fecha(publicacion),
         'categorias_noticia': categorias_noticia,
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
@@ -164,8 +167,9 @@ def _categorias_listado(publicacion):
 
 
 def _orden_por_publicacion():
-    # Las noticias históricas se capturan hoy: se ordena por fecha del medio cuando existe.
-    return (F('fecha_publicacion').desc(nulls_last=True), '-fecha_captura', '-id_publicacion_api')
+    # Comparar la fecha efectiva entre fuentes; no agrupar primero las no nulas.
+    return (Coalesce('fecha_publicacion', 'fecha_captura').desc(nulls_last=True),
+            '-id_publicacion_api')
 
 
 @require_safe
@@ -188,6 +192,7 @@ def publicaciones_localidad(request, slug):
             'imagen_url': publicacion.imagen_url or None,
             'categorias': _categorias_listado(publicacion),
             'fecha': fecha.isoformat() if fecha else None,
+            **datos_fecha(publicacion),
         })
     return JsonResponse({'status': 'success', 'departamento': departamento['nombre'],
                          'total': len(data), 'data': data})
@@ -305,7 +310,7 @@ def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
                                        .prefetch_related('sentimiento_set', 'locacion_set')\
-                                       .order_by('-fecha_captura', '-id_publicacion_api')[:100]
+                                       .order_by(*_orden_por_publicacion())[:100]
     
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
@@ -491,6 +496,7 @@ def listar_publicaciones(request):
                 "procesado_ia": p.procesado_ia,
                 "fecha": p.fecha_captura.strftime("%Y-%m-%d %H:%M:%S") if p.fecha_captura else None,
                 "fecha_publicacion": p.fecha_publicacion.isoformat() if p.fecha_publicacion else None,
+                **datos_fecha(p),
                 "sentimiento": {
                     "polaridad": sentimiento_obj.polaridad if sentimiento_obj else None,
                     "confianza": sentimiento_obj.confianza if sentimiento_obj else None

@@ -21,6 +21,9 @@ FASE12_LABELS = (
 )
 
 
+FASE21_LABELS = ('core.test_fechas',)
+
+
 @contextmanager
 def sin_red_python():
     """libpq usa C y queda sujeto a los controles de identidad del runner.
@@ -45,3 +48,6 @@ def ejecutar_plan(call_command):
     call_command('test', *BASE_LABELS, verbosity=2, interactive=False)
     print('Fase 1.2: ingesta, consumidores y newspaper local', flush=True)
     call_command('test', *FASE12_LABELS, verbosity=2, interactive=False)
+
+    print('Fase 2.1: fechas y ordenamiento', flush=True)
+    call_command('test', *FASE21_LABELS, verbosity=2, interactive=False)
