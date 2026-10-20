@@ -19,6 +19,7 @@
       <label for="id_modal_password">Contraseña</label>
       <div class="input">
         <input id="id_modal_password" name="password" type="password" autocomplete="current-password" placeholder="Tu contraseña" required>
+        {% include "partials/_password_toggle.html" with input_id="id_modal_password" %}
       </div>
     </div>
     <p class="form-msg" role="alert" data-login-message{% if not error and not login_error %} hidden{% endif %}>{% if error %}{{ error }}{% elif login_error %}{{ login_error }}{% endif %}</p>
@@ -37,7 +38,10 @@
     </div>
     <div class="field">
       <label for="register-password">Contraseña</label>
-      <div class="input"><input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Tu contraseña" required></div>
+      <div class="input">
+        <input id="register-password" name="password" type="password" autocomplete="new-password" placeholder="Tu contraseña" required>
+        {% include "partials/_password_toggle.html" with input_id="register-password" %}
+      </div>
     </div>
     <p class="form-msg" role="status" data-registration-message hidden></p>
     <button class="btn btn--primary btn--block auth-flow__next" type="submit" data-auth-submit>Crear cuenta</button>

@@ -9,3 +9,4 @@ postgres_data/
 *.csv
 db.sqlite3
 app/staticfiles/
+app/media/

@@ -34,12 +34,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria
+    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
 )
 from .forms import PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
+from .views_comentarios import contexto_comentarios
+from .views_valoraciones import contexto_valoraciones
 from .services.autenticacion import autenticar_identificador
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -120,14 +122,17 @@ def noticia(request, pk):
         'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
-        'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
+        'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
+        **contexto_comentarios(request, publicacion),
+        **contexto_valoraciones(request, publicacion),
     })
 
 
 def litoral(request):
-    return render(request, 'litoral.html')
+    return redirect(reverse('categorias') + '#localidades')
 
 
 def _departamento_o_404(slug):
@@ -170,7 +175,7 @@ def publicaciones_localidad(request, slug):
             'titulo': publicacion.titulo,
             'fuente': publicacion.fuente,
             'url': publicacion.url,
-            'imagen_url': publicacion.imagen_url or None,
+            'imagen_url': publicacion.imagen_publica_url or None,
             **datos_categorias(publicacion),
             'fecha': fecha.isoformat() if fecha else None,
             **datos_fecha(publicacion),
@@ -292,14 +297,22 @@ def dashboard(request):
     publicaciones = Publicacion.objects.select_related('id_registro')\
                                        .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
                                        .order_by(*_orden_por_publicacion())[:100]
-    
+    departamentos_por_slug = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
     for publicacion in publicaciones:
         detalles = datos_categorias(publicacion)['categorias_detalle']
         publicacion.dashboard_categorias = [c['id'] for c in detalles]
         publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))
-
+        slugs = {publicacion.departamento} if publicacion.departamento in departamentos_por_slug else set()
+        for ubicacion in publicacion.locacion_set.all():
+            slug = departamento_de_ubicacion(ubicacion.location)
+            if slug:
+                slugs.add(slug)
+        publicacion.dashboard_departamentos = sorted(slugs)
+        publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
+        'departamentos': DEPARTAMENTOS,
+        'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
     })
 
 
@@ -363,7 +376,7 @@ def _analizar_y_guardar_sentimiento(publicacion):
     return obj_sentimiento
 
 
-def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=()):
+def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=(), imagen_url='', imagen_archivo=None):
     """Alta manual compartida por la API y el panel web: identidad, duplicados y sentimiento."""
     # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
     # El hash representa el origen: editar el título no lo regenera.
@@ -380,6 +393,8 @@ def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_cap
                 contenido=contenido,
                 fuente=fuente,
                 url=url,
+                imagen_url=imagen_url,
+                imagen_archivo=imagen_archivo or '',
                 fecha_captura=fecha_captura,
             )
             # El alta, el resultado local y el estado forman una única operación.
@@ -476,7 +491,7 @@ def listar_publicaciones(request):
                 "titulo": p.titulo,
                 "fuente": p.fuente,
                 "url": p.url,
-                "imagen_url": p.imagen_url or None,
+                "imagen_url": p.imagen_publica_url or None,
                 **datos_categorias(p),
                 "departamento": p.departamento or None,
                 "procesado_ia": p.procesado_ia,
@@ -644,7 +659,7 @@ def _actualizar_categorias(publicacion, seleccionadas):
 @login_required(login_url='login')
 @permission_required('core.add_publicacion', raise_exception=True)
 def crear_publicacion_view(request):
-    form = PublicacionForm(request.POST or None)
+    form = PublicacionForm(request.POST or None, request.FILES or None)
     if request.method == 'POST' and form.is_valid():
         datos = form.cleaned_data
         try:
@@ -655,6 +670,8 @@ def crear_publicacion_view(request):
                 url=datos['url'],
                 fecha_captura=timezone.now(),
                 categorias=datos['categorias'],
+                imagen_url=datos['imagen_url'],
+                imagen_archivo=datos['imagen_archivo'],
             )
         except PublicacionDuplicada:
             form.add_error(None, 'Ya existe una publicación con la misma URL (o el mismo título si no tiene URL).')
@@ -671,7 +688,7 @@ def crear_publicacion_view(request):
 @permission_required('core.change_publicacion', raise_exception=True)
 def editar_publicacion_view(request, pk):
     publicacion = get_object_or_404(Publicacion, pk=pk)
-    form = PublicacionForm(request.POST or None, instance=publicacion,
+    form = PublicacionForm(request.POST or None, request.FILES or None, instance=publicacion,
                            initial={'categorias': _categorias_actuales(publicacion)})
     if request.method == 'POST' and form.is_valid():
         try:

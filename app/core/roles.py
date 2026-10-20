@@ -1,7 +1,7 @@
 PERMISOS_USUARIO = frozenset({'core.view_publicacion'})
 MODELOS_ADMIN = (
     'publicacion', 'sentimiento', 'locacion', 'registrodatos',
-    'tematrend', 'publicaciontema', 'userauditoria', 'votopublicacion',
+    'tematrend', 'publicaciontema', 'userauditoria', 'votopublicacion', 'comentario',
 )
 PERMISOS_ADMINISTRADOR = PERMISOS_USUARIO | {'core.ejecutar_scraping', 'core.procesar_ia'} | {
     f'core.{accion}_{modelo}'

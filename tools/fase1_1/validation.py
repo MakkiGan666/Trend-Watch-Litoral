@@ -40,6 +40,16 @@ FASE23_LABELS = (
 )
 
 
+PR24_LABELS = (
+    'core.test_dashboard_localidades',
+    'core.test_publicacion_imagen',
+    'core.test_comentarios',
+    'core.test_valoraciones',
+    'core.test_perfil',
+    'core.test_integracion_pr24',
+)
+
+
 @contextmanager
 def sin_red_python():
     """libpq usa C y queda sujeto a los controles de identidad del runner.
@@ -73,3 +83,6 @@ def ejecutar_plan(call_command):
 
     print('Fase 2.3: territorio, Gemini, URLs y límites', flush=True)
     call_command('test', *FASE23_LABELS, verbosity=2, interactive=False)
+
+    print('Integración PR #24: frontend, imágenes, perfil y consumidores', flush=True)
+    call_command('test', *PR24_LABELS, verbosity=2, interactive=False)
