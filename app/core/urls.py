@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from . import views_comentarios
 from . import views_valoraciones
+from . import views_perfil
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -14,6 +15,10 @@ from .views import (
 )
 
 urlpatterns = [
+    path('perfil/', views_perfil.perfil, name='perfil'),
+    path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
+    path('perfil/notificaciones/', views_perfil.perfil, {'seccion': 'notificaciones'}, name='perfil_notificaciones'),
+    path('noticia/<int:pk>/guardar/', views_perfil.guardar_publicacion, name='guardar_publicacion'),
     # Vistas Web / Templates
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),

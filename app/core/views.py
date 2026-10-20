@@ -31,7 +31,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria
+    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
 )
 from .forms import PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
@@ -133,6 +133,7 @@ def noticia(request, pk):
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
         'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
+        'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
         **contexto_comentarios(request, publicacion),

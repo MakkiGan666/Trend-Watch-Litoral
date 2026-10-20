@@ -10,7 +10,7 @@
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
         <link rel="icon" type="image/png" href="/static/img/favicon.png?v=2">
         <link rel="stylesheet" href="/static/css/trendwatch.css?v=13">
-        <link rel="stylesheet" href="/static/css/landing-news.css?v=5">
+        <link rel="stylesheet" href="/static/css/landing-news.css?v=7">
         <link rel="stylesheet" href="/static/css/exchange-rates.css?v=1">
         <link rel="stylesheet" href="/static/css/auth-flow.css?v=7">
         <link rel="stylesheet" href="/static/css/notification-prompt.css?v=2">
@@ -75,6 +75,22 @@
                         <noscript><p class="news-feed__status">Activá JavaScript para consultar las noticias.</p></noscript>
                     </div>
                     <div class="news-sidebar">
+                    <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">
+                        <p class="news-trends__eyebrow">Conversación regional</p>
+                        <h2 id="news-trends-title">Tendencias</h2>
+                        <p class="news-trends__description">Temas registrados en TrendWatch Litoral.</p>
+                        <ul class="news-trends__list">
+                            {% for tendencia in featured_trends %}
+                            <li class="news-trends__item">
+                                <strong>{{ tendencia.id_temas.descripcion }}</strong>
+                                <p>{{ tendencia.id_temas.id_categoria.nombre_categoria }} · {{ tendencia.publication_count }} publicación{{ tendencia.publication_count|pluralize:"es" }}</p>
+                            </li>
+                            {% empty %}
+                            <li class="news-trends__item"><p>Todavía no hay tendencias registradas para mostrar.</p></li>
+                            {% endfor %}
+                        </ul>
+                        <a class="news-trends__more" href="/categorias/#resultados">Ver sección de tendencias →</a>
+                    </aside>
                     {% include "partials/_exchange_rates.html" %}
                     </div>
                 </div>

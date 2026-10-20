@@ -3,7 +3,7 @@
 
 {% block title %}{{ publicacion.titulo|default:"Noticia" }} · TrendWatch Litoral{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=4">
+<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=7">
 <link rel="stylesheet" href="{% static 'css/comments.css' %}?v=1">
 <link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=2">
 {% endblock %}
@@ -20,6 +20,7 @@
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
       <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if publicacion.fecha_captura %} · Incorporada el <time datetime="{{ publicacion.fecha_captura|date:'c' }}">{{ publicacion.fecha_captura|date:"d/m/Y H:i" }}</time>{% endif %}</p>
     </header>
+
     {% if imagen_noticia %}
       <figure class="news-detail__media"><img src="{{ imagen_noticia }}" alt="Imagen de la noticia: {{ publicacion.titulo }}"><figcaption class="photo-credit">© Foto: {{ credito_imagen }}</figcaption></figure>
     {% else %}
@@ -39,6 +40,18 @@
     <footer class="news-detail__source">
       <p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>
       {% if enlace_original %}<a class="btn btn--ghost" href="{{ enlace_original }}" target="_blank" rel="noopener noreferrer">Consultar publicación original ↗</a>{% endif %}
+      <div class="news-save-action">
+        {% if request.user.is_authenticated %}
+        <form method="post" action="{% url 'guardar_publicacion' publicacion.pk %}">
+          {% csrf_token %}
+          <button class="btn btn--ghost news-bookmark {% if noticia_guardada %}is-saved{% endif %}" type="submit" name="accion" value="{% if noticia_guardada %}quitar{% else %}guardar{% endif %}" aria-label="{% if noticia_guardada %}Quitar de mis guardados{% else %}Guardar noticia{% endif %}" aria-pressed="{% if noticia_guardada %}true{% else %}false{% endif %}" data-tooltip="{% if noticia_guardada %}Quitar de mis guardados{% else %}Guardar noticia{% endif %}">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="{% if noticia_guardada %}currentColor{% else %}none{% endif %}" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg>
+          </button>
+        </form>
+        {% else %}
+        <a class="btn btn--ghost news-bookmark" href="#login-modal" aria-label="Ingresar para guardar noticia" data-tooltip="Ingresar para guardar noticia"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg></a>
+        {% endif %}
+      </div>
     </footer>
   </article>
   {% include "partials/_valoraciones.html" %}

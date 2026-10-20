@@ -9,6 +9,22 @@ def ruta_imagen_publicacion(instance, filename):
     return f'publicaciones/{uuid4().hex}.{extension}'
 
 
+class PerfilUsuario(models.Model):
+    usuario = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='perfil')
+    fecha_nacimiento = models.DateField(null=True, blank=True)
+    celular = models.CharField(max_length=30, blank=True)
+
+
+class PublicacionGuardada(models.Model):
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='noticias_guardadas')
+    publicacion = models.ForeignKey('Publicacion', on_delete=models.CASCADE, related_name='guardados')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha_creacion', '-pk']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='guardado_unico_usuario_noticia')]
+
+
 class Role(models.Model):
     id_rol = models.AutoField(primary_key=True)
     nombre_rol = models.CharField(max_length=100)
