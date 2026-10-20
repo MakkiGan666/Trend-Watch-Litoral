@@ -31,7 +31,8 @@ services:
     # El resto de la configuración (SECRET_KEY, DB_*, GEMINI_API_KEY, ...) llega desde .env.
     environment:
       DB_HOST: db
-      DB_PORT: 5433
+      # Puerto interno del servicio; 5433 sólo corresponde al anfitrión.
+      DB_PORT: 5432
     depends_on:
       db:
         condition: service_healthy
