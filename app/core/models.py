@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from uuid import uuid4
+from django.conf import settings
 
 
 def ruta_imagen_publicacion(instance, filename):
@@ -216,3 +217,39 @@ class UserAuditoria(models.Model):
     class Meta:
         db_table = 'User_Auditoria'
         unique_together = (('id_user', 'id_auditoria'),)
+
+
+class Comentario(models.Model):
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='comentarios')
+    autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='comentarios_noticias')
+    texto = models.TextField(max_length=2000)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_edicion = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-fecha_creacion', '-pk']
+
+    def __str__(self):
+        return f'Comentario #{self.pk} de la publicación #{self.publicacion_id}'
+
+
+class ValoracionPublicacion(models.Model):
+    class Sentimiento(models.TextChoices):
+        POSITIVO = 'positivo', 'Positivo'
+        NEUTRAL = 'neutral', 'Neutral'
+        NEGATIVO = 'negativo', 'Negativo'
+
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='valoraciones')
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='valoraciones_noticias')
+    sentimiento = models.CharField(max_length=8, choices=Sentimiento.choices)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['publicacion', 'usuario'], name='valoracion_unica_usuario_noticia'),
+            models.CheckConstraint(condition=models.Q(sentimiento__in=['positivo', 'neutral', 'negativo']), name='valoracion_sentimiento_valido'),
+        ]
+
+    def __str__(self):
+        return f'{self.get_sentimiento_display()} en publicación #{self.publicacion_id}'

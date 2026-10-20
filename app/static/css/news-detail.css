@@ -9,9 +9,16 @@
 .news-detail__media img{display:block;width:auto;max-width:100%;max-height:520px;object-fit:contain;border-radius:18px}
 .news-detail__media .photo-credit{position:absolute;right:10px;bottom:10px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;font-weight:600;pointer-events:none}
 .news-detail__placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:220px;margin-bottom:32px;border:1px solid var(--edge);border-radius:18px;background:var(--glass-deep);color:var(--tx-2)}
-.news-detail__content{max-width:760px;margin:0 auto;font-size:18px;line-height:1.85;overflow-wrap:anywhere}
+.news-detail__reading{--news-preview-height:340px;width:var(--news-reading-width,100%);max-width:100%;margin-inline:auto}
+.news-detail__content{font-size:18px;line-height:1.85;overflow-wrap:anywhere}
+.news-detail__reading.is-collapsed .news-detail__content{max-height:var(--news-preview-height);overflow:hidden;mask-image:linear-gradient(to bottom,#000 calc(100% - 80px),transparent);-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 80px),transparent)}
+.news-detail__expand{display:flex;justify-content:center;padding-top:8px}
+.news-detail__expand[hidden]{display:none}
+.news-detail__expand .btn{border-color:var(--aqua-line);box-shadow:0 0 24px -8px rgba(63,208,180,.28);min-width:150px}
+.news-detail__expand .btn:hover{box-shadow:0 0 28px -6px rgba(63,208,180,.4)}
 .news-detail__content p{margin-bottom:22px}
 .news-detail__source{margin-top:32px;padding-top:24px;border-top:1px solid var(--edge)}
 .news-detail__source p{max-width:760px;margin-bottom:18px;color:var(--tx-2);font-size:13px;line-height:1.7}
 .news-detail__footer{padding:24px 0;border-top:1px solid var(--edge);color:var(--tx-2);font-size:13px}
 @media(max-width:660px){.news-detail{padding-top:20px;padding-bottom:36px}.news-detail__article{border-radius:22px}.news-detail__content{font-size:16px}.news-detail__source .btn{width:100%;padding:12px 14px}.news-detail__placeholder{min-height:170px}}
+@media(max-width:660px){.news-detail__reading{--news-preview-height:300px}}

@@ -1,0 +1,52 @@
+<section class="news-comments glass glass--sheen" id="comentarios" aria-labelledby="comments-title">
+  <header class="news-comments__head">
+    <h2 id="comments-title">Comentarios <span>{{ comentarios_pagina.paginator.count }}</span></h2>
+    <p>Compartí tu opinión y participá con respeto.</p>
+  </header>
+  {% if messages %}<div role="status" class="news-comments__messages">{% for message in messages %}<p>{{ message }}</p>{% endfor %}</div>{% endif %}
+  {% if request.user.is_authenticated %}
+    <form method="post" action="{% url 'crear_comentario' publicacion.pk %}" class="news-comments__form">
+      {% csrf_token %}
+      {{ comentario_form.texto.label_tag }}
+      {{ comentario_form.texto }}
+      <div class="news-comments__submit"><small>Máximo 2000 caracteres.</small><button class="btn btn--primary" type="submit">Publicar comentario</button></div>
+    </form>
+  {% else %}
+    <div class="news-comments__invitation"><p>Iniciá sesión para escribir un comentario.</p><a class="btn btn--ghost" href="#login-modal" aria-haspopup="dialog">Ingresar para participar</a></div>
+  {% endif %}
+  <div class="news-comments__list">
+    {% for comentario in comentarios_pagina %}
+      <article class="news-comment" id="comentario-{{ comentario.pk }}">
+        <header class="news-comment__head">
+          <strong>{{ comentario.autor.username|default:"Usuario eliminado" }}</strong>
+          <time datetime="{{ comentario.fecha_creacion|date:'c' }}">{{ comentario.fecha_creacion|date:"d/m/Y H:i" }}</time>
+          {% if comentario.fecha_edicion %}<span class="news-comment__edited">Editado el {{ comentario.fecha_edicion|date:"d/m/Y H:i" }}</span>{% endif %}
+        </header>
+        <div class="news-comment__text">{{ comentario.texto|linebreaksbr }}</div>
+        {% if request.user.is_authenticated %}
+          {% if request.user.pk == comentario.autor_id or puede_moderar_comentarios %}
+            <div class="news-comment__actions">
+              {% if request.user.pk == comentario.autor_id %}<a class="btn btn--ghost" href="{% url 'editar_comentario' comentario.pk %}?pagina_comentarios={{ comentarios_pagina.number }}">Editar</a>{% endif %}
+              <details class="news-comment__delete">
+                <summary class="btn btn--ghost">{% if request.user.pk == comentario.autor_id %}Eliminar{% else %}Moderar comentario{% endif %}</summary>
+                <form method="post" action="{% url 'eliminar_comentario' comentario.pk %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="pagina_comentarios" value="{{ comentarios_pagina.number }}">
+                  <p>¿Eliminar este comentario? Esta acción no se puede deshacer.</p>
+                  <button class="btn btn--ghost" type="submit">Confirmar eliminación</button>
+                </form>
+              </details>
+            </div>
+          {% endif %}
+        {% endif %}
+      </article>
+    {% empty %}<p class="news-comments__empty">Todavía no hay comentarios. Podés ser la primera persona en participar.</p>{% endfor %}
+  </div>
+  {% if comentarios_pagina.has_other_pages %}
+    <nav class="news-comments__pages" aria-label="Páginas de comentarios">
+      {% if comentarios_pagina.has_previous %}<a class="btn btn--ghost" href="?pagina_comentarios={{ comentarios_pagina.previous_page_number }}#comentarios">← Anteriores</a>{% endif %}
+      <span>Página {{ comentarios_pagina.number }} de {{ comentarios_pagina.paginator.num_pages }}</span>
+      {% if comentarios_pagina.has_next %}<a class="btn btn--ghost" href="?pagina_comentarios={{ comentarios_pagina.next_page_number }}#comentarios">Siguientes →</a>{% endif %}
+    </nav>
+  {% endif %}
+</section>

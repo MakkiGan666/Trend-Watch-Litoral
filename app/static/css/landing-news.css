@@ -13,6 +13,8 @@
 .news-track{display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - 32px)/3);gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:thin;scrollbar-color:var(--sage) transparent;padding:3px 2px 14px}
 .news-card{display:flex;flex-direction:column;min-width:0;background:var(--ink-700);border:1px solid var(--edge);border-radius:var(--r-md);overflow:hidden;scroll-snap-align:start;transition:border-color .2s,transform .2s}
 .news-card:hover{border-color:var(--aqua-line);transform:translateY(-2px)}
+a.news-card{color:var(--tx);text-decoration:none;cursor:pointer}
+a.news-card:focus-visible{outline:2px solid var(--aqua);outline-offset:2px;border-color:var(--aqua)}
 .news-card__media{aspect-ratio:4/3;margin:10px 10px 0;border-radius:var(--r-sm);overflow:hidden;background:var(--ink-800);display:grid;place-items:center;position:relative}
 .news-card__media img{position:absolute;width:100%;height:100%;object-fit:cover;inset:0}
 /* Crédito superpuesto: la foto se enlaza desde el medio y se le reconoce la autoría. */

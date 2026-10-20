@@ -37,6 +37,8 @@ from .forms import PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
+from .views_comentarios import contexto_comentarios
+from .views_valoraciones import contexto_valoraciones
 from .services.autenticacion import autenticar_identificador
 
 # Servicios (Scrapers, Sentiment & Gemini)
@@ -133,6 +135,8 @@ def noticia(request, pk):
         'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
+        **contexto_comentarios(request, publicacion),
+        **contexto_valoraciones(request, publicacion),
     })
 
 

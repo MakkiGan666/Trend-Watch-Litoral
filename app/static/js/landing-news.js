@@ -38,8 +38,21 @@
   }
 
   function card(publication, isDemo = false) {
-    const article = document.createElement('article');
+    const originalUrl = isDemo ? null : safeUrl(publication.url);
+    const id = String(publication.id ?? '');
+    const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
+    const destination = internalUrl || originalUrl;
+    const title = publication.titulo || 'Noticia sin título';
+    const article = document.createElement(destination ? 'a' : 'article');
     article.className = 'news-card';
+    if (destination) {
+      article.href = destination;
+      article.setAttribute('aria-label', (internalUrl ? 'Leer noticia: ' : 'Consultar fuente original: ') + title);
+      if (!internalUrl) {
+        article.target = '_blank';
+        article.rel = 'noopener noreferrer';
+      }
+    }
     const media = document.createElement('div');
     media.className = 'news-card__media';
     const fallback = document.createElement('span');
@@ -65,16 +78,7 @@
     source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
     source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
     const heading = document.createElement('h3');
-    const originalUrl = isDemo ? null : safeUrl(publication.url);
-    const id = String(publication.id ?? '');
-    const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
-    const title = publication.titulo || 'Noticia sin título';
-    if (internalUrl) {
-      const link = document.createElement('a');
-      link.href = internalUrl;
-      link.textContent = title;
-      heading.append(link);
-    } else { heading.textContent = title; }
+    heading.textContent = title;
     body.append(source, heading);
     if (isDemo) {
       const note = document.createElement('p');
@@ -83,13 +87,8 @@
       body.append(note);
     }
     if (internalUrl || originalUrl) {
-      const link = document.createElement('a');
+      const link = document.createElement('span');
       link.className = 'news-card__link';
-      link.href = internalUrl || originalUrl;
-      if (!internalUrl) {
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-      }
       link.textContent = internalUrl ? 'Leer noticia →' : 'Consultar fuente original ↗';
       body.append(link);
     }

@@ -3,7 +3,9 @@
 
 {% block title %}{{ publicacion.titulo|default:"Noticia" }} · TrendWatch Litoral{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=4">
+<link rel="stylesheet" href="{% static 'css/comments.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -26,15 +28,26 @@
         <span>Imagen no disponible</span>
       </div>
     {% endif %}
-    <div class="news-detail__content">
-      {% if contenido_noticia %}{{ contenido_noticia|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
+    <div class="news-detail__reading" data-news-reading>
+      <div class="news-detail__content" id="news-full-content" data-news-content>
+        {% if contenido_noticia %}{{ contenido_noticia|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
+      </div>
+      <div class="news-detail__expand" data-news-expand hidden>
+        <button class="btn btn--ghost" type="button" data-news-read-more aria-expanded="false" aria-controls="news-full-content">Leer más</button>
+      </div>
     </div>
     <footer class="news-detail__source">
       <p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>
       {% if enlace_original %}<a class="btn btn--ghost" href="{{ enlace_original }}" target="_blank" rel="noopener noreferrer">Consultar publicación original ↗</a>{% endif %}
     </footer>
   </article>
+  {% include "partials/_valoraciones.html" %}
+  {% include "partials/_comentarios.html" %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/news-detail.js' %}?v=1" defer></script>
 {% endblock %}
 
 {% block footer %}

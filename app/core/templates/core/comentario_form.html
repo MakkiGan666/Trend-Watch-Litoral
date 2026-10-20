@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ titulo }} · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/comments.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap comment-editor">
+  <a class="btn btn--ghost" href="{% url 'noticia' publicacion.pk %}?pagina_comentarios={{ pagina_comentarios }}#comentarios">← Volver a la noticia</a>
+  <section class="news-comments glass glass--sheen" aria-labelledby="comment-editor-title">
+    <header class="news-comments__head"><h1 id="comment-editor-title">{{ titulo }}</h1><p>{{ publicacion.titulo }}</p></header>
+    <form method="post" class="news-comments__form">
+      {% csrf_token %}
+      <input type="hidden" name="pagina_comentarios" value="{{ pagina_comentarios }}">
+      {% if form.non_field_errors %}<div role="alert" class="news-comments__errors">{{ form.non_field_errors }}</div>{% endif %}
+      {{ form.texto.label_tag }}
+      {{ form.texto }}
+      {% if form.texto.errors %}<div role="alert" class="news-comments__errors">{{ form.texto.errors }}</div>{% endif %}
+      <div class="news-comments__submit"><small>Máximo 2000 caracteres.</small><button class="btn btn--primary" type="submit">{% if comentario %}Guardar cambios{% else %}Publicar comentario{% endif %}</button><a class="btn btn--ghost" href="{% url 'noticia' publicacion.pk %}?pagina_comentarios={{ pagina_comentarios }}#comentarios">Cancelar</a></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,6 +1,6 @@
 from django import forms
 from django.core.validators import URLValidator
-from .models import Publicacion, Categoria
+from .models import Publicacion, Categoria, Comentario
 
 class PublicacionForm(forms.ModelForm):
     imagen_archivo = forms.ImageField(
@@ -49,3 +49,16 @@ class PublicacionForm(forms.ModelForm):
             # El nombre se corresponde con el contenido validado, no con la extensión enviada.
             imagen.name = 'imagen.' + extension
         return imagen
+
+
+class ComentarioForm(forms.ModelForm):
+    class Meta:
+        model = Comentario
+        fields = ['texto']
+        labels = {'texto': 'Tu comentario'}
+        widgets = {
+            'texto': forms.Textarea(attrs={
+                'rows': 4, 'maxlength': 2000,
+                'placeholder': 'Compartí tu opinión sobre esta noticia…',
+            }),
+        }
