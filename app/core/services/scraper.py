@@ -3,7 +3,7 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
-import urllib.request
+from core.services.descarga_segura import descargar, validar_url
 from datetime import date, datetime, timezone as dt_timezone
 from email.utils import parsedate_to_datetime
 from django.db import DataError, IntegrityError, transaction
@@ -23,7 +23,7 @@ except ModuleNotFoundError:
             def __init__(self, *args, **kwargs):
                 self.text = ""
 
-            def download(self):
+            def download(self, **kwargs):
                 return None
 
             def parse(self):
@@ -65,9 +65,7 @@ def _excede_largo_maximo(campo, valor):
 
 
 def _descargar(url, timeout=10):
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response.read()
+    return descargar(url, timeout=timeout)
 
 
 def _imagen_valida(url):
@@ -108,10 +106,10 @@ def _fecha_de_url(link):
 
 
 def _leer_articulo(link):
-    """Descarga el artículo completo. Nunca lanza: devuelve un objeto con los campos vacíos."""
+    """Extrae HTML obtenido por el transporte controlado, sin descargas de imágenes."""
     try:
-        article = Article(link, language='es')
-        article.download()
+        article = Article(link, language='es', fetch_images=False)
+        article.download(input_html=_descargar(link))
         article.parse()
         return article
     except Exception:
@@ -133,6 +131,9 @@ class _Lote:
         self.omitidas = 0
         self.errores = []
         self.categorias = {}
+        self.disponibles = 0
+        self.incompleta = False
+        self.fuentes_completadas = 0
 
     def registrar_error(self, link, titulo, codigo):
         # Sólo se registran datos de identificación; nunca el contenido de la noticia.
@@ -150,7 +151,21 @@ class _Lote:
 
     def guardar(self, candidatos, usar_ia):
         """Clasifica el lote completo (una llamada a la IA) y guarda cada noticia en su savepoint."""
+        validos = []
+        for candidato in candidatos:
+            try:
+                validar_url(candidato['url'])
+                if (not candidato['titulo'].strip() or not candidato['contenido'].strip()
+                        or candidato['hash_origen'] != generar_hash(candidato['url'])):
+                    raise ValueError('Identidad o contenido incompleto')
+            except ValueError:
+                self.registrar_error(candidato.get('url'), candidato.get('titulo', ''), 'articulo_incompleto')
+                continue
+            validos.append(candidato)
+        candidatos = validos
         clasificaciones = clasificar_lote(candidatos, usar_ia=usar_ia)
+        if len(clasificaciones) != len(candidatos):
+            raise ValueError('Clasificación incompleta')
         for candidato, clasificacion in zip(candidatos, clasificaciones):
             try:
                 with transaction.atomic():
@@ -183,10 +198,19 @@ class _Lote:
             self.categorias[categoria] = self.categorias.get(categoria, 0) + 1
 
     def exito(self):
-        self.registro.estado = "EXITO"
+        completa = not self.errores and not self.incompleta
+        util = self.capturados or self.omitidas or self.fuentes_completadas
+        estado = ('SIN_RESULTADOS' if not self.disponibles else
+                  'DUPLICADOS' if self.omitidas and not self.capturados else 'EXITO') if completa else (
+                      'PARCIAL' if util else 'FALLO')
+        self.registro.estado = "EXITO" if completa else "ERROR: " + estado
         self.registro.save()
         return {
-            "status": "EXITO",
+            "status": "EXITO" if completa else "ERROR",
+            "estado": estado,
+            "detalle": "Cobertura incompleta: revisar errores y límite." if not completa else "Cobertura completada.",
+            "cobertura_completa": completa,
+            "disponibles": self.disponibles,
             "capturados": self.capturados,
             "registro_id": self.registro.id_registro,
             "omitidas": self.omitidas,
@@ -200,8 +224,14 @@ class _Lote:
             self.fuente_nombre, type(exc).__name__, self.capturados,
         )
         self.registro.estado = f"ERROR: {str(exc)[:40]}"
-        self.registro.save()
-        return {"status": "ERROR", "detalle": str(exc), "capturados": self.capturados}
+        try:
+            self.registro.save()
+        except Exception:
+            logger.error('No se pudo cerrar el registro de ingesta %s', self.registro.pk)
+        return {"status": "ERROR", "estado": "PARCIAL" if self.capturados or self.omitidas else "FALLO",
+                "cobertura_completa": False, "detalle": str(exc), "capturados": self.capturados,
+                "omitidas": self.omitidas, "errores": self.errores, "categorias": self.categorias,
+                "disponibles": self.disponibles, "registro_id": self.registro.pk}
 
 
 def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, usar_ia=True):
@@ -210,26 +240,37 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
     Cada noticia se deriva a una categoría del proyecto y, si se identifica, a un
     departamento (ver core.services.clasificacion).
 
-    Una noticia inválida o ya existente no interrumpe el lote: se informa en `errores` u
-    `omitidas`. Por eso `EXITO` significa "el lote terminó sin fallos de infraestructura",
-    no "se guardaron todas las noticias"; quien consuma el resultado debe revisar `errores`.
-    Un fallo de red, de feed o de base de datos interrumpe el lote y devuelve `ERROR`.
+    `status` conserva EXITO/ERROR; `estado` distingue resultado y cobertura.
+    Errores individuales y límites que dejan candidatos pendientes producen ERROR/PARCIAL.
+    Los duplicados no son errores y nunca se actualizan publicaciones existentes.
     """
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False, "capturados": 0, "detalle": "Límite inválido"}
     url_feed = CATEGORIAS_TERRITORIO.get(category)
     if url_feed is None:
         # Antes se usaba el feed de Misiones con la etiqueta de la categoría pedida.
         return {
-            "status": "ERROR",
+            "status": "ERROR", "estado": "FALLO", "cobertura_completa": False,
             "detalle": f"Categoría desconocida. Válidas: {', '.join(CATEGORIAS_TERRITORIO)}.",
             "capturados": 0,
         }
 
     # 1. Crear RegistroDatos (Auditoría de Ingesta)
-    lote = _Lote(f"El Territorio ({category.capitalize()})")
+    try:
+        lote = _Lote(f"El Territorio ({category.capitalize()})")
+    except Exception:
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False,
+                "capturados": 0, "detalle": "No se pudo iniciar el registro de ingesta."}
 
     try:
         root = ET.fromstring(_descargar(url_feed))
-        items = root.findall('.//item')[:limit]
+        if root.tag != 'rss' or root.find('channel') is None:
+            raise ValueError('Documento RSS inválido')
+        todos = root.findall('.//item')
+        lote.disponibles = len(todos)
+        lote.incompleta = len(todos) > limit
+        lote.fuentes_completadas = 1
+        items = todos[:limit]
 
         candidatos = []
         vistos = set()
@@ -242,6 +283,11 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
             titulo = title_node.text.strip() if title_node is not None and title_node.text else ""
             if not link:
                 lote.registrar_error(link, titulo, 'sin_enlace')
+                continue
+            try:
+                validar_url(link)
+            except ValueError:
+                lote.registrar_error(link, titulo, 'url_invalida')
                 continue
             # Los límites salen del modelo para no duplicarlos; SQLite no los controla.
             if _excede_largo_maximo('titulo', titulo) or _excede_largo_maximo('url', link):
@@ -260,8 +306,13 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
             raw_desc = description_node.text if description_node is not None and description_node.text else ""
             article = _leer_articulo(link)
             contenido = (getattr(article, 'text', '') or '') if article else ''
-            if not contenido:
+            if not contenido.strip():
+                lote.registrar_error(link, titulo, 'extraccion_incompleta')
                 contenido = re.sub(r'<[^>]+>', '', raw_desc).strip()
+
+            if not titulo or not contenido.strip():
+                lote.registrar_error(link, titulo, 'articulo_incompleto')
+                continue
 
             candidatos.append({
                 'hash_origen': hash_id,
@@ -285,20 +336,46 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
         return lote.fallo(e)
 
 
-def _urls_de_sitemaps(desde, hasta):
+def _urls_de_sitemaps(desde, hasta, lote=None):
     """Devuelve {link: fecha} de las noticias de El Territorio publicadas entre ambas fechas."""
     indice = ET.fromstring(_descargar(SITEMAP_TERRITORIO, timeout=20))
+    if indice.tag not in (f'{_NS_SITEMAP}sitemapindex', f'{_NS_SITEMAP}urlset'):
+        raise ValueError('Índice sitemap inválido')
+    if indice.tag == f'{_NS_SITEMAP}sitemapindex':
+        for nodo in indice.findall(f'{_NS_SITEMAP}sitemap'):
+            if not (nodo.findtext(f'{_NS_SITEMAP}loc') or '').strip():
+                raise ValueError('Sitemap sin destino')
     sitemaps = [n.text.strip() for n in indice.iter(f'{_NS_SITEMAP}loc') if n.text]
     urls = {}
+    if indice.tag == f'{_NS_SITEMAP}urlset':
+        sitemaps = [SITEMAP_TERRITORIO]
     for sitemap in sitemaps:
         try:
-            raiz = ET.fromstring(_descargar(sitemap, timeout=20))
+            raiz = indice if sitemap == SITEMAP_TERRITORIO else ET.fromstring(_descargar(sitemap, timeout=20))
+            if raiz.tag != f'{_NS_SITEMAP}urlset':
+                raise ValueError('Sitemap no es urlset')
+            if lote is not None:
+                lote.fuentes_completadas += 1
         except Exception as exc:
-            # Un sitemap parcial caído sólo reduce el universo de noticias disponibles.
+            # Conservar los demás sitemaps y dejar explícita la cobertura incompleta.
             logger.warning('Sitemap omitido (%s): %s', type(exc).__name__, sitemap)
+            if lote is None:
+                raise
+            lote.registrar_error(sitemap, '', 'sitemap_no_disponible')
             continue
+        for entrada in raiz.findall(f'{_NS_SITEMAP}url'):
+            if not (entrada.findtext(f'{_NS_SITEMAP}loc') or '').strip():
+                if lote is None:
+                    raise ValueError('Entrada sitemap sin URL')
+                lote.registrar_error('', '', 'sin_enlace')
         for nodo in raiz.iter(f'{_NS_SITEMAP}loc'):
             link = (nodo.text or '').strip()
+            try:
+                validar_url(link)
+            except ValueError:
+                if lote is not None:
+                    lote.registrar_error(link, '', 'url_invalida')
+                continue
             fecha = _fecha_de_url(link)
             if fecha and desde <= fecha <= hasta:
                 urls[link] = fecha
@@ -331,12 +408,19 @@ def ingestar_historico_elterritorio(desde, hasta, limite=40, usar_ia=True, pausa
     Toma hasta `limite` noticias nuevas repartidas a lo largo del período. Las que ya
     existen no cuentan para el límite. Mismo contrato de resultado que la ingesta RSS.
     """
+    if not isinstance(limite, int) or isinstance(limite, bool) or limite < 1:
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False, "capturados": 0, "detalle": "Límite inválido"}
     if desde > hasta:
-        return {"status": "ERROR", "detalle": "La fecha inicial es posterior a la final.", "capturados": 0}
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False, "detalle": "La fecha inicial es posterior a la final.", "capturados": 0}
 
-    lote = _Lote("El Territorio (Archivo)")
     try:
-        urls = _urls_de_sitemaps(desde, hasta)
+        lote = _Lote("El Territorio (Archivo)")
+    except Exception:
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False,
+                "capturados": 0, "detalle": "No se pudo iniciar el registro de ingesta."}
+    try:
+        urls = _urls_de_sitemaps(desde, hasta, lote=lote)
+        lote.disponibles = len(urls)
         existentes = set(Publicacion.objects.filter(
             hash_origen__in=[generar_hash(link) for link in urls],
         ).values_list('hash_origen', flat=True))
@@ -345,7 +429,9 @@ def ingestar_historico_elterritorio(desde, hasta, limite=40, usar_ia=True, pausa
         candidatos = []
         for link in _repartir_por_dia(urls):
             if len(candidatos) >= limite:
-                break
+                if generar_hash(link) not in existentes:
+                    lote.incompleta = True
+                continue
             hash_id = generar_hash(link)
             if hash_id in existentes:
                 continue

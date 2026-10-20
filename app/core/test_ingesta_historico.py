@@ -69,8 +69,8 @@ def capturar_avisos():
         logger.removeHandler(manejador)
 
 
-def articulo_simulado(url, language=None):
-    return SimpleNamespace(text=f'Texto completo de {url.strip()}', download=lambda: None, parse=lambda: None)
+def articulo_simulado(url, language=None, **kwargs):
+    return SimpleNamespace(text=f'Texto completo de {url.strip()}', download=lambda **kwargs: None, parse=lambda: None)
 
 
 class IngestaSimuladaMixin:
@@ -78,8 +78,8 @@ class IngestaSimuladaMixin:
 
     def setUp(self):
         super().setUp()
-        # urllib.request es un módulo compartido: este parche también cubre scrapers/noticias.py.
-        parche_urlopen = patch('urllib.request.urlopen')
+        # Simular la frontera de descarga: ningún feed ni artículo accede a la red.
+        parche_urlopen = patch('core.services.scraper._descargar')
         self.urlopen = parche_urlopen.start()
         self.addCleanup(parche_urlopen.stop)
         parche_article = patch('core.services.scraper.Article', side_effect=articulo_simulado)
@@ -91,7 +91,7 @@ class IngestaSimuladaMixin:
         self.addCleanup(parche_ia.stop)
 
     def feed(self, *items):
-        self.urlopen.return_value.__enter__.return_value.read.return_value = rss(*items)
+        self.urlopen.return_value = rss(*items)
 
     def ingerir(self, *items, categoria='misiones'):
         self.feed(*items)
@@ -215,7 +215,7 @@ class ErroresIndividualesTestCase(IngestaSimuladaMixin, TransactionTestCase):
         """Otro proceso guarda la misma noticia entre la verificación y el alta (D2)."""
         repetida, nueva = BASE + '900030-carrera', BASE + '900031-siguiente'
 
-        def articulo_con_carrera(url, language=None):
+        def articulo_con_carrera(url, language=None, **kwargs):
             if url == repetida:
                 Publicacion.objects.create(hash_origen=identidad(repetida), contenido='Otro proceso', url=repetida)
             return articulo_simulado(url)
@@ -239,9 +239,10 @@ class ErroresIndividualesTestCase(IngestaSimuladaMixin, TransactionTestCase):
                             f'No se guardó la noticia válida {titulo!r}.')
         self.assertFalse(Publicacion.objects.filter(hash_origen=identidad(invalida[1])).exists(),
                          'La noticia inválida se guardó sin control.')
-        self.assertEqual(resultado['status'], 'EXITO')
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertEqual(resultado['estado'], 'PARCIAL')
         self.assertEqual(resultado['capturados'], 2)
-        self.assertEqual(RegistroDatos.objects.get(pk=resultado['registro_id']).estado, 'EXITO')
+        self.assertEqual(RegistroDatos.objects.get(pk=resultado['registro_id']).estado, 'ERROR: PARCIAL')
         self.assertTrue(any(invalida[1] in aviso for aviso in avisos),
                         'El error de la noticia no quedó registrado en el log.')
         self.assertEqual(len(resultado.get('errores', [])), 1)
@@ -300,9 +301,9 @@ class ErroresDeFeedTestCase(IngestaSimuladaMixin, TestCase):
     def test_c4_fallo_de_descarga_usa_descripcion_sin_html_y_continua(self):
         falla = BASE + '900080-falla'
 
-        def articulo_que_falla(url, language=None):
+        def articulo_que_falla(url, language=None, **kwargs):
             if url == falla:
-                return SimpleNamespace(text='', download=lambda: (_ for _ in ()).throw(OSError('timeout')),
+                return SimpleNamespace(text='', download=lambda **kwargs: (_ for _ in ()).throw(OSError('timeout')),
                                        parse=lambda: None)
             return articulo_simulado(url)
 
@@ -317,8 +318,7 @@ class ErroresDeFeedTestCase(IngestaSimuladaMixin, TestCase):
     def test_c6_feed_caido_o_xml_invalido_informa_error_sin_publicaciones(self):
         for caso, configurar in (
             ('feed caído', lambda: setattr(self.urlopen, 'side_effect', URLError('Feed no disponible'))),
-            ('xml inválido', lambda: self.urlopen.return_value.__enter__.return_value.read.configure_mock(
-                return_value=b'<rss>')),
+            ('xml inválido', lambda: self.urlopen.configure_mock(return_value=b'<rss>')),
         ):
             with self.subTest(caso=caso):
                 self.urlopen.reset_mock(side_effect=True)
@@ -455,12 +455,13 @@ class IngestaPostgreSQLTestCase(IngestaSimuladaMixin, TransactionTestCase):
             self.assertTrue(Publicacion.objects.filter(hash_origen=identidad(link)).exists(),
                             'La noticia válida posterior al DataError no se guardó.')
         self.assertFalse(Publicacion.objects.filter(hash_origen=identidad(self.larga)).exists())
-        self.assertEqual(resultado['status'], 'EXITO')
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertEqual(resultado['estado'], 'PARCIAL')
         self.assertEqual(resultado['capturados'], 2)
         self.assertEqual([(e['link'], e['codigo']) for e in resultado['errores']],
                          [(self.larga, 'datos_invalidos')])
         self.assertTrue(any(self.larga in aviso for aviso in avisos))
-        self.assertEqual(RegistroDatos.objects.get(pk=resultado['registro_id']).estado, 'EXITO')
+        self.assertEqual(RegistroDatos.objects.get(pk=resultado['registro_id']).estado, 'ERROR: PARCIAL')
 
     def test_pg_data_error_real_en_autocommit_no_interrumpe_el_lote(self):
         self._comprobar_data_error(*self._ingerir_con_data_error_real())
@@ -483,7 +484,7 @@ class IngestaPostgreSQLTestCase(IngestaSimuladaMixin, TransactionTestCase):
         # encontrarla cuando intentan insertarla, así que una debe chocar con el índice único.
         barreras = {link: Barrier(2, timeout=15) for link in links}
 
-        def articulo_sincronizado(url, language=None):
+        def articulo_sincronizado(url, language=None, **kwargs):
             barreras[url.strip()].wait()
             return articulo_simulado(url)
 
@@ -508,3 +509,54 @@ class IngestaPostgreSQLTestCase(IngestaSimuladaMixin, TransactionTestCase):
         for link in links:
             self.assertEqual(Publicacion.objects.filter(hash_origen=identidad(link)).count(), 1)
         self.assertEqual(list(RegistroDatos.objects.values_list('estado', flat=True)), ['EXITO', 'EXITO'])
+
+
+class CoberturaFase12TestCase(IngestaSimuladaMixin, TestCase):
+    """Regresiones con ORM real; descargas y clasificación externa simuladas."""
+
+    def test_vacio_difiere_de_duplicados(self):
+        vacio = self.ingerir()
+        self.ingerir(('Título', BASE + '900200-noticia', 'Resumen'))
+        duplicados = self.ingerir(('Título', BASE + '900200-noticia', 'Resumen'))
+        self.assertEqual(vacio['estado'], 'SIN_RESULTADOS')
+        self.assertEqual(duplicados['estado'], 'DUPLICADOS')
+        self.assertEqual(duplicados['omitidas'], 1)
+        self.assertTrue(duplicados['cobertura_completa'])
+
+    def test_titulo_vacio_no_persiste(self):
+        resultado = self.ingerir(('', BASE + '900201-sin-titulo', 'Resumen'))
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertFalse(Publicacion.objects.exists())
+
+    def test_contenido_vacio_no_persiste(self):
+        with patch('core.services.scraper._leer_articulo', return_value=None):
+            resultado = self.ingerir(('Título', BASE + '900202-sin-contenido', ''))
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertFalse(Publicacion.objects.exists())
+
+    def test_destino_ajeno_no_se_descarga(self):
+        with patch('core.services.scraper._leer_articulo') as articulo:
+            resultado = self.ingerir(('Título', 'https://localhost/noticias/1', 'Resumen'))
+        articulo.assert_not_called()
+        self.assertEqual(resultado['errores'][0]['codigo'], 'url_invalida')
+        self.assertFalse(Publicacion.objects.exists())
+
+    def test_limite_reporta_parcial(self):
+        self.feed(('Uno', BASE + '900203-uno', 'Resumen'), ('Dos', BASE + '900204-dos', 'Resumen'))
+        resultado = fetch_and_store_elterritorio(limit=1, usar_ia=False)
+        self.assertEqual((resultado['status'], resultado['estado']), ('ERROR', 'PARCIAL'))
+        self.assertEqual(Publicacion.objects.count(), 1)
+
+    def test_sitemap_parcial_conserva_publicacion(self):
+        from datetime import date
+        from core.services.scraper import ingestar_historico_elterritorio
+        indice = b'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><sitemap><loc>https://www.elterritorio.com.ar/a.xml</loc></sitemap><sitemap><loc>https://www.elterritorio.com.ar/b.xml</loc></sitemap></sitemapindex>'
+        mapa = ('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>'
+                + BASE + '900205-historica</loc></url></urlset>').encode()
+        self.urlopen.side_effect = [indice, mapa, OSError('Mapa caído')]
+        with patch('core.services.scraper._leer_articulo', return_value=SimpleNamespace(
+                title='Histórica', text='Contenido', top_image='', publish_date=None)):
+            resultado = ingestar_historico_elterritorio(date(2026, 1, 1), date(2026, 12, 31), usar_ia=False, pausa=0)
+        self.assertEqual((resultado['estado'], resultado['capturados']), ('PARCIAL', 1))
+        self.assertEqual(Publicacion.objects.count(), 1)
+        self.assertEqual(RegistroDatos.objects.get().estado, 'ERROR: PARCIAL')
