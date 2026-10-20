@@ -44,7 +44,6 @@
                     <a href="/" aria-current="page">Inicio</a>
                     <a href="/categorias/">Categorías</a>
                     {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
-                    <a href="/litoral/">Litoral</a>
                 </div>
                 <div class="nav__act">
                     {% include "partials/_account_actions.html" %}
@@ -76,21 +75,6 @@
                         <noscript><p class="news-feed__status">Activá JavaScript para consultar las noticias.</p></noscript>
                     </div>
                     <div class="news-sidebar">
-                    <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">
-                        <p class="news-trends__eyebrow">Conversación regional</p>
-                        <h2 id="news-trends-title">Trends</h2>
-                        <p class="news-trends__description">Explorá los temas de Tendencias detectadas.</p>
-                        <ul class="news-trends__list">
-                            <li><a href="/categorias/#trend-turismomisiones"><span>#TurismoMisiones</span><span aria-hidden="true">↗</span></a></li>
-                            <li><a href="/categorias/#trend-obrasposadas"><span>#ObrasPosadas</span><span aria-hidden="true">↗</span></a></li>
-                            <li><a href="/categorias/#trend-precioyerba"><span>#PrecioYerba</span><span aria-hidden="true">↗</span></a></li>
-                            <li><a href="/categorias/#trend-servicioseldorado"><span>#ServiciosEldorado</span><span aria-hidden="true">↗</span></a></li>
-                            <li><a href="/categorias/#trend-denguemisiones"><span>#DengueMisiones</span><span aria-hidden="true">↗</span></a></li>
-                            <li><a href="/categorias/#trend-fiestadelinmigrante"><span>#FiestaDelInmigrante</span><span aria-hidden="true">↗</span></a></li>
-                        </ul>
-                        <p class="news-trends__note">Tendencias de demostración.</p>
-                        <a class="news-trends__more" href="/categorias/#resultados">Ver todas las tendencias →</a>
-                    </aside>
                     {% include "partials/_exchange_rates.html" %}
                     </div>
                 </div>
@@ -111,7 +95,6 @@
                     <div>
                         <h4>Navegación</h4>
                         <a href="/">Inicio</a>
-                        <a href="/litoral/">Litoral</a>
                     </div>
                     <div>
                         <h4>Plataforma</h4>
@@ -133,8 +116,8 @@
                 </div>
             </div>
         </footer>
-        <script src="/static/js/trendwatch.js?v=7" defer></script>
-        <script src="/static/js/landing-news.js?v=8" defer></script>
+        <script src="/static/js/trendwatch.js?v=8" defer></script>
+        <script src="/static/js/landing-news.js?v=9" defer></script>
         <script src="/static/js/exchange-rates.js?v=1" defer></script>
         <script src="/static/js/auth-flow.js?v=4" defer></script>
         <script src="/static/js/notification-prompt.js?v=2" defer></script>

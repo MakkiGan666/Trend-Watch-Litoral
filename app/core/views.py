@@ -141,7 +141,7 @@ def noticia(request, pk):
 
 
 def litoral(request):
-    return render(request, 'litoral.html')
+    return redirect(reverse('categorias') + '#localidades')
 
 
 def _departamento_o_404(slug):

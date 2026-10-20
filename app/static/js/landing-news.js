@@ -6,17 +6,9 @@
   const status = feed.querySelector('[data-news-status]');
   const retry = feed.querySelector('[data-news-retry]');
   const sections = Array.from(feed.querySelectorAll('[data-news-category]'));
-  const allowDemo = feed.dataset.newsDemo !== 'false';
   const locationName = feed.dataset.newsLocation || '';
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const carousels = new Map();
-  // Muestras visuales locales: nunca se envían a la API ni se guardan en la base.
-  const demoTitles = {
-    salud: ['Prevención y cuidado de la salud en Misiones', 'Servicios de salud en las localidades', 'Hábitos para el bienestar de la comunidad'],
-    turismo: ['Destinos para descubrir en Misiones', 'Naturaleza y recorridos por la región', 'Experiencias de turismo local'],
-    festividades: ['Celebraciones y encuentros de la región', 'Cultura y tradiciones de las localidades', 'Actividades para compartir en comunidad']
-  };
-
   function safeUrl(value) {
     if (typeof value !== 'string' || !value.trim()) return null;
     try {
@@ -37,10 +29,10 @@
     return String(fuente || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Fuente original';
   }
 
-  function card(publication, isDemo = false) {
-    const originalUrl = isDemo ? null : safeUrl(publication.url);
+  function card(publication) {
+    const originalUrl = safeUrl(publication.url);
     const id = String(publication.id ?? '');
-    const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
+    const internalUrl = /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
     const destination = internalUrl || originalUrl;
     const title = publication.titulo || 'Noticia sin título';
     const article = document.createElement(destination ? 'a' : 'article');
@@ -59,7 +51,6 @@
     fallback.className = 'news-card__fallback';
     fallback.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span>El Territorio</span>';
     media.append(fallback);
-    if (isDemo) fallback.querySelector('span').textContent = 'Vista de ejemplo';
     const imageUrl = safeUrl(publication.imagen_url);
     if (imageUrl) {
       const image = document.createElement('img');
@@ -75,17 +66,11 @@
     const body = document.createElement('div');
     body.className = 'news-card__body';
     const source = document.createElement('span');
-    source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
-    source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
+    source.className = 'news-card__source';
+    source.textContent = publication.fuente || 'El Territorio';
     const heading = document.createElement('h3');
     heading.textContent = title;
     body.append(source, heading);
-    if (isDemo) {
-      const note = document.createElement('p');
-      note.className = 'news-card__demo-note';
-      note.textContent = 'Contenido de ejemplo. La lectura interna estará disponible cuando se carguen noticias reales de esta categoría.';
-      body.append(note);
-    }
     if (internalUrl || originalUrl) {
       const link = document.createElement('span');
       link.className = 'news-card__link';
@@ -170,17 +155,12 @@
           if (groups.has(category)) groups.get(category).push(publication);
         });
       });
-      let demoCount = 0;
       sections.forEach(section => {
         const publications = groups.get(section.dataset.newsCategory);
-        const isDemo = allowDemo && !publications.length && Boolean(demoTitles[section.dataset.newsCategory]);
-        const items = isDemo
-          ? demoTitles[section.dataset.newsCategory].map(titulo => ({ titulo }))
-          : publications;
-        if (isDemo) demoCount += items.length;
+        const items = publications;
         const track = section.querySelector('.news-track');
         const empty = section.querySelector('.news-category__empty');
-        track.replaceChildren(...items.map(publication => card(publication, isDemo)));
+        track.replaceChildren(...items.map(publication => card(publication)));
         track.hidden = !items.length;
         empty.hidden = Boolean(items.length);
         empty.querySelector('p').textContent = locationName
@@ -195,7 +175,6 @@
       status.textContent = visibleTotal
         ? (locationName || 'El Territorio') + ' · ' + visibleTotal + ' noticias de las categorías seleccionadas'
         : (locationName ? 'Todavía no hay noticias de estas categorías asociadas a ' + locationName + '.' : 'No hay noticias de estas categorías entre las publicaciones recibidas.');
-      if (demoCount) status.textContent += ' · ' + demoCount + ' tarjetas de demostración, fuera del conteo de noticias.';
     } catch (_) {
       status.textContent = 'No pudimos cargar las noticias. Intentá nuevamente.';
       retry.hidden = false;

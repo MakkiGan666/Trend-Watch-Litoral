@@ -52,7 +52,6 @@
         <a href="{% url 'landing' %}" {% if request.resolver_match.url_name == 'landing' %}aria-current="page"{% endif %}>Inicio</a>
         {% block categories_nav %}<a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>{% endblock %}
         {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>{% endif %}
-        <a href="{% url 'litoral' %}" {% if request.resolver_match.url_name == 'litoral' %}aria-current="page"{% endif %}>Litoral</a>
       </div>
       <div class="nav__act">
         {% include "partials/_account_actions.html" %}
@@ -81,7 +80,6 @@
         <div>
           <h4>Navegación</h4>
           <a href="{% url 'landing' %}">Inicio</a>
-          <a href="{% url 'litoral' %}">Litoral</a>
         </div>
         <div>
           <h4>Plataforma</h4>
@@ -100,13 +98,13 @@
       </div>
       <div class="foot__bot">
         <span>&copy; 2026 TrendWatch Litoral · Todos los derechos reservados</span>
-        <span>Datos de demostración · mockup sin conexión a base de datos</span>
+        <span>Noticias de la región · Fuentes identificadas en cada publicación</span>
       </div>
     </div>
   </footer>
   {% endblock %}
 
-  <script src="{% static 'js/trendwatch.js' %}?v=7" defer></script>
+  <script src="{% static 'js/trendwatch.js' %}?v=8" defer></script>
   <script src="{% static 'js/auth-flow.js' %}?v=4" defer></script>
   <script src="{% static 'js/notification-prompt.js' %}?v=2" defer></script>
   {% block extra_js %}{% endblock %}
