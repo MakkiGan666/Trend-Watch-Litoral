@@ -1,22 +1,51 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ titulo_formulario }} · TrendWatch{% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/publication-form.css' %}?v=2">
+{% endblock %}
+
 {% block content %}
-<div style="max-width: 600px; margin: 40px auto; padding: 20px; background: #fff; border-radius: 8px; color: #333;">
-    <h2>{{ titulo_formulario }}</h2>
-
-    <form method="post">
-        {% csrf_token %}
-        
-        {{ form.as_p }}
-
-        <div style="margin-top: 20px;">
-            <button type="submit" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                {{ texto_boton }}
-            </button>
-            <a href="{% url 'dashboard' %}" style="margin-left: 10px; color: #666;">Cancelar</a>
-        </div>
-    </form>
+<div class="wrap publication-editor">
+    <a class="btn btn--ghost publication-editor__back" href="{% url 'dashboard' %}">← Volver al Dashboard</a>
+    <section class="publication-editor__card glass glass--sheen" aria-labelledby="publication-form-title">
+        <header class="publication-editor__head">
+            <p>Gestión de noticias</p>
+            <h1 id="publication-form-title">{{ titulo_formulario }}</h1>
+            <p>Completá los datos de la noticia y seleccioná las categorías que correspondan.</p>
+        </header>
+        <form method="post" enctype="multipart/form-data" class="publication-editor__form">
+            {% csrf_token %}
+            {% if form.non_field_errors %}<div class="publication-editor__errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+            {% for field in form %}
+                {% if field.name == 'categorias' %}
+                <fieldset class="publication-editor__categories">
+                    <legend>{{ field.label }}</legend>
+                    <p class="publication-editor__hint">Podés seleccionar más de una categoría.</p>
+                    <div class="publication-editor__options">
+                        {% for checkbox in field %}
+                        <label class="publication-editor__option">{{ checkbox.tag }}<span>{{ checkbox.choice_label }}</span></label>
+                        {% empty %}<p class="publication-editor__hint">No hay categorías disponibles.</p>{% endfor %}
+                    </div>
+                    {% if field.errors %}<div class="publication-editor__errors" role="alert">{{ field.errors }}</div>{% endif %}
+                </fieldset>
+                {% else %}
+                <div class="publication-editor__field">
+                    <label for="{{ field.id_for_label }}">{% if field.name == 'url' %}Enlace original{% else %}{{ field.label }}{% endif %}{% if field.field.required %}<span aria-hidden="true"> *</span>{% endif %}</label>
+                    {{ field }}
+                    {% if field.name == 'url' %}<p class="publication-editor__hint">Opcional. Pegá la URL de la fuente original.</p>{% endif %}
+                    {% if field.help_text %}<p class="publication-editor__hint">{{ field.help_text }}</p>{% endif %}
+                    {% if field.errors %}<div class="publication-editor__errors" role="alert">{{ field.errors }}</div>{% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+            <div class="publication-editor__actions">
+                <button type="submit" class="btn btn--primary">{{ texto_boton }}</button>
+                <a href="{% url 'dashboard' %}" class="btn btn--ghost">Cancelar</a>
+            </div>
+        </form>
+    </section>
 </div>
 {% endblock %}

@@ -1,0 +1,22 @@
+// Extraer funciones reales sin ejecutar DOM, fetch ni navegador.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const source = fs.readFileSync(path.join(__dirname, '../../app/static/js/landing-news.js'), 'utf8');
+const start = source.indexOf('  function categoryKey(');
+const end = source.indexOf('  function sourceName(', start);
+assert.ok(start >= 0 && end > start);
+const context = vm.createContext({});
+vm.runInContext(source.slice(start, end), context);
+const categories = data => Array.from(context.categoriesOf(data));
+assert.deepEqual(categories({categorias: ['Salud', 'Economía', 'Salud']}), ['salud', 'economia']);
+assert.deepEqual(categories({categorias: [{id: 2, nombre: 'Política'}, {codigo: 'turismo', nombre: 'Turismo'}]}), ['politica', 'turismo']);
+assert.deepEqual(categories({categorias_detalle: [], categorias: ['Sociedad'], fuente: 'El Territorio (Policiales)'}), []);
+assert.deepEqual(categories({categorias_detalle: [{id: 3, nombre: 'Festividades'}], categorias: ['Archivo']}), ['festividades']);
+assert.deepEqual(categories({categorias: [], fuente: 'El Territorio (Salud)'}), []);
+assert.deepEqual(categories({categoria: 'Tecnología'}), ['tecnologia']);
+assert.deepEqual(categories({fuente: 'El Territorio (Salud)'}), ['salud']);
+assert.deepEqual(categories({categorias: [null, {}, 3, {nombre: null}]}), []);
+assert.deepEqual(categories({fuente: 'Manual'}), []);
+console.log('9 escenarios de categorías frontend: OK; sin DOM ni red.');

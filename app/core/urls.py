@@ -1,5 +1,8 @@
 from django.urls import path
 from . import views
+from . import views_comentarios
+from . import views_valoraciones
+from . import views_perfil
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -12,10 +15,18 @@ from .views import (
 )
 
 urlpatterns = [
+    path('perfil/', views_perfil.perfil, name='perfil'),
+    path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
+    path('perfil/notificaciones/', views_perfil.perfil, {'seccion': 'notificaciones'}, name='perfil_notificaciones'),
+    path('noticia/<int:pk>/guardar/', views_perfil.guardar_publicacion, name='guardar_publicacion'),
     # Vistas Web / Templates
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),
     path('noticia/<int:pk>/', views.noticia, name='noticia'),
+    path('noticia/<int:pk>/comentarios/', views_comentarios.crear_comentario, name='crear_comentario'),
+    path('noticia/<int:pk>/valoracion/', views_valoraciones.valorar_noticia, name='valorar_noticia'),
+    path('comentarios/<int:pk>/editar/', views_comentarios.editar_comentario, name='editar_comentario'),
+    path('comentarios/<int:pk>/eliminar/', views_comentarios.eliminar_comentario, name='eliminar_comentario'),
     path('litoral/', views.litoral, name='litoral'),
     path('localidad/<slug:slug>/', views.localidad, name='localidad'),
     path('api/localidades/<slug:slug>/publicaciones/', views.publicaciones_localidad, name='publicaciones_localidad'),

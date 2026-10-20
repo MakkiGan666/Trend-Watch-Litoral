@@ -1,0 +1,31 @@
+<section class="news-rating glass glass--sheen" id="valoraciones" aria-labelledby="news-rating-title">
+  <header class="news-rating__head">
+    <h2 id="news-rating-title">¿Qué sentimiento te genera esta noticia?</h2>
+    <p>Opinión de quienes la leen. Estas respuestas se muestran por separado del análisis automático de la noticia.</p>
+  </header>
+  <form method="post" action="{% url 'valorar_noticia' publicacion.pk %}" class="news-rating__form">
+    {% csrf_token %}
+    <div class="news-rating__options" role="group" aria-label="Elegí un sentimiento">
+      {% for opcion in valoraciones_opciones %}
+        <button type="submit" class="news-rating__option" name="sentimiento" value="{{ opcion.valor }}" aria-pressed="{{ opcion.seleccionada|yesno:'true,false' }}"{% if not request.user.is_authenticated %} disabled{% endif %}>
+          <span class="news-rating__face" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="16" cy="16" r="12"/>
+              <circle cx="12" cy="13" r="1" fill="currentColor" stroke="none"/>
+              <circle cx="20" cy="13" r="1" fill="currentColor" stroke="none"/>
+              {% if opcion.valor == 'positivo' %}<path d="M10.5 19a6 6 0 0 0 11 0"/>{% elif opcion.valor == 'neutral' %}<path d="M11 20h10"/>{% else %}<path d="M11 22a5.5 5.5 0 0 1 10 0"/>{% endif %}
+            </svg>
+          </span>
+          <span>{{ opcion.etiqueta }}</span>
+          <strong>{{ opcion.total }}</strong>
+          {% if opcion.seleccionada %}<small>Tu elección</small>{% endif %}
+        </button>
+      {% endfor %}
+    </div>
+    <div class="news-rating__foot">
+      <p>{{ valoraciones_total }} respuesta{{ valoraciones_total|pluralize:'s' }}{% if request.user.is_authenticated and not valoracion_propia %} · Todavía no elegiste una opción.{% endif %}</p>
+      {% if valoracion_propia %}<button class="btn btn--ghost" type="submit" name="sentimiento" value="retirar">Retirar mi valoración</button>{% endif %}
+    </div>
+  </form>
+  {% if not request.user.is_authenticated %}<a class="btn btn--ghost news-rating__login" href="#login-modal" aria-haspopup="dialog">Ingresar para valorar</a>{% else %}<p class="news-rating__hint">Una elección por noticia. Podés cambiarla o retirarla cuando quieras.</p>{% endif %}
+</section>

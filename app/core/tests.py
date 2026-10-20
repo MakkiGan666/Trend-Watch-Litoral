@@ -856,10 +856,10 @@ class PublicacionSerializersTestCase(SimpleTestCase):
                 self.assert_invalid(
                     PublicacionCreateSerializer(data=self.payload(**{field: 'a' * (limit + 1)})), field,
                 )
-        for length in (200, 201):
+        for length in (500, 501):
             url = 'https://example.com/' + 'a' * (length - len('https://example.com/'))
             serializer = PublicacionCreateSerializer(data=self.payload(url=url))
-            self.assertEqual(serializer.is_valid(), length == 200, serializer.errors)
+            self.assertEqual(serializer.is_valid(), length == 500, serializer.errors)
 
     def test_url_normalizada_y_opcional(self):
         for value, expected in (('', ''), ('   ', ''),
@@ -1729,10 +1729,10 @@ class RolesPermisosTestCase(TestCase):
 
 class ScraperAlternativoTestCase(TestCase):
     @patch('core.scrapers.noticias.Publicacion.objects.get_or_create')
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_error_lectura_se_propaga_sin_intentar_guardar(self, urlopen, guardar):
         error = OSError('Lectura del feed interrumpida')
-        urlopen.return_value.__enter__.return_value.read.side_effect = error
+        urlopen.side_effect = error
         with patch('builtins.print') as salida:
             with self.assertRaises(OSError) as contexto:
                 fetch_elterritorio_news()
@@ -1741,14 +1741,14 @@ class ScraperAlternativoTestCase(TestCase):
         salida.assert_not_called()
 
     @patch('core.scrapers.noticias.Publicacion.objects.get_or_create')
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_error_persistencia_se_propaga_sin_anunciar_exito(self, urlopen, guardar):
         xml = b'''<rss><channel><item>
             <title>Noticia del feed</title>
             <link>https://www.elterritorio.com.ar/noticias/918312-noticia</link>
             <description>Contenido del feed</description>
         </item></channel></rss>'''
-        urlopen.return_value.__enter__.return_value.read.return_value = xml
+        urlopen.return_value = xml
         error = RuntimeError('Fallo al guardar la noticia')
         guardar.side_effect = error
         with patch('builtins.print') as salida:
@@ -1759,7 +1759,7 @@ class ScraperAlternativoTestCase(TestCase):
         self.assertEqual(guardar.call_args.kwargs['id_publicacion_api'], 918312)
         salida.assert_not_called()
 
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_fallos_de_red_no_generan_publicaciones(self, urlopen):
         for error in (URLError('Feed no disponible'), TimeoutError('Tiempo agotado')):
             with self.subTest(error=type(error).__name__):
@@ -1771,30 +1771,30 @@ class ScraperAlternativoTestCase(TestCase):
                 self.assertFalse(Publicacion.objects.exists())
                 salida.assert_not_called()
 
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_xml_invalido_no_genera_publicaciones(self, urlopen):
-        urlopen.return_value.__enter__.return_value.read.return_value = b'<rss>'
+        urlopen.return_value = b'<rss>'
         with patch('builtins.print') as salida:
             with self.assertRaises(ET.ParseError):
                 fetch_elterritorio_news()
         self.assertFalse(Publicacion.objects.exists())
         salida.assert_not_called()
 
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_rss_vacio_valido_devuelve_lista_vacia(self, urlopen):
-        urlopen.return_value.__enter__.return_value.read.return_value = b'<rss><channel /></rss>'
+        urlopen.return_value = b'<rss><channel /></rss>'
         with patch('builtins.print'):
             self.assertEqual(fetch_elterritorio_news(), [])
         self.assertFalse(Publicacion.objects.exists())
 
-    @patch('core.scrapers.noticias.urllib.request.urlopen')
+    @patch('core.scrapers.noticias.descargar')
     def test_extrae_y_persiste_noticia_del_feed(self, urlopen):
         enlace = 'https://www.elterritorio.com.ar/noticias/2026/10/07/918312-noticia'
         xml = f'''<rss><channel><item>
             <title> Noticia del feed </title><link>{enlace}</link>
             <description>&lt;p&gt;Contenido del feed&lt;/p&gt;</description>
         </item></channel></rss>'''
-        urlopen.return_value.__enter__.return_value.read.return_value = xml.encode('utf-8')
+        urlopen.return_value = xml.encode('utf-8')
         with patch('builtins.print'):
             articulos = fetch_elterritorio_news(category='misiones', limit=1)
         hash_origen = hashlib.sha256(enlace.encode('utf-8')).hexdigest()
@@ -1814,7 +1814,8 @@ class ScraperAlternativoTestCase(TestCase):
 
 
 class EjecutarScraperCommandTestCase(TestCase):
-    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news')
+    # TW-03: el comando delega en el scraper oficial (core.services.scraper); se simula ese servicio.
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio')
     def test_error_preserva_causa_y_no_emite_exito(self, scraper):
         error = URLError('Feed no disponible')
         scraper.side_effect = error
@@ -1822,16 +1823,27 @@ class EjecutarScraperCommandTestCase(TestCase):
         with self.assertRaisesMessage(CommandError, 'Feed no disponible') as contexto:
             call_command('ejecutar_scraper', category='policiales', limit=2, stdout=salida)
         self.assertIs(contexto.exception.__cause__, error)
-        scraper.assert_called_once_with(category='policiales', limit=2)
+        scraper.assert_called_once_with('policiales', limit=2, usar_ia=True)
         self.assertNotIn('Ingesta finalizada correctamente', salida.getvalue())
         self.assertNotIn('[✔]', salida.getvalue())
 
-    @patch('core.management.commands.ejecutar_scraper.fetch_elterritorio_news', return_value=[])
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio', return_value={
+        'status': 'ERROR', 'detalle': 'Feed no disponible', 'capturados': 0,
+    })
+    def test_resultado_error_del_servicio_no_emite_exito(self, scraper):
+        salida = StringIO()
+        with self.assertRaisesMessage(CommandError, 'Feed no disponible'):
+            call_command('ejecutar_scraper', stdout=salida)
+        self.assertNotIn('[✔]', salida.getvalue())
+
+    @patch('core.management.commands.ejecutar_scraper.fetch_and_store_elterritorio', return_value={
+        'status': 'EXITO', 'capturados': 0, 'registro_id': 1, 'omitidas': 0, 'errores': [],
+    })
     def test_lista_vacia_es_finalizacion_valida(self, scraper):
         salida = StringIO()
         call_command('ejecutar_scraper', stdout=salida)
         self.assertIn('Ingesta finalizada correctamente. Se procesaron 0 artículos.', salida.getvalue())
-        scraper.assert_called_once_with(category='misiones', limit=5)
+        scraper.assert_called_once_with('misiones', limit=30, usar_ia=True)
 
 
 class RunPipelineCommandTestCase(TestCase):

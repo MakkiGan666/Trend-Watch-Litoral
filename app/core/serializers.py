@@ -106,9 +106,11 @@ class PublicacionCreateSerializer(PublicacionInputSerializer):
     titulo = StrictCharField(max_length=255, trim_whitespace=False)
     contenido = StrictCharField(trim_whitespace=False)
     fuente = StrictCharField(max_length=100, default='Manual', trim_whitespace=False)
-    url = StrictURLField(max_length=200, default='', allow_blank=True, trim_whitespace=True)
+    url = StrictURLField(max_length=500, default='', allow_blank=True, trim_whitespace=True)
     fecha_publicacion = serializers.DateTimeField(
         input_formats=['iso-8601'], default=timezone.now,
+        help_text=('Alias histórico de fecha_captura en el alta manual; no establece la fecha del medio. '
+                   'Si se omite, se utiliza el momento del alta.'),
     )
 
 

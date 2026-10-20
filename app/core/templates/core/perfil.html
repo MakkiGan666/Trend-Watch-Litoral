@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Mi perfil · TrendWatch Litoral{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/profile.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap profile-page">
+  <aside class="profile-sidebar glass glass--sheen">
+    <h2>Gestión de cuenta</h2>
+    <nav aria-label="Mi cuenta">
+      <p>Cuenta</p>
+      <a href="{% url 'perfil' %}" {% if seccion == 'datos' %}aria-current="page"{% endif %}>Mis datos</a>
+      <p>Contenido</p>
+      <a href="{% url 'mis_guardados' %}" {% if seccion == 'guardados' %}aria-current="page"{% endif %}>Mis guardados</a>
+      <p>Preferencias</p>
+      <a href="{% url 'perfil_notificaciones' %}" {% if seccion == 'notificaciones' %}aria-current="page"{% endif %}>Notificaciones</a>
+    </nav>
+  </aside>
+  <div class="profile-main">
+    <header><p class="profile-eyebrow">Tu espacio en TrendWatch</p><h1>{% if seccion == 'guardados' %}Mis guardados{% elif seccion == 'notificaciones' %}Notificaciones{% else %}Perfil{% endif %}</h1><p>Hola, {{ request.user.username }}.</p></header>
+    {% for message in messages %}<p class="profile-message" role="status">{{ message }}</p>{% endfor %}
+    {% if seccion == 'datos' %}
+    <section class="profile-card glass glass--sheen" aria-labelledby="personal-title">
+      <h2 id="personal-title">Datos personales</h2>
+      <p>Esta información es personal y privada. La fecha de nacimiento y el celular son opcionales.</p>
+      <form method="post" action="{% url 'perfil' %}">
+        {% csrf_token %}<input type="hidden" name="accion" value="datos">
+        {{ datos_form.non_field_errors }}
+        <div class="profile-fields">
+          {% for field in datos_form %}
+          <div class="profile-field {% if field.name == 'email' or field.name == 'confirmar_password' %}profile-field--wide{% endif %}">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            <div class="profile-input">{{ field }}{% if field.name == 'confirmar_password' %}{% include "partials/_password_toggle.html" with input_id=field.id_for_label %}{% endif %}</div>
+            {{ field.errors }}
+          </div>
+          {% endfor %}
+        </div>
+        <p class="profile-hint">Solo necesitás confirmar tu contraseña si cambiás el email que usás para ingresar.</p>
+        <button class="btn btn--ghost" type="submit">Guardar datos</button>
+      </form>
+    </section>
+    <section class="profile-card glass glass--sheen" aria-labelledby="account-title">
+      <h2 id="account-title">Detalles de cuenta</h2>
+      <p>Usuario: <strong>{{ request.user.username }}</strong></p>
+      <p>Email de acceso: <strong>{{ request.user.email|default:"Sin email registrado" }}</strong></p>
+      <details class="profile-password" {% if password_form.errors %}open{% endif %}>
+        <summary>Cambiar contraseña</summary>
+        <form method="post" action="{% url 'perfil' %}">
+          {% csrf_token %}<input type="hidden" name="accion" value="password">
+          {{ password_form.non_field_errors }}
+          {% for field in password_form %}
+          <div class="profile-field">
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            <div class="profile-input">{{ field }}{% include "partials/_password_toggle.html" with input_id=field.id_for_label %}</div>
+            {{ field.errors }}{% if field.help_text %}<div class="profile-hint">{{ field.help_text }}</div>{% endif %}
+          </div>
+          {% endfor %}
+          <button class="btn btn--ghost" type="submit">Actualizar contraseña</button>
+        </form>
+      </details>
+      <a class="btn btn--ghost" href="{% url 'logout' %}">Cerrar sesión</a>
+    </section>
+    {% elif seccion == 'guardados' %}
+    <section class="profile-card glass glass--sheen" aria-label="Noticias guardadas">
+      {% for item in guardados %}
+      <article class="profile-saved">
+        {% if item.publicacion.imagen_publica_url %}<img src="{{ item.publicacion.imagen_publica_url }}" alt="" loading="lazy">{% endif %}
+        <div><p>{{ item.publicacion.fuente }}</p><h2><a href="{% url 'noticia' item.publicacion.pk %}">{{ item.publicacion.titulo }}</a></h2><p>Guardada el {{ item.fecha_creacion|date:"d/m/Y" }}</p>
+          <form method="post" action="{% url 'guardar_publicacion' item.publicacion.pk %}">{% csrf_token %}<input type="hidden" name="origen" value="guardados"><button class="btn btn--ghost" name="accion" value="quitar">Quitar de mis guardados</button></form>
+        </div>
+      </article>
+      {% empty %}
+      <h2>Todavía no guardaste noticias</h2><p>Dentro de cada noticia encontrarás el botón «Guardar noticia» para volver a leerla desde acá.</p><a class="btn btn--ghost" href="{% url 'landing' %}">Explorar noticias</a>
+      {% endfor %}
+      {% if guardados.has_other_pages %}<nav class="profile-pagination" aria-label="Páginas de noticias guardadas">{% if guardados.has_previous %}<a href="?pagina={{ guardados.previous_page_number }}">← Anterior</a>{% endif %}<span>{{ guardados.number }} de {{ guardados.paginator.num_pages }}</span>{% if guardados.has_next %}<a href="?pagina={{ guardados.next_page_number }}">Siguiente →</a>{% endif %}</nav>{% endif %}
+    </section>
+    {% else %}
+    <section class="profile-card glass glass--sheen">
+      <h2>Preferencias de notificaciones</h2>
+      <p data-notification-status>Consultá el permiso de este navegador.</p>
+      <p>Esta preferencia se guarda en este navegador. El envío de avisos todavía no está disponible.</p>
+      <button class="btn btn--ghost" type="button" data-notification-configure>Configurar notificaciones</button>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

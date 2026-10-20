@@ -1,0 +1,42 @@
+# Independiente: NO combinar con docker-compose.yml de desarrollo.
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    environment:
+      DJANGO_SETTINGS_MODULE: mi_proyecto.settings_production
+      PYTHON_DOTENV_DISABLED: "1"
+      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY:?Definir una clave productiva propia}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?Definir hosts reales específicos}
+      DB_HOST: ${DB_HOST:?Definir PostgreSQL provisionado externamente}
+      DB_PORT: ${DB_PORT:?Definir puerto PostgreSQL}
+      DB_NAME: ${DB_NAME:?Definir base productiva}
+      DB_USER: ${DB_USER:?Definir rol PostgreSQL de mínimo privilegio}
+      DB_PASSWORD: ${DB_PASSWORD:?Definir credencial PostgreSQL}
+      DB_SSLMODE: ${DB_SSLMODE:?Elegir transporte PostgreSQL según infraestructura}
+      DB_SSLROOTCERT: ${DB_SSLROOTCERT:-}
+      MEDIA_ROOT: /var/lib/trendwatch/media
+      TRUST_PROXY_HTTPS: ${TRUST_PROXY_HTTPS:-false}
+      SECURE_HSTS_SECONDS: ${SECURE_HSTS_SECONDS:-0}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+    ports:
+      - "127.0.0.1:8001:8000"
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ${MEDIA_HOST_PATH:?Provisionar ruta absoluta de media con UID 10001}
+        target: /var/lib/trendwatch/media
+        bind:
+          create_host_path: false
+    restart: unless-stopped
+    init: true

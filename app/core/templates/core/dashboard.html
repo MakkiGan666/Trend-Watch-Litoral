@@ -5,7 +5,8 @@
 {% block body_class %}publications{% endblock %}
 
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=9">
+<link rel="stylesheet" href="{% static 'css/dashboard-calendar.css' %}?v=2">
 {% endblock %}
 
 {% block content %}
@@ -13,7 +14,10 @@
     <div class="page-head reveal">
         <h1>Dashboard</h1>
         <p>Publicaciones reales de TrendWatch Litoral. Consultá las noticias y el estado de sus análisis.</p>
-        <a class="btn btn--primary dashboard-new" href="{% url 'crear_publicacion_web' %}">Nueva publicación</a>
+        <div class="dashboard-head-actions">
+            <a class="btn btn--ghost dashboard-new" href="{% url 'crear_publicacion_web' %}">Nueva publicación</a>
+            <button class="btn btn--ghost" type="button" data-dashboard-edit-toggle aria-pressed="false" aria-controls="dashboard-publications" hidden>Editar publicación</button>
+        </div>
     </div>
 
     {% if messages %}
@@ -30,18 +34,37 @@
 
     <form class="dashboard-filters glass glass--sheen" data-dashboard-filters hidden>
         <div><label for="dashboard-search">Buscar noticias</label><input class="select" id="dashboard-search" type="search" placeholder="Título, contenido o fuente…"></div>
+        <div class="dashboard-date" data-dashboard-calendar>
+            <label for="dashboard-date-trigger" id="dashboard-date-label">Fecha de captura</label>
+            <input type="hidden" id="dashboard-date" name="fecha" value="">
+            <button class="select dashboard-date__trigger" id="dashboard-date-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="dashboard-calendar" aria-labelledby="dashboard-date-label dashboard-date-value">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M7 3v4M17 3v4M7 14h2m6 0h2M7 17h2m6 0h2"/></svg>
+                <span id="dashboard-date-value">Todas las fechas</span>
+            </button>
+            <div class="dashboard-calendar" id="dashboard-calendar" role="dialog" aria-modal="false" aria-label="Elegir fecha de captura" hidden>
+                <div class="dashboard-calendar__head">
+                    <button type="button" class="icon-btn" data-calendar-prev aria-label="Mes anterior">‹</button>
+                    <strong id="dashboard-calendar-month" data-calendar-month aria-live="polite"></strong>
+                    <button type="button" class="icon-btn" data-calendar-next aria-label="Mes siguiente">›</button>
+                </div>
+                <div class="dashboard-calendar__week" aria-hidden="true"><span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span></div>
+                <div class="dashboard-calendar__days" data-calendar-days role="group" aria-labelledby="dashboard-calendar-month"></div>
+                <div class="dashboard-calendar__foot"><button type="button" data-calendar-today>Hoy</button><button type="button" data-calendar-clear>Quitar fecha</button></div>
+            </div>
+        </div>
         <div><label for="dashboard-source">Fuente</label><select class="select" id="dashboard-source"><option value="">Todas las fuentes</option></select></div>
-        <div><label for="dashboard-location">Localidad registrada</label><select class="select" id="dashboard-location"><option value="">Todas las localidades</option><option value="__missing">Sin ubicación identificada</option></select></div>
-        <div><label for="dashboard-analysis">Análisis de sentimiento</label><select class="select" id="dashboard-analysis"><option value="">Todos</option><option value="available">Disponible</option><option value="pending">Pendiente</option></select></div>
+        <div><label for="dashboard-location">Localidad / departamento</label><select class="select" id="dashboard-location"><option value="">Todas las localidades</option>{% for departamento in departamentos %}<option value="{{ departamento.slug }}">{{ departamento.nombre }}</option>{% endfor %}<option value="__missing">Sin departamento identificado</option></select></div>
+        <div><label for="dashboard-category">Categoría</label><select class="select" id="dashboard-category"><option value="">Todas las categorías</option>{% for categoria in categorias_dashboard %}<option value="{{ categoria.pk }}">{{ categoria.nombre_categoria }}</option>{% endfor %}<option value="__missing">Sin categoría asignada</option></select></div>
         <button class="btn btn--ghost" type="reset">Limpiar filtros</button>
     </form>
     <noscript><p class="dashboard-note">Activá JavaScript para buscar y filtrar. Las publicaciones siguen disponibles en la tabla.</p></noscript>
 
-    <div class="publication-list glass glass--sheen reveal">
+    <div class="publication-list glass glass--sheen reveal" id="dashboard-publications" tabindex="-1">
         <div class="publication-list__head">
             <div>
                 <h2>Últimas publicaciones</h2>
                 <p>Últimos {{ publicaciones|length }} registros, hasta un máximo de 100. Los filtros y el resumen se aplican a este conjunto.</p>
+                <p data-dashboard-edit-help role="status" hidden>Modo de edición activo. Elegí una noticia para editarla o eliminarla.</p>
             </div>
             <span class="publication-count" data-dashboard-count role="status" aria-live="polite">{{ publicaciones|length }} registros</span>
         </div>
@@ -56,20 +79,20 @@
                         <th scope="col">Fuente</th>
                         <th scope="col">Localidad</th>
                         <th scope="col">Sentimiento</th>
-                        <th scope="col">Acciones</th>
+                        <th scope="col" data-dashboard-actions hidden>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for pub in publicaciones %}
                     {% with analisis=pub.sentimiento_set.all|first ubicaciones=pub.locacion_set.all %}
-                    <tr data-dashboard-row data-source="{{ pub.fuente|default:'Sin fuente identificada' }}" data-analysis="{% if analisis %}available{% else %}pending{% endif %}">
+                    <tr data-dashboard-row data-categories="{{ pub.dashboard_categorias|join:',' }}" data-capture-date="{{ pub.fecha_captura|date:'Y-m-d' }}" data-source="{{ pub.fuente|default:'Sin fuente identificada' }}" data-departamentos="{{ pub.dashboard_departamentos|join:',' }}" data-analysis="{% if analisis %}available{% else %}pending{% endif %}">
                         <td data-label="ID">{{ pub.id_publicacion_api }}</td>
                         <td data-label="Captura">{% if pub.fecha_captura %}<time datetime="{{ pub.fecha_captura|date:'c' }}">{{ pub.fecha_captura|date:"d/m/Y H:i" }}</time>{% else %}Sin fecha{% endif %}</td>
-                        <td data-label="Noticia" class="dashboard-news"><a href="{% url 'noticia' pub.id_publicacion_api %}">{{ pub.titulo|default:"Noticia sin título" }}</a><p>{{ pub.contenido|striptags|truncatechars:180 }}</p></td>
+                        <td data-label="Noticia" class="dashboard-news"><a href="{% url 'noticia' pub.id_publicacion_api %}">{{ pub.titulo|default:"Noticia sin título" }}</a><p>{{ pub.contenido|striptags|truncatechars:180 }}</p><small class="dashboard-note">{% for categoria in pub.categorias_navegacion %}{{ categoria }}{% if not forloop.last %}, {% endif %}{% empty %}Sin categoría asociada{% endfor %}</small></td>
                         <td data-label="Fuente">{{ pub.fuente|default:"Sin fuente identificada" }}<small class="dashboard-note">{% if pub.id_registro %}Registro #{{ pub.id_registro.id_registro }}{% else %}Sin registro de ingesta{% endif %}</small></td>
-                        <td data-label="Localidad">{% for ubicacion in ubicaciones %}{% if ubicacion.location %}<span class="dashboard-location" data-location="{{ ubicacion.location }}">{{ ubicacion.location }}</span>{% endif %}{% empty %}<span class="dashboard-note">Sin ubicación identificada</span>{% endfor %}</td>
-                        <td data-label="Sentimiento">{% if analisis %}<span class="tag">Análisis disponible</span><small class="dashboard-note">Polaridad: {{ analisis.polaridad|floatformat:2 }}<br>Confianza: {{ analisis.confianza|floatformat:2 }}</small>{% else %}<span class="tag tag--soft">Pendiente de análisis</span>{% endif %}</td>
-                        <td data-label="Acciones" class="dashboard-actions" data-dashboard-actions>
+                        <td data-label="Localidad">{% for ubicacion in ubicaciones %}{% if ubicacion.location %}<span class="dashboard-location" data-location="{{ ubicacion.location }}">{{ ubicacion.location }}</span>{% endif %}{% empty %}{% for nombre in pub.dashboard_departamento_nombres %}<span class="dashboard-location">{{ nombre }}</span>{% empty %}<span class="dashboard-note">Sin ubicación identificada</span>{% endfor %}{% endfor %}</td>
+                        <td data-label="Sentimiento" class="dashboard-sentiment">{% if analisis %}<span class="tag dashboard-status">Análisis disponible</span><small class="dashboard-note">Polaridad: {{ analisis.polaridad|floatformat:2 }}<br>Confianza: {{ analisis.confianza|floatformat:2 }}</small>{% else %}<span class="tag tag--soft dashboard-status dashboard-status--pending">Pendiente de análisis</span>{% endif %}</td>
+                        <td data-label="Acciones" class="dashboard-actions" data-dashboard-actions hidden>
                             <a class="btn btn--ghost" href="{% url 'editar_publicacion_web' pub.id_publicacion_api %}">Editar</a>
                             <form method="post" action="{% url 'eliminar_publicacion_web' pub.id_publicacion_api %}" data-confirm="¿Eliminar la publicación #{{ pub.id_publicacion_api }}? Se borran también su sentimiento y sus localidades.">
                                 {% csrf_token %}
@@ -80,10 +103,10 @@
                     {% endwith %}
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="publication-empty">No hay publicaciones registradas todavía.</td>
+                        <td colspan="6" class="publication-empty" data-dashboard-empty-cell>No hay publicaciones registradas todavía.</td>
                     </tr>
                     {% endfor %}
-                    <tr data-dashboard-empty hidden><td colspan="7" class="publication-empty">No hay publicaciones que coincidan con estos filtros.</td></tr>
+                    <tr data-dashboard-empty hidden><td colspan="6" class="publication-empty" data-dashboard-empty-cell>No hay publicaciones que coincidan con estos filtros.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -97,5 +120,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/dashboard.js' %}?v=2" defer></script>
+<script src="{% static 'js/dashboard.js' %}?v=7" defer></script>
+<script src="{% static 'js/dashboard-location-select.js' %}?v=3" defer></script>
+<script src="{% static 'js/dashboard-calendar.js' %}?v=3" defer></script>
 {% endblock %}

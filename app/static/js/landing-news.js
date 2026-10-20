@@ -6,17 +6,9 @@
   const status = feed.querySelector('[data-news-status]');
   const retry = feed.querySelector('[data-news-retry]');
   const sections = Array.from(feed.querySelectorAll('[data-news-category]'));
-  const allowDemo = feed.dataset.newsDemo !== 'false';
   const locationName = feed.dataset.newsLocation || '';
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const carousels = new Map();
-  // Muestras visuales locales: nunca se envían a la API ni se guardan en la base.
-  const demoTitles = {
-    salud: ['Prevención y cuidado de la salud en Misiones', 'Servicios de salud en las localidades', 'Hábitos para el bienestar de la comunidad'],
-    turismo: ['Destinos para descubrir en Misiones', 'Naturaleza y recorridos por la región', 'Experiencias de turismo local'],
-    festividades: ['Celebraciones y encuentros de la región', 'Cultura y tradiciones de las localidades', 'Actividades para compartir en comunidad']
-  };
-
   function safeUrl(value) {
     if (typeof value !== 'string' || !value.trim()) return null;
     try {
@@ -25,64 +17,75 @@
     } catch (_) { return null; }
   }
 
-  function categoryOf(publication) {
-    // El scraper actual guarda la categoría en fuente: "El Territorio (Policiales)".
-    // categoria e imagen_url quedan admitidas para una futura ampliación de la API.
-    const match = String(publication.fuente || '').match(/\(([^)]+)\)\s*$/);
-    const category = String(publication.categoria || (match ? match[1] : 'sin-categoria'));
-    return category.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  function categoryKey(category) {
+    const value = typeof category === 'string' ? category
+      : category && typeof category === 'object' ? (category.codigo || category.nombre) : '';
+    return typeof value === 'string'
+      ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
   }
 
-  function card(publication, isDemo = false) {
-    const article = document.createElement('article');
+  function categoriesOf(publication) {
+    // Una lista de asociaciones vacía es autoritativa: no reclasificar por fuente.
+    if (Array.isArray(publication.categorias_detalle)) {
+      return [...new Set(publication.categorias_detalle.map(categoryKey).filter(Boolean))];
+    }
+    if (Array.isArray(publication.categorias)) {
+      return [...new Set(publication.categorias.map(categoryKey).filter(Boolean))];
+    }
+    const match = String(publication.fuente || '').match(/\(([^)]+)\)\s*$/);
+    return [categoryKey(publication.categoria || (match ? match[1] : ''))].filter(Boolean);
+  }
+
+  function sourceName(fuente) {
+    // "El Territorio (Misiones)" -> "El Territorio": el crédito es del medio, no de la sección.
+    return String(fuente || '').replace(/\s*\([^)]*\)\s*$/, '').trim() || 'Fuente original';
+  }
+
+  function card(publication) {
+    const originalUrl = safeUrl(publication.url);
+    const id = String(publication.id ?? '');
+    const internalUrl = /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
+    const destination = internalUrl || originalUrl;
+    const title = publication.titulo || 'Noticia sin título';
+    const article = document.createElement(destination ? 'a' : 'article');
     article.className = 'news-card';
+    if (destination) {
+      article.href = destination;
+      article.setAttribute('aria-label', (internalUrl ? 'Leer noticia: ' : 'Consultar fuente original: ') + title);
+      if (!internalUrl) {
+        article.target = '_blank';
+        article.rel = 'noopener noreferrer';
+      }
+    }
     const media = document.createElement('div');
     media.className = 'news-card__media';
     const fallback = document.createElement('span');
     fallback.className = 'news-card__fallback';
     fallback.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span>El Territorio</span>';
     media.append(fallback);
-    if (isDemo) fallback.querySelector('span').textContent = 'Vista de ejemplo';
     const imageUrl = safeUrl(publication.imagen_url);
     if (imageUrl) {
       const image = document.createElement('img');
       image.alt = ''; // El título contiguo identifica la noticia.
       image.loading = 'lazy';
-      image.addEventListener('error', () => image.remove(), { once: true });
+      const credit = document.createElement('span');
+      credit.className = 'photo-credit';
+      credit.textContent = '© Foto: ' + sourceName(publication.fuente);
+      image.addEventListener('error', () => { image.remove(); credit.remove(); }, { once: true });
       image.src = imageUrl;
-      media.append(image);
+      media.append(image, credit);
     }
     const body = document.createElement('div');
     body.className = 'news-card__body';
     const source = document.createElement('span');
-    source.className = isDemo ? 'news-card__demo-badge' : 'news-card__source';
-    source.textContent = isDemo ? 'Demostración' : (publication.fuente || 'El Territorio');
+    source.className = 'news-card__source';
+    source.textContent = publication.fuente || 'El Territorio';
     const heading = document.createElement('h3');
-    const originalUrl = isDemo ? null : safeUrl(publication.url);
-    const id = String(publication.id ?? '');
-    const internalUrl = !isDemo && /^[1-9]\d*$/.test(id) ? '/noticia/' + id + '/' : null;
-    const title = publication.titulo || 'Noticia sin título';
-    if (internalUrl) {
-      const link = document.createElement('a');
-      link.href = internalUrl;
-      link.textContent = title;
-      heading.append(link);
-    } else { heading.textContent = title; }
+    heading.textContent = title;
     body.append(source, heading);
-    if (isDemo) {
-      const note = document.createElement('p');
-      note.className = 'news-card__demo-note';
-      note.textContent = 'Contenido de ejemplo. La lectura interna estará disponible cuando se carguen noticias reales de esta categoría.';
-      body.append(note);
-    }
     if (internalUrl || originalUrl) {
-      const link = document.createElement('a');
+      const link = document.createElement('span');
       link.className = 'news-card__link';
-      link.href = internalUrl || originalUrl;
-      if (!internalUrl) {
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-      }
       link.textContent = internalUrl ? 'Leer noticia →' : 'Consultar fuente original ↗';
       body.append(link);
     }
@@ -156,25 +159,18 @@
       const groups = new Map(sections.map(section => [section.dataset.newsCategory, []]));
       payload.data.forEach(publication => {
         if (!publication || typeof publication !== 'object') return;
-        const categories = Array.isArray(publication.categorias)
-          ? publication.categorias.map(categoria => categoryOf({ categoria }))
-          : [categoryOf(publication)];
+        const categories = categoriesOf(publication);
         // Mostrar únicamente las categorías registradas, sin reclasificar otras noticias.
         new Set(categories).forEach(category => {
           if (groups.has(category)) groups.get(category).push(publication);
         });
       });
-      let demoCount = 0;
       sections.forEach(section => {
         const publications = groups.get(section.dataset.newsCategory);
-        const isDemo = allowDemo && !publications.length && Boolean(demoTitles[section.dataset.newsCategory]);
-        const items = isDemo
-          ? demoTitles[section.dataset.newsCategory].map(titulo => ({ titulo }))
-          : publications;
-        if (isDemo) demoCount += items.length;
+        const items = publications;
         const track = section.querySelector('.news-track');
         const empty = section.querySelector('.news-category__empty');
-        track.replaceChildren(...items.map(publication => card(publication, isDemo)));
+        track.replaceChildren(...items.map(publication => card(publication)));
         track.hidden = !items.length;
         empty.hidden = Boolean(items.length);
         empty.querySelector('p').textContent = locationName
@@ -189,7 +185,6 @@
       status.textContent = visibleTotal
         ? (locationName || 'El Territorio') + ' · ' + visibleTotal + ' noticias de las categorías seleccionadas'
         : (locationName ? 'Todavía no hay noticias de estas categorías asociadas a ' + locationName + '.' : 'No hay noticias de estas categorías entre las publicaciones recibidas.');
-      if (demoCount) status.textContent += ' · ' + demoCount + ' tarjetas de demostración, fuera del conteo de noticias.';
     } catch (_) {
       status.textContent = 'No pudimos cargar las noticias. Intentá nuevamente.';
       retry.hidden = false;

@@ -3,7 +3,10 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count
+from django.db.models import Count, Q
+from django.db.models.functions import Coalesce
+from .fechas import datos_fecha
+from .categorias import datos_categorias
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -31,16 +34,20 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria
+    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
 )
 from .forms import PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
+from .views_comentarios import contexto_comentarios
+from .views_valoraciones import contexto_valoraciones
 from .services.autenticacion import autenticar_identificador
+from .services.identidad import con_identidad_serializada, errores_identidad
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from .services.scraper import fetch_and_store_elterritorio
+from .services.clasificacion import vincular_categoria as _vincular_categoria
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
@@ -82,30 +89,20 @@ def cotizaciones(request):
 
 
 def _categorias_de_publicacion(publicacion):
-    """Devuelve, sin duplicados, las categorías vinculadas a una publicación."""
-    categorias = []
-    vistos = set()
-    for relacion in (
-        PublicacionTema.objects.filter(id_publicacion_api=publicacion)
-        .select_related('id_temas__id_categoria')
-    ):
-        tema = getattr(relacion, 'id_temas', None)
-        categoria = getattr(tema, 'id_categoria', None)
-        nombre = getattr(categoria, 'nombre_categoria', None)
-        if nombre and nombre not in vistos:
-            categorias.append(nombre)
-            vistos.add(nombre)
-    return categorias
+    """Nombres asociados, conservando todas las categorías históricas."""
+    return list(dict.fromkeys(c['nombre'] for c in datos_categorias(publicacion)['categorias_detalle']))
+
+
+def credito_fuente(fuente):
+    """Nombre del medio sin la sección: "El Territorio (Misiones)" -> "El Territorio"."""
+    return re.sub(r'\s*\([^)]*\)\s*$', '', fuente or '').strip() or 'Fuente original'
+
 
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
-    publicacion = get_object_or_404(Publicacion, pk=pk)
+    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
     categorias_noticia = _categorias_de_publicacion(publicacion)
-    if not categorias_noticia:
-        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
-        if coincidencia:
-            categorias_noticia = [coincidencia.group(1).strip()]
     localidades_noticia = list(dict.fromkeys(
         Locacion.objects.filter(id_publicacion_api=publicacion)
         .exclude(location='').values_list('location', flat=True)
@@ -121,16 +118,22 @@ def noticia(request, pk):
 
     return render(request, 'noticia.html', {
         'publicacion': publicacion,
+        'fecha_navegacion': datos_fecha(publicacion),
         'categorias_noticia': categorias_noticia,
+        'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
-        'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
+        'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
+        'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
+        **contexto_comentarios(request, publicacion),
+        **contexto_valoraciones(request, publicacion),
     })
 
 
 def litoral(request):
-    return render(request, 'litoral.html')
+    return redirect(reverse('categorias') + '#localidades')
 
 
 def _departamento_o_404(slug):
@@ -145,35 +148,45 @@ def localidad(request, slug):
     return render(request, 'localidad.html', {'departamento': _departamento_o_404(slug)})
 
 
+def _categorias_listado(publicacion):
+    """Campo legacy, con lectura común a detalle, API y panel."""
+    return datos_categorias(publicacion)['categorias']
+
+
+def _orden_por_publicacion():
+    # Comparar la fecha efectiva entre fuentes; no agrupar primero las no nulas.
+    return (Coalesce('fecha_publicacion', 'fecha_captura').desc(nulls_last=True),
+            '-id_publicacion_api')
+
+
 @require_safe
 def publicaciones_localidad(request, slug):
     departamento = _departamento_o_404(slug)
     ubicaciones = [nombre for nombre in Locacion.objects.values_list('location', flat=True).distinct()
                    if departamento_de_ubicacion(nombre) == slug]
-    publicaciones = (Publicacion.objects.filter(locacion__location__in=ubicaciones)
+    # Departamento detectado al ingerir o, después de la IA, por las localidades guardadas.
+    publicaciones = (Publicacion.objects.filter(Q(departamento=slug) | Q(locacion__location__in=ubicaciones))
                      .distinct().prefetch_related('temas__id_categoria')
-                     .order_by('-fecha_captura', '-id_publicacion_api'))
+                     .order_by(*_orden_por_publicacion()))
     data = []
     for publicacion in publicaciones:
-        categorias = list(dict.fromkeys(
-            t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
-        ))
-        if not categorias:
-            coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
-            categorias = [coincidencia.group(1).strip()] if coincidencia else []
+        fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
         data.append({
             'id': publicacion.id_publicacion_api,
             'titulo': publicacion.titulo,
             'fuente': publicacion.fuente,
             'url': publicacion.url,
-            'categorias': categorias,
-            'fecha': publicacion.fecha_captura.isoformat() if publicacion.fecha_captura else None,
+            'imagen_url': publicacion.imagen_publica_url or None,
+            **datos_categorias(publicacion),
+            'fecha': fecha.isoformat() if fecha else None,
+            **datos_fecha(publicacion),
         })
     return JsonResponse({'status': 'success', 'departamento': departamento['nombre'],
                          'total': len(data), 'data': data})
 
 
 @require_POST
+@con_identidad_serializada
 def registro_view(request):
     username = request.POST.get('username', '').strip()
     email = request.POST.get('email', '').strip()
@@ -186,6 +199,8 @@ def registro_view(request):
         )
 
     user_model = get_user_model()
+    # UserManager normaliza NFKC al guardar: comprobar el mismo valor antes.
+    username = user_model.normalize_username(username)
     username_field = user_model._meta.get_field('username')
     email_field = user_model._meta.get_field('email')
     if len(username) > username_field.max_length:
@@ -209,6 +224,10 @@ def registro_view(request):
             {'success': False, 'message': 'Ese email ya está registrado.'},
             status=400,
         )
+
+    conflictos = errores_identidad(username=username, email=email)
+    if conflictos:
+        return JsonResponse({'success': False, 'message': next(iter(conflictos.values()))}, status=400)
 
     try:
         EmailValidator()(email)
@@ -284,11 +303,24 @@ def logout_view(request):
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
-                                       .prefetch_related('sentimiento_set', 'locacion_set')\
-                                       .order_by('-fecha_captura', '-id_publicacion_api')[:100]
-    
+                                       .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
+                                       .order_by(*_orden_por_publicacion())[:100]
+    departamentos_por_slug = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
+    for publicacion in publicaciones:
+        detalles = datos_categorias(publicacion)['categorias_detalle']
+        publicacion.dashboard_categorias = [c['id'] for c in detalles]
+        publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))
+        slugs = {publicacion.departamento} if publicacion.departamento in departamentos_por_slug else set()
+        for ubicacion in publicacion.locacion_set.all():
+            slug = departamento_de_ubicacion(ubicacion.location)
+            if slug:
+                slugs.add(slug)
+        publicacion.dashboard_departamentos = sorted(slugs)
+        publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
+        'departamentos': DEPARTAMENTOS,
+        'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
     })
 
 
@@ -338,17 +370,6 @@ class PublicacionDuplicada(Exception):
         self.existente = existente
 
 
-def _vincular_categoria(publicacion, categoria):
-    """Vincula la publicación a la categoría a través de un Tema existente o uno automático."""
-    tema = Tema.objects.filter(id_categoria=categoria).first()
-    if not tema:
-        tema = Tema.objects.create(
-            id_categoria=categoria,
-            descripcion=f'Tema automático para {categoria.nombre_categoria}'
-        )
-    PublicacionTema.objects.get_or_create(id_publicacion_api=publicacion, id_temas=tema)
-
-
 def _analizar_y_guardar_sentimiento(publicacion):
     """Sentimiento local de título y contenido; el llamador mantiene la transacción y el bloqueo."""
     sentimiento_unico(publicacion)
@@ -363,7 +384,7 @@ def _analizar_y_guardar_sentimiento(publicacion):
     return obj_sentimiento
 
 
-def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=()):
+def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=(), imagen_url='', imagen_archivo=None):
     """Alta manual compartida por la API y el panel web: identidad, duplicados y sentimiento."""
     # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
     # El hash representa el origen: editar el título no lo regenera.
@@ -380,6 +401,8 @@ def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_cap
                 contenido=contenido,
                 fuente=fuente,
                 url=url,
+                imagen_url=imagen_url,
+                imagen_archivo=imagen_archivo or '',
                 fecha_captura=fecha_captura,
             )
             # El alta, el resultado local y el estado forman una única operación.
@@ -457,10 +480,15 @@ def disparar_ingesta(request, categoria):
 
 
 # 2. READ (Lectura)
+LIMITE_LISTADO = 150
+
+
 def listar_publicaciones(request):
-    """ Retorna un listado JSON con las últimas 20 publicaciones y sus análisis de sentimiento """
+    """ Retorna un listado JSON con las últimas publicaciones y sus análisis de sentimiento """
     if request.method == 'GET':
-        publicaciones = Publicacion.objects.all().order_by('-fecha_captura')[:20]
+        # Alcanza para llenar los carruseles de las 12 categorías de la portada.
+        publicaciones = (Publicacion.objects.prefetch_related('temas__id_categoria')
+                         .order_by(*_orden_por_publicacion())[:LIMITE_LISTADO])
         
         data = []
         for p in publicaciones:
@@ -471,8 +499,13 @@ def listar_publicaciones(request):
                 "titulo": p.titulo,
                 "fuente": p.fuente,
                 "url": p.url,
+                "imagen_url": p.imagen_publica_url or None,
+                **datos_categorias(p),
+                "departamento": p.departamento or None,
                 "procesado_ia": p.procesado_ia,
                 "fecha": p.fecha_captura.strftime("%Y-%m-%d %H:%M:%S") if p.fecha_captura else None,
+                "fecha_publicacion": p.fecha_publicacion.isoformat() if p.fecha_publicacion else None,
+                **datos_fecha(p),
                 "sentimiento": {
                     "polaridad": sentimiento_obj.polaridad if sentimiento_obj else None,
                     "confianza": sentimiento_obj.confianza if sentimiento_obj else None
@@ -486,7 +519,7 @@ def listar_publicaciones(request):
 def obtener_detalle_publicacion(request, pk):
     """ Obtiene el detalle de una publicación con sus locaciones geográficas """
     if request.method == 'GET':
-        pub = get_object_or_404(Publicacion, pk=pk)
+        pub = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
         locaciones = list(Locacion.objects.filter(id_publicacion_api=pub).values('location', 'latitud', 'longitud'))
         
         return JsonResponse({
@@ -496,7 +529,8 @@ def obtener_detalle_publicacion(request, pk):
             "fuente": pub.fuente,
             "url": pub.url,
             "procesado_ia": pub.procesado_ia,
-            "locaciones": locaciones
+            "locaciones": locaciones,
+            **datos_categorias(pub)
         })
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
 
@@ -633,7 +667,7 @@ def _actualizar_categorias(publicacion, seleccionadas):
 @login_required(login_url='login')
 @permission_required('core.add_publicacion', raise_exception=True)
 def crear_publicacion_view(request):
-    form = PublicacionForm(request.POST or None)
+    form = PublicacionForm(request.POST or None, request.FILES or None)
     if request.method == 'POST' and form.is_valid():
         datos = form.cleaned_data
         try:
@@ -644,6 +678,8 @@ def crear_publicacion_view(request):
                 url=datos['url'],
                 fecha_captura=timezone.now(),
                 categorias=datos['categorias'],
+                imagen_url=datos['imagen_url'],
+                imagen_archivo=datos['imagen_archivo'],
             )
         except PublicacionDuplicada:
             form.add_error(None, 'Ya existe una publicación con la misma URL (o el mismo título si no tiene URL).')
@@ -660,7 +696,7 @@ def crear_publicacion_view(request):
 @permission_required('core.change_publicacion', raise_exception=True)
 def editar_publicacion_view(request, pk):
     publicacion = get_object_or_404(Publicacion, pk=pk)
-    form = PublicacionForm(request.POST or None, instance=publicacion,
+    form = PublicacionForm(request.POST or None, request.FILES or None, instance=publicacion,
                            initial={'categorias': _categorias_actuales(publicacion)})
     if request.method == 'POST' and form.is_valid():
         try:

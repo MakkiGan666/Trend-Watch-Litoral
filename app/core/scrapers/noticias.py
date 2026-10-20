@@ -1,47 +1,55 @@
-import urllib.request
+from core.services.descarga_segura import descargar, validar_url
 import xml.etree.ElementTree as ET
 import re
 import hashlib
 from django.utils import timezone
 from core.models import Publicacion
+from core.services.scraper import CATEGORIAS_TERRITORIO
 
 def fetch_elterritorio_news(category="misiones", limit=5):
     """
     Obtiene las noticias más recientes desde el feed RSS de El Territorio
     y las guarda/actualiza en la base de datos de Django.
     """
-    url = f"https://www.elterritorio.com.ar/rss/{category}/"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    req = urllib.request.Request(url, headers=headers)
+    if category not in CATEGORIAS_TERRITORIO or not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        raise ValueError('Categoría o límite inválido')
+    url = CATEGORIAS_TERRITORIO[category]
 
     articles = []
-    with urllib.request.urlopen(req, timeout=8) as response:
-        xml_data = response.read()
-        root = ET.fromstring(xml_data)
+    root = ET.fromstring(descargar(url, timeout=8))
+    if root.tag != 'rss' or root.find('channel') is None:
+        raise ValueError('Documento RSS inválido')
 
-        for item in root.findall('.//item')[:limit]:
-            title = item.find('title').text if item.find('title') is not None else ""
-            link = item.find('link').text if item.find('link') is not None else ""
-            description = item.find('description').text if item.find('description') is not None else ""
+    for item in root.findall('.//item')[:limit]:
+        title = item.find('title').text if item.find('title') is not None else ""
+        link = item.find('link').text if item.find('link') is not None else ""
+        description = item.find('description').text if item.find('description') is not None else ""
 
-            clean_summary = re.sub(r'<[^>]+>', '', description).strip()
+        title, link, description = (v or '' for v in (title, link, description))
+        link = link.strip()
+        validar_url(link)
+        clean_summary = re.sub(r'<[^>]+>', '', description).strip()
 
-            # Extraer el ID numérico de la noticia desde la URL (ej. /918312-)
-            match_id = re.search(r'/(\d+)-', link)
-            id_api = int(match_id.group(1)) if match_id else None
+        # Extraer el ID numérico de la noticia desde la URL (ej. /918312-)
+        match_id = re.search(r'/(\d+)-', link)
+        id_api = int(match_id.group(1)) if match_id else None
 
-            # Generar hash único basado en la URL
-            hash_val = hashlib.sha256(link.strip().encode('utf-8')).hexdigest()
+        # Generar hash único basado en la URL
+        hash_val = hashlib.sha256(link.strip().encode('utf-8')).hexdigest()
 
-            if id_api:  # Solo procesar si se pudo extraer la clave primaria
-                articles.append({
-                    'id_noticia': id_api,
-                    'hash_origen': hash_val,
-                    'title': title.strip(),
-                    'link': link.strip(),
-                    'summary': clean_summary,
-                    'source': 'El Territorio'
-                })
+        if not title.strip() or not clean_summary:
+            raise ValueError('Artículo incompleto')
+        if any(len(v) > Publicacion._meta.get_field(c).max_length for c, v in (('titulo', title.strip()), ('url', link))):
+            raise ValueError('Datos demasiado largos')
+        if id_api:  # Solo procesar si se pudo extraer la clave primaria
+            articles.append({
+                'id_noticia': id_api,
+                'hash_origen': hash_val,
+                'title': title.strip(),
+                'link': link.strip(),
+                'summary': clean_summary,
+                'source': 'El Territorio'
+            })
 
     # Guardado en la base de datos de Django
     guardados = 0

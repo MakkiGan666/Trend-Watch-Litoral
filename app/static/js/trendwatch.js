@@ -28,18 +28,28 @@
 
   /* ---------- 2. Mostrar / ocultar contraseña -------------------------- */
   function initPassword() {
-    const btn = $('[data-password-toggle]');
-    if (!btn) return;
-    const input = $('#' + btn.dataset.passwordToggle);
-    if (!input) return;
-    btn.addEventListener('click', () => {
-      const show = input.type === 'password';
-      input.type = show ? 'text' : 'password';
-      btn.setAttribute('aria-pressed', String(show));
-      btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
-      $('[data-eye-on]', btn).style.display  = show ? 'none' : 'block';
-      $('[data-eye-off]', btn).style.display = show ? 'block' : 'none';
-      input.focus();
+    $$('[data-password-toggle]').forEach(btn => {
+      const input = $('#' + btn.dataset.passwordToggle);
+      if (!input) return;
+      const setVisible = show => {
+        input.type = show ? 'text' : 'password';
+        btn.setAttribute('aria-pressed', String(show));
+        btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        $('[data-eye-on]', btn).style.display = show ? 'block' : 'none';
+        $('[data-eye-off]', btn).style.display = show ? 'none' : 'block';
+      };
+      setVisible(false);
+      btn.hidden = false;
+      btn.addEventListener('click', () => setVisible(input.type === 'password'));
+      const modal = btn.closest('.login-modal');
+      if (modal) modal.addEventListener('auth:reset', () => setVisible(false));
+      const form = btn.closest('form');
+      if (form) {
+        form.addEventListener('submit', () => setVisible(false));
+        form.querySelectorAll('[data-auth-register], [data-auth-login]').forEach(switcher => {
+          switcher.addEventListener('click', () => setVisible(false));
+        });
+      }
     });
   }
 
@@ -191,200 +201,6 @@
     if (window.location.hash === '#login-modal' || !modal.hidden) open();
   }
 
-  /* ---------- 5. Filtros y segmentación (mock) ------------------------- */
-  function initFilters() {
-    const form = $('#filters');
-    if (!form) return;
-
-    const active  = $('#active-filters');
-    const counter = $('#result-count');
-    const total   = 128;                       // total ficticio sin filtros
-    const state   = new Map();                 // clave -> etiqueta
-
-    function label(sel) {
-      return sel.options[sel.selectedIndex].text;
-    }
-
-    function render() {
-      // los chips se reconstruyen desde el estado, no desde el DOM
-      active.querySelectorAll('.chip--active').forEach(c => c.remove());
-      state.forEach((text, key) => {
-        const chip = document.createElement('span');
-        chip.className = 'chip chip--active';
-        chip.innerHTML = text + ' <button type="button" aria-label="Quitar filtro ' + text +
-          '"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
-        chip.querySelector('button').addEventListener('click', () => {
-          state.delete(key);
-          const sel = form.querySelector('[name="' + key + '"]');
-          if (sel) sel.selectedIndex = 0;
-          if (key === 'categoria') $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
-          render();
-        });
-        active.insertBefore(chip, $('#clear-filters'));
-      });
-
-      $('#clear-filters').hidden = state.size === 0;
-      $('#no-filters').hidden    = state.size !== 0;
-
-      // conteo ficticio: cada filtro recorta el resultado
-      const n = state.size === 0 ? total : Math.max(4, Math.round(total / Math.pow(1.8, state.size)));
-      counter.textContent = n;
-    }
-
-    $$('select', form).forEach(sel => {
-      sel.addEventListener('change', () => {
-        if (sel.value === '') state.delete(sel.name);
-        else state.set(sel.name, label(sel));
-        if (sel.name === 'categoria') {
-          $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.cat === sel.value)));
-        }
-        render();
-      });
-    });
-
-    $('#clear-filters').addEventListener('click', () => {
-      state.clear();
-      $$('select', form).forEach(s => s.selectedIndex = 0);
-      $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
-      render();
-    });
-
-    // las cards de categoría actúan como filtro rápido
-    $$('[data-cat]').forEach(card => {
-      card.addEventListener('click', () => {
-        const on  = card.getAttribute('aria-pressed') === 'true';
-        const sel = form.querySelector('[name="categoria"]');
-        $$('[data-cat]').forEach(c => c.setAttribute('aria-pressed', 'false'));
-        if (on) { state.delete('categoria'); sel.selectedIndex = 0; }
-        else {
-          card.setAttribute('aria-pressed', 'true');
-          sel.value = card.dataset.cat;
-          state.set('categoria', card.dataset.label);
-        }
-        render();
-      });
-    });
-
-    render();
-  }
-
-  /* ---------- 6. Orden de resultados (segmented control) --------------- */
-  function initSeg() {
-    $$('[data-seg]').forEach(group => {
-      $$('button', group).forEach(btn => {
-        btn.addEventListener('click', () => {
-          $$('button', group).forEach(b => b.setAttribute('aria-pressed', 'false'));
-          btn.setAttribute('aria-pressed', 'true');
-        });
-      });
-    });
-  }
-
-  /* ---------- 7. Gráfico de tendencias en SVG -------------------------- */
-  function initChart() {
-    const svg = $('#tw-chart');
-    if (!svg) return;
-
-    const W = 760, H = 260, P = { t: 18, r: 14, b: 30, l: 34 };
-    const labels = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    const series = [
-      { name: 'Menciones',  color: '#3FD0B4', data: [1240, 1390, 1180, 1710, 2040, 2380, 2610] },
-      { name: 'Alcance estimado', color: '#8EB69B', data: [820, 960, 900, 1120, 1380, 1520, 1640] }
-    ];
-
-    const NS  = 'http://www.w3.org/2000/svg';
-    const max = Math.max(...series.flatMap(s => s.data)) * 1.12;
-    const x = i => P.l + (i * (W - P.l - P.r)) / (labels.length - 1);
-    const y = v => P.t + (1 - v / max) * (H - P.t - P.b);
-    const el = (tag, attrs) => {
-      const n = document.createElementNS(NS, tag);
-      Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v));
-      return n;
-    };
-
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.innerHTML = '';
-
-    // degradado de área
-    const defs = el('defs', {});
-    const grad = el('linearGradient', { id: 'twArea', x1: '0', y1: '0', x2: '0', y2: '1' });
-    grad.appendChild(el('stop', { offset: '0%',   'stop-color': '#3FD0B4', 'stop-opacity': '.32' }));
-    grad.appendChild(el('stop', { offset: '100%', 'stop-color': '#3FD0B4', 'stop-opacity': '0' }));
-    defs.appendChild(grad);
-    svg.appendChild(defs);
-
-    // grilla horizontal + eje Y
-    for (let i = 0; i <= 4; i++) {
-      const v  = (max / 4) * i;
-      const gy = y(v);
-      svg.appendChild(el('line', { x1: P.l, y1: gy, x2: W - P.r, y2: gy, stroke: 'rgba(218,241,222,.09)', 'stroke-width': 1 }));
-      const t = el('text', { x: P.l - 9, y: gy + 4, 'text-anchor': 'end', fill: 'rgba(218,241,222,.4)', 'font-size': 10.5 });
-      t.textContent = Math.round(v / 100) / 10 + 'k';
-      svg.appendChild(t);
-    }
-
-    // etiquetas del eje X
-    labels.forEach((l, i) => {
-      const t = el('text', { x: x(i), y: H - 8, 'text-anchor': 'middle', fill: 'rgba(218,241,222,.45)', 'font-size': 11 });
-      t.textContent = l;
-      svg.appendChild(t);
-    });
-
-    // área bajo la serie principal
-    const areaD = series[0].data.map((v, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(v)).join(' ') +
-                  ` L${x(labels.length - 1)} ${y(0)} L${x(0)} ${y(0)} Z`;
-    svg.appendChild(el('path', { d: areaD, fill: 'url(#twArea)' }));
-
-    // líneas
-    series.forEach((s, si) => {
-      const d = s.data.map((v, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(v)).join(' ');
-      svg.appendChild(el('path', {
-        d, fill: 'none', stroke: s.color, 'stroke-width': si ? 1.6 : 2.4,
-        'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-        'stroke-dasharray': si ? '5 6' : '', class: si ? '' : 'draw-line', opacity: si ? .75 : 1
-      }));
-      if (!si) s.data.forEach((v, i) => svg.appendChild(el('circle', { cx: x(i), cy: y(v), r: 3.4, fill: '#051F20', stroke: s.color, 'stroke-width': 2 })));
-    });
-
-    // línea guía + tooltip
-    const guide = el('line', { x1: 0, y1: P.t, x2: 0, y2: H - P.b, stroke: 'rgba(63,208,180,.45)', 'stroke-width': 1, opacity: 0 });
-    svg.appendChild(guide);
-
-    const tip = $('#chart-tip');
-    const wrap = svg.parentElement;
-
-    function move(clientX) {
-      const box = svg.getBoundingClientRect();
-      const rel = ((clientX - box.left) / box.width) * W;
-      let i = Math.round(((rel - P.l) / (W - P.l - P.r)) * (labels.length - 1));
-      i = Math.max(0, Math.min(labels.length - 1, i));
-      guide.setAttribute('x1', x(i)); guide.setAttribute('x2', x(i)); guide.setAttribute('opacity', 1);
-      tip.style.opacity = 1;
-      tip.style.left = (x(i) / W) * box.width + 'px';
-      tip.style.top  = (y(series[0].data[i]) / H) * box.height + 'px';
-      tip.innerHTML  = '<b>' + series[0].data[i].toLocaleString('es-AR') + '</b> menciones<br>' + labels[i] + ' · Misiones';
-    }
-    function leave() { guide.setAttribute('opacity', 0); tip.style.opacity = 0; }
-
-    wrap.addEventListener('mousemove', e => move(e.clientX));
-    wrap.addEventListener('mouseleave', leave);
-    wrap.addEventListener('touchmove', e => { move(e.touches[0].clientX); }, { passive: true });
-    wrap.addEventListener('touchend', leave);
-  }
-
-  /* ---------- 8. Votos de relevancia (mock) ---------------------------- */
-  function initVotes() {
-    $$('[data-vote]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const on = btn.getAttribute('aria-pressed') === 'true';
-        btn.setAttribute('aria-pressed', String(!on));
-        const out = btn.parentElement.querySelector('[data-vote-count]');
-        if (out) out.textContent = Number(out.textContent) + (on ? -1 : 1);
-      });
-    });
-  }
-
   /* ---------- 9. Interacciones de la landing institucional ------------- */
   function initLanding() {
     const landing = $('.landing-main');
@@ -430,10 +246,6 @@
     initSearchShortcut();
     initPublicNav();
     initLoginModal();
-    initFilters();
-    initSeg();
-    initChart();
-    initVotes();
     initLanding();
   });
 })();

@@ -17,6 +17,9 @@
 .auth-flow .field>label{color:var(--mist);font-weight:500;margin-bottom:9px}
 .auth-flow .input{min-height:48px}
 .auth-flow .input input{min-width:0;width:100%}
+.auth-flow .input__toggle{flex:0 0 auto;min-width:36px;min-height:36px}
+.auth-flow .input__toggle[hidden]{display:none}
+.auth-flow .input__toggle:focus-visible{outline:2px solid var(--aqua);outline-offset:2px}
 .auth-flow__email{border-color:var(--aqua-line)}
 .auth-flow .input:focus-within{border-color:var(--aqua);box-shadow:0 0 0 3px var(--aqua-soft)}
 .auth-flow__email>svg{flex-shrink:0;color:var(--sage)}
@@ -41,6 +44,9 @@
 .auth-flow__registration{border:0;padding:0;margin:0;min-width:0}
 .auth-flow__registration .input input{background:transparent;color:var(--tx);border:0;outline:0;font:inherit}
 .account-logout-form{display:inline-flex;margin:0}
+.account-user{cursor:default;min-width:0;max-width:220px}
+.account-user>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:660px){.account-user{max-width:125px}}
 .foot__link{display:block;border:0;background:none;color:var(--tx-2);font:inherit;font-size:14px;padding:4px 0;cursor:pointer}
 .foot__link:hover{color:var(--tx)}
 @media(max-width:660px){.account-actions .nav__user{display:inline-block;font-size:12px}.account-logout-form .account-enter{padding:10px 8px;font-size:12px}}

@@ -1,5 +1,28 @@
 from django.db import models
 from django.utils import timezone
+from uuid import uuid4
+from django.conf import settings
+
+
+def ruta_imagen_publicacion(instance, filename):
+    extension = filename.rsplit('.', 1)[-1].lower()
+    return f'publicaciones/{uuid4().hex}.{extension}'
+
+
+class PerfilUsuario(models.Model):
+    usuario = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='perfil')
+    fecha_nacimiento = models.DateField(null=True, blank=True)
+    celular = models.CharField(max_length=30, blank=True)
+
+
+class PublicacionGuardada(models.Model):
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='noticias_guardadas')
+    publicacion = models.ForeignKey('Publicacion', on_delete=models.CASCADE, related_name='guardados')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-fecha_creacion', '-pk']
+        constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='guardado_unico_usuario_noticia')]
 
 
 class Role(models.Model):
@@ -47,7 +70,14 @@ class Publicacion(models.Model):
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
     titulo = models.CharField(max_length=255, default="")
     contenido = models.TextField()
-    url = models.URLField(default="")
+    # El Territorio usa slugs largos: 200 (el valor por defecto) descartaba noticias reales.
+    url = models.URLField(max_length=500, default="")
+    # Se enlaza la foto original del medio (no se copia); la web le superpone el crédito.
+    imagen_url = models.URLField(max_length=500, blank=True, default="")
+    imagen_archivo = models.ImageField(upload_to=ruta_imagen_publicacion, blank=True, default='')
+    fecha_publicacion = models.DateTimeField(null=True, blank=True)
+    # Slug de core.localidades.DEPARTAMENTOS; vacío si no se pudo identificar.
+    departamento = models.CharField(max_length=30, blank=True, default="")
     fecha_captura = models.DateTimeField(default=timezone.now)
     procesado_ia = models.BooleanField(default=False)
     id_registro = models.ForeignKey('RegistroDatos', on_delete=models.CASCADE, null=True, blank=True)
@@ -61,6 +91,10 @@ class Publicacion(models.Model):
 
     def __str__(self):
         return self.titulo
+
+    @property
+    def imagen_publica_url(self):
+        return self.imagen_archivo.url if self.imagen_archivo else self.imagen_url
 
 
 class Categoria(models.Model):
@@ -199,3 +233,39 @@ class UserAuditoria(models.Model):
     class Meta:
         db_table = 'User_Auditoria'
         unique_together = (('id_user', 'id_auditoria'),)
+
+
+class Comentario(models.Model):
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='comentarios')
+    autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='comentarios_noticias')
+    texto = models.TextField(max_length=2000)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_edicion = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-fecha_creacion', '-pk']
+
+    def __str__(self):
+        return f'Comentario #{self.pk} de la publicación #{self.publicacion_id}'
+
+
+class ValoracionPublicacion(models.Model):
+    class Sentimiento(models.TextChoices):
+        POSITIVO = 'positivo', 'Positivo'
+        NEUTRAL = 'neutral', 'Neutral'
+        NEGATIVO = 'negativo', 'Negativo'
+
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='valoraciones')
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='valoraciones_noticias')
+    sentimiento = models.CharField(max_length=8, choices=Sentimiento.choices)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['publicacion', 'usuario'], name='valoracion_unica_usuario_noticia'),
+            models.CheckConstraint(condition=models.Q(sentimiento__in=['positivo', 'neutral', 'negativo']), name='valoracion_sentimiento_valido'),
+        ]
+
+    def __str__(self):
+        return f'{self.get_sentimiento_display()} en publicación #{self.publicacion_id}'
