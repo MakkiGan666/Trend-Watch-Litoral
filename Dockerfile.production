@@ -1,0 +1,14 @@
+FROM python:3.13-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHON_DOTENV_DISABLED=1
+WORKDIR /app
+COPY requirements.txt requirements-production.txt /app/
+RUN pip install --no-cache-dir -r requirements-production.txt
+RUN groupadd --gid 10001 trendwatch && useradd --uid 10001 --gid 10001 --no-create-home trendwatch
+COPY app/ /app/
+# collectstatic no requiere credenciales productivas ni conexión a PostgreSQL.
+# La clave aleatoria es efímera, solo para importar settings durante este proceso.
+RUN python -c "import os,secrets; os.environ['SECRET_KEY']=secrets.token_urlsafe(64); os.environ['DEBUG']='False'; os.environ['DB_HOST']=''; os.environ['DJANGO_SETTINGS_MODULE']='mi_proyecto.settings'; import django; django.setup(); from django.core.management import call_command; call_command('collectstatic',interactive=False,verbosity=0)"
+USER 10001:10001
+ENV DJANGO_SETTINGS_MODULE=mi_proyecto.settings_production
+EXPOSE 8000
+CMD ["gunicorn", "mi_proyecto.wsgi:application", "--bind=0.0.0.0:8000", "--workers=2", "--timeout=60", "--access-logfile=-", "--error-logfile=-", "--worker-tmp-dir=/tmp"]

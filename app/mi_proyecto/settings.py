@@ -19,7 +19,8 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Cargar las variables del archivo .env antes de leer cualquier configuración.
-load_dotenv()
+if os.environ.get('DJANGO_SETTINGS_MODULE') != 'mi_proyecto.settings_production':
+    load_dotenv()
 
 
 # Quick-start development settings - unsuitable for production

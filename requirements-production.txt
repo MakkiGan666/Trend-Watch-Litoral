@@ -1,0 +1,3 @@
+# Dependencia exclusiva del contenedor productivo. No modifica desarrollo.
+-r requirements.txt
+gunicorn==23.0.0
