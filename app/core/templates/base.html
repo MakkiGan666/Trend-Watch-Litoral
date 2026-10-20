@@ -50,7 +50,7 @@
       </a>
       <div class="nav__links">
         <a href="{% url 'landing' %}" {% if request.resolver_match.url_name == 'landing' %}aria-current="page"{% endif %}>Inicio</a>
-        <a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>
+        {% block categories_nav %}<a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>{% endblock %}
         {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>{% endif %}
         <a href="{% url 'litoral' %}" {% if request.resolver_match.url_name == 'litoral' %}aria-current="page"{% endif %}>Litoral</a>
       </div>
