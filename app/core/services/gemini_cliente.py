@@ -16,6 +16,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from core.models import Publicacion, Sentimiento, Locacion
 from core.services.scraper import fetch_and_store_elterritorio
 from core.services.resultado_ia import respuesta_resultado_ia
+from core.services.parametros import entero_positivo
 
 
 SYSTEM_PROMPT = """
@@ -43,8 +44,8 @@ La comparación de nombres es exacta. Si no hay localidades, devuelve una lista 
 
 def validar_respuesta_gemini(raw_response):
     """Valida todo el resultado antes de permitir cualquier escritura."""
-    if not isinstance(raw_response, str) or not raw_response.strip():
-        raise ValueError("Gemini devolvió una respuesta vacía o no textual.")
+    if not isinstance(raw_response, str) or len(raw_response) > 256 * 1024 or not raw_response.strip():
+        raise ValueError("Gemini devolvió una respuesta vacía, excesiva o no textual.")
 
     def objeto_sin_duplicados(pares):
         objeto = {}
@@ -106,6 +107,7 @@ class GeminiCliente:
         return self.procesar_pendientes(batch_size=batch_size)
 
     def procesar_pendientes(self, batch_size=5):
+        entero_positivo(batch_size, 'batch_size')
         # Evaluar antes de comprobar disponibilidad: un fallo de consulta se propaga.
         pendientes = list(Publicacion.objects.filter(procesado_ia=False)[:batch_size])
         resultado = {

@@ -31,6 +31,15 @@ FASE22_LABELS = (
 )
 
 
+FASE23_LABELS = (
+    'core.test_fase2_3',
+    'core.tests.GeminiIntegridadTestCase',
+    'core.tests.GeminiTransaccionesTestCase',
+    'core.tests.EscritoresLocalesIntegridadTestCase',
+    'core.tests.GeminiResultadosTestCase',
+)
+
+
 @contextmanager
 def sin_red_python():
     """libpq usa C y queda sujeto a los controles de identidad del runner.
@@ -61,3 +70,6 @@ def ejecutar_plan(call_command):
 
     print('Fase 2.2: categorías, clasificación y compatibilidad', flush=True)
     call_command('test', *FASE22_LABELS, verbosity=2, interactive=False)
+
+    print('Fase 2.3: territorio, Gemini, URLs y límites', flush=True)
+    call_command('test', *FASE23_LABELS, verbosity=2, interactive=False)

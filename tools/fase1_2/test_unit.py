@@ -78,7 +78,7 @@ class TransporteTest(SinRed):
         primera = MagicMock(status=302)
         primera.getheader.return_value = '/otra?x=1'
         segunda = MagicMock(status=200)
-        segunda.read.return_value = b'HTML'
+        segunda.read1.side_effect = [b'HTML', b'']
         with patch.object(red.socket, 'getaddrinfo', return_value=[PUBLICA]), patch.object(red, '_Conexion') as conexion:
             conexion.return_value.getresponse.side_effect = [primera, segunda]
             self.assertEqual(red.descargar(URL), b'HTML')
@@ -89,7 +89,7 @@ class TransporteTest(SinRed):
         for estado, cuerpo in ((302, b''), (500, b''), (200, b'x' * (red.MAX_BYTES + 1))):
             respuesta = MagicMock(status=estado)
             respuesta.getheader.return_value = '/bucle'
-            respuesta.read.return_value = cuerpo
+            respuesta.read1.side_effect = [cuerpo, b'']
             with self.subTest(estado=estado), patch.object(red.socket, 'getaddrinfo', return_value=[PUBLICA]), \
                     patch.object(red, '_Conexion') as conexion, self.assertRaises((ValueError, OSError)):
                 conexion.return_value.getresponse.return_value = respuesta

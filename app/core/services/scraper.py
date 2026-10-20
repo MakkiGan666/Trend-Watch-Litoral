@@ -3,7 +3,8 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
-from core.services.descarga_segura import descargar, validar_url
+from core.services.descarga_segura import descargar, validar_url, clave_identidad_url
+from core.services.parametros import segundos_validos
 from datetime import date, datetime, timezone as dt_timezone
 from email.utils import parsedate_to_datetime
 from django.db import DataError, IntegrityError, transaction
@@ -59,6 +60,23 @@ _FECHA_EN_URL = re.compile(r'/noticias/(\d{4})/(\d{2})/(\d{2})/(\d+)-')
 
 def generar_hash(url):
     return hashlib.sha256(url.encode('utf-8')).hexdigest()
+
+def _url_equivalente_existente(link):
+    partes = validar_url(link)
+    if not partes.path:
+        return False  # Evitar una búsqueda sin sufijo; no inferir identidad de la raíz.
+    sufijo = partes.path + (('?' + partes.query) if '?' in link else '')
+    clave = clave_identidad_url(link)
+    # El filtro por sufijo no decide identidad: preservar mayúsculas de ruta y query
+    # incluso si el backend SQL aplica una comparación LIKE menos estricta.
+    for almacenada in Publicacion.objects.filter(url__endswith=sufijo).values_list('url', flat=True):
+        try:
+            if clave_identidad_url(almacenada) == clave:
+                return True
+        except ValueError:
+            continue
+    return False
+
 
 def _excede_largo_maximo(campo, valor):
     return len(valor) > Publicacion._meta.get_field(campo).max_length
@@ -304,10 +322,11 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
             hash_id = generar_hash(link)
 
             # 2. Deduplicación mediante ORM Django (RF-02), también dentro del mismo feed
-            if hash_id in vistos or Publicacion.objects.filter(hash_origen=hash_id).exists():
+            clave_url = clave_identidad_url(link)
+            if clave_url in vistos or Publicacion.objects.filter(hash_origen=hash_id).exists() or _url_equivalente_existente(link):
                 lote.omitidas += 1
                 continue # Si ya existe, omitir
-            vistos.add(hash_id)
+            vistos.add(clave_url)
 
             # 3. Scraping con newspaper3k para cuerpo completo
             raw_desc = description_node.text if description_node is not None and description_node.text else ""
@@ -417,6 +436,11 @@ def ingestar_historico_elterritorio(desde, hasta, limite=40, usar_ia=True, pausa
     """
     if not isinstance(limite, int) or isinstance(limite, bool) or limite < 1:
         return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False, "capturados": 0, "detalle": "Límite inválido"}
+    try:
+        segundos_validos(pausa, 'pausa', permitir_cero=True)
+    except ValueError as exc:
+        return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False,
+                "capturados": 0, "detalle": str(exc)}
     if desde > hasta:
         return {"status": "ERROR", "estado": "FALLO", "cobertura_completa": False, "detalle": "La fecha inicial es posterior a la final.", "capturados": 0}
 
@@ -434,13 +458,23 @@ def ingestar_historico_elterritorio(desde, hasta, limite=40, usar_ia=True, pausa
         lote.omitidas = len(existentes)
 
         candidatos = []
+        vistos = set()
         for link in _repartir_por_dia(urls):
+            clave_url = clave_identidad_url(link)
+            if clave_url in vistos:
+                if generar_hash(link) not in existentes:
+                    lote.omitidas += 1
+                continue
+            vistos.add(clave_url)
             if len(candidatos) >= limite:
                 if generar_hash(link) not in existentes:
                     lote.incompleta = True
                 continue
             hash_id = generar_hash(link)
             if hash_id in existentes:
+                continue
+            if _url_equivalente_existente(link):
+                lote.omitidas += 1
                 continue
             if _excede_largo_maximo('url', link):
                 lote.registrar_error(link, '', 'datos_invalidos')

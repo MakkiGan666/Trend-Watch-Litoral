@@ -33,7 +33,7 @@ class ValidationPreparationTests(unittest.TestCase):
         self.assertTrue(set(v.BASE_LABELS).isdisjoint(v.FASE12_LABELS))
 
     def test_labels_resuelven_y_cubren_seis_regresiones_y_postgresql(self):
-        for label in (*v.FASE12_LABELS, *v.FASE21_LABELS, *v.FASE22_LABELS):
+        for label in (*v.FASE12_LABELS, *v.FASE21_LABELS, *v.FASE22_LABELS, *v.FASE23_LABELS):
             with self.subTest(label=label):
                 partes = label.split('.')
                 if partes[-1].endswith('TestCase'):
@@ -47,7 +47,7 @@ class ValidationPreparationTests(unittest.TestCase):
         self.assertIn('core.test_ingesta_historico', v.FASE12_LABELS)
         self.assertIn('core.test_ingesta_validacion', v.FASE12_LABELS)
 
-    def test_orden_check_y_cuatro_bloques_sin_keepdb(self):
+    def test_orden_check_y_cinco_bloques_sin_keepdb(self):
         comando = Mock()
         v.ejecutar_plan(comando)
         self.assertEqual(comando.call_args_list, [
@@ -55,6 +55,7 @@ class ValidationPreparationTests(unittest.TestCase):
             call('test', *v.FASE12_LABELS, verbosity=2, interactive=False),
             call('test', *v.FASE21_LABELS, verbosity=2, interactive=False),
             call('test', *v.FASE22_LABELS, verbosity=2, interactive=False),
+            call('test', *v.FASE23_LABELS, verbosity=2, interactive=False),
         ])
 
     def test_fallo_baseline_no_anuncia_ni_ejecuta_fase12(self):

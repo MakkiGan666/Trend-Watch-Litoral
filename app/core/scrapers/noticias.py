@@ -11,7 +11,7 @@ def fetch_elterritorio_news(category="misiones", limit=5):
     Obtiene las noticias más recientes desde el feed RSS de El Territorio
     y las guarda/actualiza en la base de datos de Django.
     """
-    if category not in CATEGORIAS_TERRITORIO or not isinstance(limit, int) or limit < 1:
+    if category not in CATEGORIAS_TERRITORIO or not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError('Categoría o límite inválido')
     url = CATEGORIAS_TERRITORIO[category]
 

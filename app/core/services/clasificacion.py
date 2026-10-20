@@ -76,18 +76,25 @@ PALABRAS_CLAVE = {
 # Nombres compartidos con otros lugares o palabras comunes: sólo cuentan si el
 # texto los acompaña de una referencia explícita a la localidad.
 _MUNICIPIOS_AMBIGUOS = {'san martin', 'san jose', 'san antonio', 'guarani', 'santa maria',
-                        'san pedro', 'corpus', 'wanda', 'loreto', 'mojon grande', 'azara'}
+                        'san pedro', 'corpus', 'wanda', 'loreto', 'mojon grande', 'azara',
+                        'puerto rico', 'santa ana', 'san ignacio', 'san vicente', 'san javier'}
 _PREFIJOS_LOCALIDAD = r'(?:en|de|localidad de|municipio de|ciudad de|vecinos de)\s+'
 
 # Referencias habituales en las notas que no son nombres de municipio.
 ALIAS_DEPARTAMENTO = {
-    'capital': ['capital misionera', 'capital provincial'],
+    'capital': ['capital misionera'],
     'iguazu': ['cataratas', 'parque nacional iguazu', 'triple frontera'],
     'guarani': ['mocona'],
     'sanignacio': ['ruinas de san ignacio'],
 }
 _MAX_NOTICIAS_POR_LLAMADA = 20
 _LARGO_CONTENIDO_IA = 700
+_MAX_RESPUESTA_IA = 256 * 1024
+_NOMBRES_FECHA = {'9 de julio', '25 de mayo', 'dos de mayo'}
+_FUERA_DE_MISIONES = re.compile(
+    r'\s+(?:(?:de|en)(?: la provincia de)?\s+)?'
+    r'(?:buenos aires|corrientes|cordoba|chaco|santa fe|entre rios|el salvador|estados unidos|estadounidense|caribe)(?![a-z0-9])'
+)
 
 
 def _texto_normalizado(*partes):
@@ -124,7 +131,8 @@ def categoria_con_confianza(titulo, contenido, seccion=None):
     ganadora = max(CATEGORIAS_PROYECTO, key=lambda c: puntajes.get(c, 0))
     primero = puntajes[ganadora]
     segundo = max((p for c, p in puntajes.items() if c != ganadora), default=0)
-    return ganadora, primero >= _PESO_TITULO and primero >= 2 * segundo
+    evidencia_titulo = any(_contar(raiz, titulo_n) for raiz in PALABRAS_CLAVE[ganadora])
+    return ganadora, bool(evidencia_titulo and primero >= _PESO_TITULO and primero >= 2 * segundo)
 
 
 def categoria_por_reglas(titulo, contenido, seccion=None):
@@ -146,11 +154,21 @@ def departamento_por_texto(titulo, contenido):
         nombres.update(normalizar_nombre(a) for a in ALIAS_DEPARTAMENTO.get(departamento['slug'], []))
         total = 0
         for nombre in nombres:
-            if nombre in _MUNICIPIOS_AMBIGUOS:
+            if nombre == 'guarani':
+                patron = (r'departamento(?: de)?\s+guarani' if departamento['slug'] == 'guarani'
+                          else r'(?:en|localidad de|municipio de|ciudad de|vecinos de)\s+guarani')
+            elif nombre == 'capital':
+                patron = r'departamento(?: de)?\s+capital'
+            elif nombre in _NOMBRES_FECHA:
+                patron = r'(?:localidad de|municipio de|ciudad de)\s+' + re.escape(nombre)
+            elif nombre in _MUNICIPIOS_AMBIGUOS:
                 patron = _PREFIJOS_LOCALIDAD + re.escape(nombre)
             else:
                 patron = re.escape(nombre)
-            total += len(re.findall(r'(?<![a-z0-9])' + patron + r'(?![a-z0-9])', texto))
+            for coincidencia in re.finditer(r'(?<![a-z0-9])' + patron + r'(?![a-z0-9])', texto):
+                # Un homónimo con jurisdicción externa explícita no prueba ubicación misionera.
+                if not _FUERA_DE_MISIONES.match(texto, coincidencia.end()):
+                    total += 1
         if total:
             menciones[departamento['slug']] = total
     if not menciones:
@@ -174,6 +192,8 @@ Responde ÚNICAMENTE un arreglo JSON, un objeto por noticia, sin propiedades adi
 
 
 def _validar_respuesta(raw, indices):
+    if not isinstance(raw, str) or len(raw) > _MAX_RESPUESTA_IA:
+        raise ValueError('Respuesta de clasificación ausente o excesiva.')
     def sin_claves_duplicadas(pares):
         objeto = {}
         for clave, valor in pares:
@@ -224,7 +244,11 @@ def _clasificar_con_ia(lote):
                     temperature=0.1,
                 ),
             )
-            resultado.update(_validar_respuesta(respuesta.text, {i for i, _ in parte}))
+            indices = {i for i, _ in parte}
+            validas = _validar_respuesta(respuesta.text, indices)
+            if set(validas) != indices:
+                logger.warning('Respuesta de clasificación incompleta: %d de %d noticias.', len(validas), len(indices))
+            resultado.update(validas)
         except Exception as exc:
             # Un lote rechazado no frena la ingesta: esas noticias van por reglas.
             logger.warning('Clasificación IA descartada (%s); se usan reglas locales.', type(exc).__name__)
