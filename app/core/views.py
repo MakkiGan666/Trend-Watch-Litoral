@@ -130,7 +130,7 @@ def noticia(request, pk):
         'categorias_noticia': categorias_noticia,
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
-        'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
+        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
     })
@@ -185,7 +185,7 @@ def publicaciones_localidad(request, slug):
             'titulo': publicacion.titulo,
             'fuente': publicacion.fuente,
             'url': publicacion.url,
-            'imagen_url': publicacion.imagen_url or None,
+            'imagen_url': publicacion.imagen_publica_url or None,
             'categorias': _categorias_listado(publicacion),
             'fecha': fecha.isoformat() if fecha else None,
         })
@@ -304,11 +304,22 @@ def logout_view(request):
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
-                                       .prefetch_related('sentimiento_set', 'locacion_set')\
+                                       .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
                                        .order_by('-fecha_captura', '-id_publicacion_api')[:100]
-    
+    departamentos_por_slug = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
+    for publicacion in publicaciones:
+        slugs = {publicacion.departamento} if publicacion.departamento in departamentos_por_slug else set()
+        for ubicacion in publicacion.locacion_set.all():
+            slug = departamento_de_ubicacion(ubicacion.location)
+            if slug:
+                slugs.add(slug)
+        publicacion.dashboard_departamentos = sorted(slugs)
+        publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
+        publicacion.dashboard_categorias = sorted({tema.id_categoria_id for tema in publicacion.temas.all()})
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
+        'departamentos': DEPARTAMENTOS,
+        'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
     })
 
 
@@ -372,7 +383,7 @@ def _analizar_y_guardar_sentimiento(publicacion):
     return obj_sentimiento
 
 
-def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=()):
+def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_captura, categorias=(), imagen_url='', imagen_archivo=None):
     """Alta manual compartida por la API y el panel web: identidad, duplicados y sentimiento."""
     # Sin URL, títulos iguales comparten identidad aunque cambie el contenido.
     # El hash representa el origen: editar el título no lo regenera.
@@ -389,6 +400,8 @@ def _crear_publicacion_con_sentimiento(titulo, contenido, fuente, url, fecha_cap
                 contenido=contenido,
                 fuente=fuente,
                 url=url,
+                imagen_url=imagen_url,
+                imagen_archivo=imagen_archivo or '',
                 fecha_captura=fecha_captura,
             )
             # El alta, el resultado local y el estado forman una única operación.
@@ -485,7 +498,7 @@ def listar_publicaciones(request):
                 "titulo": p.titulo,
                 "fuente": p.fuente,
                 "url": p.url,
-                "imagen_url": p.imagen_url or None,
+                "imagen_url": p.imagen_publica_url or None,
                 "categorias": _categorias_listado(p),
                 "departamento": p.departamento or None,
                 "procesado_ia": p.procesado_ia,
@@ -651,7 +664,7 @@ def _actualizar_categorias(publicacion, seleccionadas):
 @login_required(login_url='login')
 @permission_required('core.add_publicacion', raise_exception=True)
 def crear_publicacion_view(request):
-    form = PublicacionForm(request.POST or None)
+    form = PublicacionForm(request.POST or None, request.FILES or None)
     if request.method == 'POST' and form.is_valid():
         datos = form.cleaned_data
         try:
@@ -662,6 +675,8 @@ def crear_publicacion_view(request):
                 url=datos['url'],
                 fecha_captura=timezone.now(),
                 categorias=datos['categorias'],
+                imagen_url=datos['imagen_url'],
+                imagen_archivo=datos['imagen_archivo'],
             )
         except PublicacionDuplicada:
             form.add_error(None, 'Ya existe una publicación con la misma URL (o el mismo título si no tiene URL).')
@@ -678,7 +693,7 @@ def crear_publicacion_view(request):
 @permission_required('core.change_publicacion', raise_exception=True)
 def editar_publicacion_view(request, pk):
     publicacion = get_object_or_404(Publicacion, pk=pk)
-    form = PublicacionForm(request.POST or None, instance=publicacion,
+    form = PublicacionForm(request.POST or None, request.FILES or None, instance=publicacion,
                            initial={'categorias': _categorias_actuales(publicacion)})
     if request.method == 'POST' and form.is_valid():
         try:

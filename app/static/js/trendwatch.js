@@ -28,18 +28,28 @@
 
   /* ---------- 2. Mostrar / ocultar contraseña -------------------------- */
   function initPassword() {
-    const btn = $('[data-password-toggle]');
-    if (!btn) return;
-    const input = $('#' + btn.dataset.passwordToggle);
-    if (!input) return;
-    btn.addEventListener('click', () => {
-      const show = input.type === 'password';
-      input.type = show ? 'text' : 'password';
-      btn.setAttribute('aria-pressed', String(show));
-      btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
-      $('[data-eye-on]', btn).style.display  = show ? 'none' : 'block';
-      $('[data-eye-off]', btn).style.display = show ? 'block' : 'none';
-      input.focus();
+    $$('[data-password-toggle]').forEach(btn => {
+      const input = $('#' + btn.dataset.passwordToggle);
+      if (!input) return;
+      const setVisible = show => {
+        input.type = show ? 'text' : 'password';
+        btn.setAttribute('aria-pressed', String(show));
+        btn.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        $('[data-eye-on]', btn).style.display = show ? 'block' : 'none';
+        $('[data-eye-off]', btn).style.display = show ? 'none' : 'block';
+      };
+      setVisible(false);
+      btn.hidden = false;
+      btn.addEventListener('click', () => setVisible(input.type === 'password'));
+      const modal = btn.closest('.login-modal');
+      if (modal) modal.addEventListener('auth:reset', () => setVisible(false));
+      const form = btn.closest('form');
+      if (form) {
+        form.addEventListener('submit', () => setVisible(false));
+        form.querySelectorAll('[data-auth-register], [data-auth-login]').forEach(switcher => {
+          switcher.addEventListener('click', () => setVisible(false));
+        });
+      }
     });
   }
 

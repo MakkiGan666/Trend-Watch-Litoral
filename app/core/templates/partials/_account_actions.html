@@ -11,7 +11,7 @@
     </div>
   </div>
   {% if request.user.is_authenticated %}
-    <span class="nav__user">Hola, {{ request.user.username }}</span>
+    <span class="btn btn--ghost account-enter account-user"><span>Hola, {{ request.user.username }}</span></span>
     <a class="btn btn--ghost account-enter" href="{% url 'logout' %}">Cerrar sesión</a>
   {% else %}
     <a class="btn btn--ghost account-enter" href="#login-modal" aria-haspopup="dialog">

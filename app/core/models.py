@@ -1,5 +1,11 @@
 from django.db import models
 from django.utils import timezone
+from uuid import uuid4
+
+
+def ruta_imagen_publicacion(instance, filename):
+    extension = filename.rsplit('.', 1)[-1].lower()
+    return f'publicaciones/{uuid4().hex}.{extension}'
 
 
 class Role(models.Model):
@@ -51,6 +57,7 @@ class Publicacion(models.Model):
     url = models.URLField(max_length=500, default="")
     # Se enlaza la foto original del medio (no se copia); la web le superpone el crédito.
     imagen_url = models.URLField(max_length=500, blank=True, default="")
+    imagen_archivo = models.ImageField(upload_to=ruta_imagen_publicacion, blank=True, default='')
     fecha_publicacion = models.DateTimeField(null=True, blank=True)
     # Slug de core.localidades.DEPARTAMENTOS; vacío si no se pudo identificar.
     departamento = models.CharField(max_length=30, blank=True, default="")
@@ -67,6 +74,10 @@ class Publicacion(models.Model):
 
     def __str__(self):
         return self.titulo
+
+    @property
+    def imagen_publica_url(self):
+        return self.imagen_archivo.url if self.imagen_archivo else self.imagen_url
 
 
 class Categoria(models.Model):
