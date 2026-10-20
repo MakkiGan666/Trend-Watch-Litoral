@@ -6,6 +6,7 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q
 from django.db.models.functions import Coalesce
 from .fechas import datos_fecha
+from .categorias import datos_categorias
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -85,20 +86,9 @@ def cotizaciones(request):
 
 
 def _categorias_de_publicacion(publicacion):
-    """Devuelve, sin duplicados, las categorías vinculadas a una publicación."""
-    categorias = []
-    vistos = set()
-    for relacion in (
-        PublicacionTema.objects.filter(id_publicacion_api=publicacion)
-        .select_related('id_temas__id_categoria')
-    ):
-        tema = getattr(relacion, 'id_temas', None)
-        categoria = getattr(tema, 'id_categoria', None)
-        nombre = getattr(categoria, 'nombre_categoria', None)
-        if nombre and nombre not in vistos:
-            categorias.append(nombre)
-            vistos.add(nombre)
-    return categorias
+    """Nombres asociados, conservando todas las categorías históricas."""
+    return list(dict.fromkeys(c['nombre'] for c in datos_categorias(publicacion)['categorias_detalle']))
+
 
 def credito_fuente(fuente):
     """Nombre del medio sin la sección: "El Territorio (Misiones)" -> "El Territorio"."""
@@ -108,12 +98,8 @@ def credito_fuente(fuente):
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
-    publicacion = get_object_or_404(Publicacion, pk=pk)
+    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
     categorias_noticia = _categorias_de_publicacion(publicacion)
-    if not categorias_noticia:
-        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
-        if coincidencia:
-            categorias_noticia = [coincidencia.group(1).strip()]
     localidades_noticia = list(dict.fromkeys(
         Locacion.objects.filter(id_publicacion_api=publicacion)
         .exclude(location='').values_list('location', flat=True)
@@ -131,6 +117,7 @@ def noticia(request, pk):
         'publicacion': publicacion,
         'fecha_navegacion': datos_fecha(publicacion),
         'categorias_noticia': categorias_noticia,
+        'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
         'localidades_noticia': localidades_noticia,
         'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
         'imagen_noticia': enlace_seguro(getattr(publicacion, 'imagen_url', None)),
@@ -156,14 +143,8 @@ def localidad(request, slug):
 
 
 def _categorias_listado(publicacion):
-    """Categorías ya precargadas (prefetch temas__id_categoria); si no hay, la del nombre de fuente."""
-    categorias = list(dict.fromkeys(
-        t.id_categoria.nombre_categoria for t in getattr(publicacion, 'temas').all()
-    ))
-    if not categorias:
-        coincidencia = re.search(r'\(([^)]+)\)\s*$', publicacion.fuente or '')
-        categorias = [coincidencia.group(1).strip()] if coincidencia else []
-    return categorias
+    """Campo legacy, con lectura común a detalle, API y panel."""
+    return datos_categorias(publicacion)['categorias']
 
 
 def _orden_por_publicacion():
@@ -190,7 +171,7 @@ def publicaciones_localidad(request, slug):
             'fuente': publicacion.fuente,
             'url': publicacion.url,
             'imagen_url': publicacion.imagen_url or None,
-            'categorias': _categorias_listado(publicacion),
+            **datos_categorias(publicacion),
             'fecha': fecha.isoformat() if fecha else None,
             **datos_fecha(publicacion),
         })
@@ -309,9 +290,14 @@ def logout_view(request):
 def dashboard(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
-                                       .prefetch_related('sentimiento_set', 'locacion_set')\
+                                       .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
                                        .order_by(*_orden_por_publicacion())[:100]
     
+    for publicacion in publicaciones:
+        detalles = datos_categorias(publicacion)['categorias_detalle']
+        publicacion.dashboard_categorias = [c['id'] for c in detalles]
+        publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))
+
     return render(request, 'core/dashboard.html', {
         'publicaciones': publicaciones,
     })
@@ -491,7 +477,7 @@ def listar_publicaciones(request):
                 "fuente": p.fuente,
                 "url": p.url,
                 "imagen_url": p.imagen_url or None,
-                "categorias": _categorias_listado(p),
+                **datos_categorias(p),
                 "departamento": p.departamento or None,
                 "procesado_ia": p.procesado_ia,
                 "fecha": p.fecha_captura.strftime("%Y-%m-%d %H:%M:%S") if p.fecha_captura else None,
@@ -510,7 +496,7 @@ def listar_publicaciones(request):
 def obtener_detalle_publicacion(request, pk):
     """ Obtiene el detalle de una publicación con sus locaciones geográficas """
     if request.method == 'GET':
-        pub = get_object_or_404(Publicacion, pk=pk)
+        pub = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
         locaciones = list(Locacion.objects.filter(id_publicacion_api=pub).values('location', 'latitud', 'longitud'))
         
         return JsonResponse({
@@ -520,7 +506,8 @@ def obtener_detalle_publicacion(request, pk):
             "fuente": pub.fuente,
             "url": pub.url,
             "procesado_ia": pub.procesado_ia,
-            "locaciones": locaciones
+            "locaciones": locaciones,
+            **datos_categorias(pub)
         })
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
 

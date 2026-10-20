@@ -22,6 +22,13 @@ FASE12_LABELS = (
 
 
 FASE21_LABELS = ('core.test_fechas',)
+FASE22_LABELS = (
+    'core.test_categorias_compat',
+    'core.test_clasificacion.CategoriaPorReglasTestCase',
+    'core.test_clasificacion.DepartamentoPorTextoTestCase',
+    'core.test_clasificacion.ClasificarLoteConIATestCase',
+    'core.test_clasificacion.VincularCategoriaTestCase',
+)
 
 
 @contextmanager
@@ -51,3 +58,6 @@ def ejecutar_plan(call_command):
 
     print('Fase 2.1: fechas y ordenamiento', flush=True)
     call_command('test', *FASE21_LABELS, verbosity=2, interactive=False)
+
+    print('Fase 2.2: categorías, clasificación y compatibilidad', flush=True)
+    call_command('test', *FASE22_LABELS, verbosity=2, interactive=False)

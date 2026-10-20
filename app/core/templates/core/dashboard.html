@@ -62,10 +62,10 @@
                 <tbody>
                     {% for pub in publicaciones %}
                     {% with analisis=pub.sentimiento_set.all|first ubicaciones=pub.locacion_set.all %}
-                    <tr data-dashboard-row data-source="{{ pub.fuente|default:'Sin fuente identificada' }}" data-analysis="{% if analisis %}available{% else %}pending{% endif %}">
+                    <tr data-dashboard-row data-categories="{{ pub.dashboard_categorias|join:',' }}" data-source="{{ pub.fuente|default:'Sin fuente identificada' }}" data-analysis="{% if analisis %}available{% else %}pending{% endif %}">
                         <td data-label="ID">{{ pub.id_publicacion_api }}</td>
                         <td data-label="Captura">{% if pub.fecha_captura %}<time datetime="{{ pub.fecha_captura|date:'c' }}">{{ pub.fecha_captura|date:"d/m/Y H:i" }}</time>{% else %}Sin fecha{% endif %}</td>
-                        <td data-label="Noticia" class="dashboard-news"><a href="{% url 'noticia' pub.id_publicacion_api %}">{{ pub.titulo|default:"Noticia sin título" }}</a><p>{{ pub.contenido|striptags|truncatechars:180 }}</p></td>
+                        <td data-label="Noticia" class="dashboard-news"><a href="{% url 'noticia' pub.id_publicacion_api %}">{{ pub.titulo|default:"Noticia sin título" }}</a><p>{{ pub.contenido|striptags|truncatechars:180 }}</p><small class="dashboard-note">{% for categoria in pub.categorias_navegacion %}{{ categoria }}{% if not forloop.last %}, {% endif %}{% empty %}Sin categoría asociada{% endfor %}</small></td>
                         <td data-label="Fuente">{{ pub.fuente|default:"Sin fuente identificada" }}<small class="dashboard-note">{% if pub.id_registro %}Registro #{{ pub.id_registro.id_registro }}{% else %}Sin registro de ingesta{% endif %}</small></td>
                         <td data-label="Localidad">{% for ubicacion in ubicaciones %}{% if ubicacion.location %}<span class="dashboard-location" data-location="{{ ubicacion.location }}">{{ ubicacion.location }}</span>{% endif %}{% empty %}<span class="dashboard-note">Sin ubicación identificada</span>{% endfor %}</td>
                         <td data-label="Sentimiento">{% if analisis %}<span class="tag">Análisis disponible</span><small class="dashboard-note">Polaridad: {{ analisis.polaridad|floatformat:2 }}<br>Confianza: {{ analisis.confianza|floatformat:2 }}</small>{% else %}<span class="tag tag--soft">Pendiente de análisis</span>{% endif %}</td>

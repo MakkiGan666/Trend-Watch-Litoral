@@ -12,7 +12,8 @@
   <article class="news-detail__article glass glass--sheen">
     <header>
       <div class="news-detail__tags">
-        {% for categoria in categorias_noticia %}<span class="tag">{{ categoria }}</span>{% empty %}<span class="tag tag--soft">Categoría sin identificar</span>{% endfor %}
+        {% for categoria in categorias_noticia %}<span class="tag">{{ categoria }}</span>{% empty %}<span class="tag tag--soft">Sin categoría asociada</span>{% endfor %}
+        {% if seccion_noticia %}<span class="tag tag--soft">Sección: {{ seccion_noticia }}</span>{% endif %}
         {% for localidad in localidades_noticia %}<span class="tag tag--soft">{{ localidad }}</span>{% empty %}<span class="tag tag--soft">Localidad sin identificar</span>{% endfor %}
       </div>
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>

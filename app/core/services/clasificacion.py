@@ -128,7 +128,7 @@ def categoria_con_confianza(titulo, contenido, seccion=None):
 
 
 def categoria_por_reglas(titulo, contenido, seccion=None):
-    """Clasifica una noticia sin IA. Siempre devuelve una categoría del proyecto."""
+    """Propuesta legacy sin IA; usar categoria_con_confianza antes de persistirla."""
     return categoria_con_confianza(titulo, contenido, seccion)[0]
 
 
@@ -174,7 +174,15 @@ Responde ÚNICAMENTE un arreglo JSON, un objeto por noticia, sin propiedades adi
 
 
 def _validar_respuesta(raw, indices):
-    data = json.loads(raw)
+    def sin_claves_duplicadas(pares):
+        objeto = {}
+        for clave, valor in pares:
+            if clave in objeto:
+                raise ValueError('Campo JSON repetido.')
+            objeto[clave] = valor
+        return objeto
+
+    data = json.loads(raw, object_pairs_hook=sin_claves_duplicadas)
     if not isinstance(data, list):
         raise ValueError('La respuesta debe ser un arreglo.')
     resultado = {}
@@ -226,8 +234,9 @@ def _clasificar_con_ia(lote):
 def clasificar_lote(noticias, usar_ia=True):
     """Clasifica noticias {'titulo', 'contenido', 'seccion'} en el mismo orden recibido.
 
-    Cada resultado es {'categoria', 'departamento', 'metodo'}: metodo es 'reglas' si la
-    categoría salió sin IA o 'ia' si Gemini resolvió una noticia dudosa.
+    Conserva categoria/departamento/metodo y agrega confirmada. La categoría de
+    reglas es sólo una propuesta si confirmada=False; no debe persistirse como
+    asociación automática. Una respuesta IA validada confirma su propuesta.
     """
     resultados = []
     dudosas = []
@@ -239,12 +248,13 @@ def clasificar_lote(noticias, usar_ia=True):
             'categoria': categoria,
             'departamento': departamento_por_texto(noticia['titulo'], noticia.get('contenido')),
             'metodo': 'reglas',
+            'confirmada': segura,
         })
         if not segura:
             dudosas.append((indice, noticia))
     por_ia = _clasificar_con_ia(dudosas) if usar_ia and dudosas else {}
     for indice, categoria in por_ia.items():
-        resultados[indice].update(categoria=categoria, metodo='ia')
+        resultados[indice].update(categoria=categoria, metodo='ia', confirmada=True)
     return resultados
 
 

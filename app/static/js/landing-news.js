@@ -25,11 +25,23 @@
     } catch (_) { return null; }
   }
 
-  function categoryOf(publication) {
-    // Las APIs envían categorias; si falta, se usa la sección guardada en fuente: "El Territorio (Policiales)".
+  function categoryKey(category) {
+    const value = typeof category === 'string' ? category
+      : category && typeof category === 'object' ? (category.codigo || category.nombre) : '';
+    return typeof value === 'string'
+      ? value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase() : '';
+  }
+
+  function categoriesOf(publication) {
+    // Una lista de asociaciones vacía es autoritativa: no reclasificar por fuente.
+    if (Array.isArray(publication.categorias_detalle)) {
+      return [...new Set(publication.categorias_detalle.map(categoryKey).filter(Boolean))];
+    }
+    if (Array.isArray(publication.categorias)) {
+      return [...new Set(publication.categorias.map(categoryKey).filter(Boolean))];
+    }
     const match = String(publication.fuente || '').match(/\(([^)]+)\)\s*$/);
-    const category = String(publication.categoria || (match ? match[1] : 'sin-categoria'));
-    return category.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+    return [categoryKey(publication.categoria || (match ? match[1] : ''))].filter(Boolean);
   }
 
   function sourceName(fuente) {
@@ -163,9 +175,7 @@
       const groups = new Map(sections.map(section => [section.dataset.newsCategory, []]));
       payload.data.forEach(publication => {
         if (!publication || typeof publication !== 'object') return;
-        const categories = Array.isArray(publication.categorias)
-          ? publication.categorias.map(categoria => categoryOf({ categoria }))
-          : [categoryOf(publication)];
+        const categories = categoriesOf(publication);
         // Mostrar únicamente las categorías registradas, sin reclasificar otras noticias.
         new Set(categories).forEach(category => {
           if (groups.has(category)) groups.get(category).push(publication);

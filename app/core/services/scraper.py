@@ -131,6 +131,7 @@ class _Lote:
         self.omitidas = 0
         self.errores = []
         self.categorias = {}
+        self.sin_categoria = 0
         self.disponibles = 0
         self.incompleta = False
         self.fuentes_completadas = 0
@@ -182,7 +183,8 @@ class _Lote:
                         id_registro=self.registro, # Relación ForeignKey con RegistroDatos
                         fecha_captura=timezone.now()
                     )
-                    vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
+                    if clasificacion.get('confirmada') is True:
+                        vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
             except IntegrityError:
                 # Consultar después de salir del bloque que falló. Sólo es duplicado si la
                 # publicación existe; cualquier otra violación interrumpe el lote.
@@ -194,8 +196,11 @@ class _Lote:
                 self.registrar_error(candidato['url'], candidato['titulo'], 'datos_invalidos')
                 continue
             self.capturados += 1
-            categoria = clasificacion['categoria']
-            self.categorias[categoria] = self.categorias.get(categoria, 0) + 1
+            if clasificacion.get('confirmada') is True:
+                categoria = clasificacion['categoria']
+                self.categorias[categoria] = self.categorias.get(categoria, 0) + 1
+            else:
+                self.sin_categoria += 1
 
     def exito(self):
         completa = not self.errores and not self.incompleta
@@ -216,6 +221,7 @@ class _Lote:
             "omitidas": self.omitidas,
             "errores": self.errores,
             "categorias": self.categorias,
+            "sin_categoria": self.sin_categoria,
         }
 
     def fallo(self, exc):
@@ -231,6 +237,7 @@ class _Lote:
         return {"status": "ERROR", "estado": "PARCIAL" if self.capturados or self.omitidas else "FALLO",
                 "cobertura_completa": False, "detalle": str(exc), "capturados": self.capturados,
                 "omitidas": self.omitidas, "errores": self.errores, "categorias": self.categorias,
+                "sin_categoria": self.sin_categoria,
                 "disponibles": self.disponibles, "registro_id": self.registro.pk}
 
 
