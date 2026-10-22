@@ -300,7 +300,7 @@ def logout_view(request):
 
 @login_required(login_url='login')
 @permission_required(PERMISOS_PANEL, raise_exception=True)
-def dashboard(request):
+def publicaciones(request):
     """ Muestra el panel con las publicaciones, sentimientos y locaciones """
     publicaciones = Publicacion.objects.select_related('id_registro')\
                                        .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
@@ -317,7 +317,7 @@ def dashboard(request):
                 slugs.add(slug)
         publicacion.dashboard_departamentos = sorted(slugs)
         publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
-    return render(request, 'core/dashboard.html', {
+    return render(request, 'core/publicaciones.html', {
         'publicaciones': publicaciones,
         'departamentos': DEPARTAMENTOS,
         'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
@@ -685,7 +685,7 @@ def crear_publicacion_view(request):
             form.add_error(None, 'Ya existe una publicación con la misma URL (o el mismo título si no tiene URL).')
         else:
             messages.success(request, 'Publicación creada con análisis de sentimiento.')
-            return redirect('dashboard')
+            return redirect('publicaciones')
 
     return render(request, 'core/crear_publicacion.html', {
         'form': form, 'titulo_formulario': 'Nueva publicación', 'texto_boton': 'Guardar publicación',
@@ -714,7 +714,7 @@ def editar_publicacion_view(request, pk):
                                  'no se guardaron los cambios.')
         else:
             messages.success(request, f'Publicación {publicacion.pk} actualizada.')
-            return redirect('dashboard')
+            return redirect('publicaciones')
 
     return render(request, 'core/crear_publicacion.html', {
         'form': form, 'publicacion': publicacion,
@@ -729,4 +729,4 @@ def eliminar_publicacion_view(request, pk):
     publicacion = get_object_or_404(Publicacion, pk=pk)
     publicacion.delete()
     messages.success(request, f'Publicación {pk} eliminada.')
-    return redirect('dashboard')
+    return redirect('publicaciones')

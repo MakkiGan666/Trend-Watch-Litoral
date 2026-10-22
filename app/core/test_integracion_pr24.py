@@ -54,7 +54,7 @@ class IntegracionPR24Tests(TestCase):
     def test_dashboard_combina_orden_categorias_territorio_y_fecha_de_captura(self):
         self.client.force_login(self.usuario)
         Locacion.objects.create(id_publicacion_api=self.archivo, location='El Soberbio', latitud=0, longitud=0)
-        respuesta = self.client.get(reverse('dashboard'))
+        respuesta = self.client.get(reverse('publicaciones'))
         publicaciones = list(respuesta.context['publicaciones'])
         self.assertEqual([p.pk for p in publicaciones], [self.reciente.pk, self.archivo.pk])
         archivo = publicaciones[1]

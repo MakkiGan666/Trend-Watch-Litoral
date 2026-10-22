@@ -29,14 +29,14 @@ class ImagenFormularioPublicacionTests(TestCase):
     @patch('core.views._analizar_y_guardar_sentimiento')
     def test_crear_guarda_imagen_y_editar_permite_cambiarla_o_quitarla(self, analizar):
         response = self.client.post(reverse('crear_publicacion_web'), self.data)
-        self.assertRedirects(response, reverse('dashboard'), fetch_redirect_response=False)
+        self.assertRedirects(response, reverse('publicaciones'), fetch_redirect_response=False)
         publicacion = Publicacion.objects.get()
         self.assertEqual(publicacion.imagen_url, self.data['imagen_url'])
         analizar.reset_mock()
         for imagen in ['https://example.com/otra.webp', '']:
             response = self.client.post(reverse('editar_publicacion_web', args=[publicacion.pk]),
                                         {**self.data, 'imagen_url': imagen})
-            self.assertRedirects(response, reverse('dashboard'), fetch_redirect_response=False)
+            self.assertRedirects(response, reverse('publicaciones'), fetch_redirect_response=False)
             publicacion.refresh_from_db()
             self.assertEqual(publicacion.imagen_url, imagen)
         analizar.assert_not_called()
@@ -54,7 +54,7 @@ class ImagenFormularioPublicacionTests(TestCase):
     @patch('core.views._analizar_y_guardar_sentimiento')
     def test_crear_sin_imagen_sigue_siendo_valido(self, analizar):
         response = self.client.post(reverse('crear_publicacion_web'), {**self.data, 'imagen_url': ''})
-        self.assertRedirects(response, reverse('dashboard'), fetch_redirect_response=False)
+        self.assertRedirects(response, reverse('publicaciones'), fetch_redirect_response=False)
         self.assertEqual(Publicacion.objects.get().imagen_url, '')
 
     def archivo(self):

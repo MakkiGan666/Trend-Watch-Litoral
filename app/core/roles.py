@@ -17,7 +17,7 @@ PERMISOS_ROLES = {
     'Administrador': PERMISOS_ADMINISTRADOR,
 }
 
-# El Dashboard es el panel de gestión de noticias: sólo para quien tiene el CRUD completo.
+# Publicaciones es el panel de gestión de noticias: sólo para quien tiene el CRUD completo.
 PERMISOS_PANEL = (
     'core.view_publicacion', 'core.add_publicacion',
     'core.change_publicacion', 'core.delete_publicacion',

@@ -1298,7 +1298,7 @@ class RolesPermisosTestCase(TestCase):
                 self.assertEqual(self.api.get(f'/api/publicaciones/{self.publicacion.pk}/').status_code, 200)
                 # El Dashboard es el panel de gestión: sólo Administrador.
                 esperado = 302 if rol is None else (200 if rol == 'Administrador' else 403)
-                self.assertEqual(self.client.get('/dashboard/').status_code, esperado)
+                self.assertEqual(self.client.get('/publicaciones/').status_code, esperado)
 
     def test_mutaciones_denegadas_no_tienen_efectos(self):
         pk = self.publicacion.pk
@@ -1358,12 +1358,12 @@ class RolesPermisosTestCase(TestCase):
 
     def test_dashboard_denegado_muestra_403_y_anonimo_va_al_login(self):
         self.autenticar('Usuario')
-        response = self.client.get('/dashboard/')
+        response = self.client.get('/publicaciones/')
         self.assertEqual(response.status_code, 403)
         self.assertContains(response, 'Acceso denegado', status_code=403)
         self.autenticar(None)
-        response = self.client.get('/dashboard/')
-        self.assertRedirects(response, '/login/?next=/dashboard/', fetch_redirect_response=False)
+        response = self.client.get('/publicaciones/')
+        self.assertRedirects(response, '/login/?next=/publicaciones/', fetch_redirect_response=False)
 
     def test_enlace_dashboard_solo_visible_para_administrador(self):
         for rol in (None, *self.usuarios):
@@ -1372,13 +1372,13 @@ class RolesPermisosTestCase(TestCase):
                 with self.subTest(rol=rol, ruta=ruta):
                     contenido = self.client.get(ruta).content.decode()
                     if rol == 'Administrador':
-                        self.assertIn('href="/dashboard/"', contenido)
+                        self.assertIn('href="/publicaciones/"', contenido)
                     else:
-                        self.assertNotIn('href="/dashboard/"', contenido)
+                        self.assertNotIn('href="/publicaciones/"', contenido)
 
     def test_dashboard_administrador_muestra_acciones_crud(self):
         self.autenticar('Administrador')
-        response = self.client.get('/dashboard/')
+        response = self.client.get('/publicaciones/')
         self.assertContains(response, 'href="/publicaciones/crear/"')
         self.assertContains(response, f'href="/publicaciones/{self.publicacion.pk}/editar/"')
         self.assertContains(response, f'action="/publicaciones/{self.publicacion.pk}/eliminar/"')
@@ -1392,7 +1392,7 @@ class RolesPermisosTestCase(TestCase):
             'url': 'https://example.com/web', 'categorias': [categoria.pk],
         }
         response = self.client.post('/publicaciones/crear/', datos)
-        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        self.assertRedirects(response, '/publicaciones/', fetch_redirect_response=False)
         publicacion = Publicacion.objects.get(url='https://example.com/web')
         # Misma identidad que la API y el admin: URL o, si falta, título sin recortar.
         self.assertEqual(publicacion.hash_origen, hashlib.sha256(b'https://example.com/web').hexdigest())
@@ -1446,7 +1446,7 @@ class RolesPermisosTestCase(TestCase):
             'titulo': 'Después', 'contenido': 'Nuevo texto', 'fuente': 'Otra fuente',
             'url': 'https://example.com/editada',
         })
-        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        self.assertRedirects(response, '/publicaciones/', fetch_redirect_response=False)
         publicacion.refresh_from_db()
         self.assertEqual(
             (publicacion.titulo, publicacion.contenido, publicacion.fuente, publicacion.url),
@@ -1548,7 +1548,7 @@ class RolesPermisosTestCase(TestCase):
         self.assertEqual(self.client.get(ruta).status_code, 405)
         self.assertTrue(Publicacion.objects.filter(pk=self.publicacion.pk).exists())
         response = self.client.post(ruta)
-        self.assertRedirects(response, '/dashboard/', fetch_redirect_response=False)
+        self.assertRedirects(response, '/publicaciones/', fetch_redirect_response=False)
         self.assertFalse(Publicacion.objects.filter(pk=self.publicacion.pk).exists())
         self.assertFalse(Sentimiento.objects.filter(id_publicacion_api=self.publicacion.pk).exists())
         self.assertEqual(self.client.post(ruta).status_code, 404)

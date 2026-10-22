@@ -51,7 +51,7 @@
       <div class="nav__links">
         <a href="{% url 'landing' %}" {% if request.resolver_match.url_name == 'landing' %}aria-current="page"{% endif %}>Inicio</a>
         {% block categories_nav %}<a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>{% endblock %}
-        {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>{% endif %}
+        {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}" {% if request.resolver_match.url_name == 'publicaciones' %}aria-current="page"{% endif %}>Publicaciones</a>{% endif %}
       </div>
       <div class="nav__act">
         {% include "partials/_account_actions.html" %}
@@ -84,7 +84,7 @@
         <div>
           <h4>Plataforma</h4>
           <a href="{% url 'categorias' %}">Categorías</a>
-          {% if perms.core.change_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
+          {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
           <a href="{% url 'categorias' %}#localidades">Localidades</a>
         </div>
         <div>
