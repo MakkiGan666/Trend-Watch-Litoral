@@ -42,6 +42,7 @@ from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacio
 from .roles import PERMISOS_PANEL
 from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
+from .services.indicadores import resumen_publicaciones
 from .services.autenticacion import autenticar_identificador
 from .services.identidad import con_identidad_serializada, errores_identidad
 
@@ -76,6 +77,7 @@ def landing(request):
 
     return render(request, 'inicio.html', {
         'featured_trends': featured_trends,
+        'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
     })
 
 

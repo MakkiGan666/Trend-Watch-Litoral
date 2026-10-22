@@ -1,0 +1,9 @@
+<section class="inicio-indicators" id="inicio-indicadores" aria-labelledby="inicio-indicadores-title">
+  <header class="inicio-indicators__head"><h2 id="inicio-indicadores-title">Estado de las publicaciones</h2><a href="{% url 'dashboard' %}">Ver Dashboard →</a></header>
+  <div class="inicio-indicators__grid">
+    <article class="glass glass--sheen"><span>Publicaciones</span><strong>{{ indicadores_inicio.total }}</strong></article>
+    <article class="glass glass--sheen"><span>Con análisis de sentimiento</span><strong>{{ indicadores_inicio.analizadas }}</strong></article>
+    <article class="glass glass--sheen"><span>Pendientes de análisis</span><strong>{{ indicadores_inicio.pendientes }}</strong></article>
+  </div>
+  <p class="inicio-indicators__note">Resumen de toda la base, exclusivo de superusuarios.{% if indicadores_inicio.inconsistentes %} {{ indicadores_inicio.inconsistentes }} análisis requieren revisión; ver Dashboard.{% endif %}</p>
+</section>
