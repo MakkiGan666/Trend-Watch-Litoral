@@ -664,3 +664,10 @@ body.app{padding:0}
 .auth-card>.brand__mark{display:block;width:76px;height:76px;margin:0 0 16px}
 .litoral-brand{display:inline-flex;align-items:center;gap:12px}
 .shell.is-collapsed .sidebar__top{flex-direction:column;gap:10px}
+/* Luces de navegación: mismo degradado y resplandor que las acciones editoriales. */
+.nav .nav__links a,.nav .categories-dropdown__toggle{transition:background .2s,color .2s,box-shadow .2s}
+.nav .nav__links a:focus-visible,.nav .categories-dropdown__toggle:focus-visible{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
+@media(hover:hover){
+  .nav .nav__links a:hover,.nav .categories-dropdown__toggle:hover{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
+}
+@media(prefers-reduced-motion:reduce){.nav .nav__links a,.nav .categories-dropdown__toggle{transition:none}}
