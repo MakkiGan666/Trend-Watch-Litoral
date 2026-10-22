@@ -1,0 +1,48 @@
+/* Efecto común de controles. Se carga después de los estilos de cada página. */
+:root{
+  --control-hover-background:linear-gradient(135deg,var(--aqua),var(--mist));
+  --control-hover-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua);
+}
+
+/* Incluye botones reales, enlaces presentados como botones y opciones personalizadas.
+   Las tarjetas de noticias y las imágenes conservan su tratamiento de tarjeta. */
+body :is(button,input[type="submit"],input[type="button"],.btn,.icon-btn,a.chip,
+  .link-btn,.back-link,.loc,.nav__links a,.profile-sidebar nav a,.sidebar nav a,
+  [role="option"],.leaflet-control-zoom a,summary):not(:disabled):not([aria-disabled="true"]){
+  transition:background .2s,color .2s,border-color .2s,box-shadow .2s;
+}
+
+body :is(button,input[type="submit"],input[type="button"],.btn,.icon-btn,a.chip,
+  .link-btn,.back-link,.loc,.nav__links a,.profile-sidebar nav a,.sidebar nav a,
+  [role="option"],.leaflet-control-zoom a,summary):not(:disabled):not([aria-disabled="true"]):focus-visible{
+  background:var(--control-hover-background)!important;
+  color:var(--ink-900)!important;
+  border-color:var(--aqua)!important;
+  box-shadow:var(--control-hover-shadow)!important;
+  outline:2px solid var(--aqua);
+  outline-offset:3px;
+}
+
+@media(hover:hover){
+  body :is(button,input[type="submit"],input[type="button"],.btn,.icon-btn,a.chip,
+    .link-btn,.back-link,.loc,.nav__links a,.profile-sidebar nav a,.sidebar nav a,
+    [role="option"],.leaflet-control-zoom a,summary):not(:disabled):not([aria-disabled="true"]):hover{
+    background:var(--control-hover-background)!important;
+    color:var(--ink-900)!important;
+    border-color:var(--aqua)!important;
+    box-shadow:var(--control-hover-shadow)!important;
+  }
+}
+
+/* Mantener legibles los elementos que usan su propio color o fondo interior. */
+.news-rating__option:is(:hover,:focus-visible):not(:disabled) strong{color:var(--mist)}
+.news-rating__option:is(:hover,:focus-visible):not(:disabled) :is(.news-rating__face,small),
+.dashboard-date__trigger:is(:hover,:focus-visible) svg{color:var(--ink-900)}
+.news-page-dot{border-radius:50%}
+.news-page-dot:is(:hover,:focus-visible)::before{background:var(--ink-900);opacity:1}
+
+@media(prefers-reduced-motion:reduce){
+  body :is(button,input[type="submit"],input[type="button"],.btn,.icon-btn,a.chip,
+    .link-btn,.back-link,.loc,.nav__links a,.profile-sidebar nav a,.sidebar nav a,
+    [role="option"],.leaflet-control-zoom a,summary){transition:none}
+}
