@@ -665,9 +665,11 @@ body.app{padding:0}
 .litoral-brand{display:inline-flex;align-items:center;gap:12px}
 .shell.is-collapsed .sidebar__top{flex-direction:column;gap:10px}
 /* Luces de navegación: mismo degradado y resplandor que las acciones editoriales. */
-.nav .nav__links a,.nav .categories-dropdown__toggle{transition:background .2s,color .2s,box-shadow .2s}
-.nav .nav__links a:focus-visible,.nav .categories-dropdown__toggle:focus-visible{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
+.nav .nav__links a,.nav .categories-dropdown__toggle,.nav .account-bell,.nav .account-actions>.account-enter{transition:background .2s,color .2s,box-shadow .2s}
+.nav .nav__links a:focus-visible,.nav .categories-dropdown__toggle:focus-visible,.nav .account-bell:focus-visible,.nav .account-actions>.account-enter:focus-visible{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
 @media(hover:hover){
-  .nav .nav__links a:hover,.nav .categories-dropdown__toggle:hover{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
+  .nav .nav__links a:hover,.nav .categories-dropdown__toggle:hover,.nav .account-bell:hover,.nav .account-actions>.account-enter:hover{background:linear-gradient(135deg,var(--aqua),var(--mist))!important;color:var(--ink-900)!important;box-shadow:0 10px 26px -10px rgba(63,208,180,.6),inset 0 0 0 1px var(--aqua)}
 }
-@media(prefers-reduced-motion:reduce){.nav .nav__links a,.nav .categories-dropdown__toggle{transition:none}}
+@media(prefers-reduced-motion:reduce){.nav .nav__links a,.nav .categories-dropdown__toggle,.nav .account-bell,.nav .account-actions>.account-enter{transition:none}}
+
+.nav .account-actions>.account-user{cursor:pointer}
