@@ -42,8 +42,9 @@
                 </a>
                 <div class="nav__links">
                     <a href="/" aria-current="page">Inicio</a>
-                    <a href="/categorias/">Categorías</a>
                     {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
+                    <a href="/categorias/">Categorías</a>
+                    {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
                 </div>
                 <div class="nav__act">
                     {% include "partials/_account_actions.html" %}
@@ -116,6 +117,7 @@
                         <h4>Plataforma</h4>
                         <a href="/categorias/">Categorías</a>
                         {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
+                        {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
                         <a href="/categorias/#localidades">Localidades</a>
                     </div>
                     <div>
