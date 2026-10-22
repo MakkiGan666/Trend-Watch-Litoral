@@ -1,0 +1,5 @@
+{% load l10n %}
+<section class="analytics-chart glass glass--sheen">
+  <h2>{{ titulo }}</h2><p>{{ nota }}</p>
+  <ul class="analytics-bars">{% for fila in filas %}<li><div><span>{{ fila.nombre }}</span><strong>{{ fila.total }}</strong></div><span class="analytics-bar" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span></li>{% empty %}<li>Sin datos disponibles.</li>{% endfor %}</ul>
+</section>

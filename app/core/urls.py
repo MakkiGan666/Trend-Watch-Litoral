@@ -3,6 +3,7 @@ from . import views
 from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
+from . import views_dashboard
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -34,7 +35,7 @@ urlpatterns = [
     path('registro/', views.registro_view, name='registro'),
     path('logout/', views.logout_view, name='logout'),
     path('publicaciones/', views.publicaciones, name='publicaciones'),
-    path('dashboard/', views.publicaciones, name='dashboard'),
+    path('dashboard/', views_dashboard.dashboard, name='dashboard'),
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),
 
     # API REST - CRUD de Publicaciones
