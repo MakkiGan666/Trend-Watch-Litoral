@@ -96,13 +96,15 @@ def dashboard(request):
     extremos = fechadas.aggregate(primera=Min('fecha_base'), ultima=Max('fecha_base'))
     mensual = extremos['primera'] and (extremos['ultima'] - extremos['primera']).days > 120
     agrupador = TruncMonth('fecha_base', tzinfo=ZONA_LOCAL) if mensual else TruncDate('fecha_base', tzinfo=ZONA_LOCAL)
-    serie = [{'fecha': x['periodo'].strftime('%m/%Y' if mensual else '%d/%m/%Y'), 'total': x['total']} for x in fechadas.annotate(periodo=agrupador).values('periodo').annotate(total=Count('pk')).order_by('periodo')]
+    periodos = list(fechadas.annotate(periodo=agrupador).values('periodo').annotate(total=Count('pk')).order_by('periodo'))
+    posiciones = [x['periodo'].year * 12 + x['periodo'].month if mensual else x['periodo'].toordinal() for x in periodos]
+    serie = [{'fecha': x['periodo'].strftime('%m/%Y' if mensual else '%d/%m/%Y'), 'total': x['total']} for x in periodos]
     # Se muestran los períodos con registros, sin inventar observaciones entre ellos.
     maximo = max((x['total'] for x in serie), default=1)
     for i, fila in enumerate(serie):
-        fila['x'] = format(30 + i * 640 / max(1, len(serie) - 1), '.2f')
+        fila['x'] = format(30 + (posiciones[i] - posiciones[0]) * 640 / max(1, posiciones[-1] - posiciones[0]), '.2f')
         fila['y'] = format(190 - fila['total'] * 155 / maximo, '.2f')
-    puntos = ' '.join(f'{30 + i * 640 / max(1, len(serie) - 1):.2f},{190 - x["total"] * 155 / maximo:.2f}' for i, x in enumerate(serie))
+    puntos = ' '.join(f'{fila["x"]},{fila["y"]}' for fila in serie)
     return render(request, 'core/dashboard.html', {
         'filtros': form, 'resumen': resumen, 'categorias': categorias, 'fuentes': fuentes,
         'departamentos': departamentos, 'sentimientos': sentimientos, 'serie': serie,

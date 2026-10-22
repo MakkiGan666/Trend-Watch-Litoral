@@ -6,7 +6,7 @@ El Dashboard consulta todas las publicaciones coincidentes, sin límite de 100, 
 
 Los KPIs distinguen: total; un único sentimiento con polaridad y confianza dentro de rango; sin sentimiento (pendiente); múltiples sentimientos o datos fuera de rango (a revisar). No se confunde ausencia con neutralidad ni se toma `procesado_ia` como prueba suficiente de análisis. La distribución usa el signo de la polaridad almacenada y no incorpora votos de lectores.
 
-La evolución agrupa por día; para intervalos mayores de 120 días agrupa por mes. Se muestran los períodos con registros y una tabla accesible con los valores exactos. Las otras visualizaciones representan categorías, fuentes, departamentos y sentimiento con barras y cantidades reales.
+La evolución agrupa por día; para intervalos mayores de 120 días agrupa por mes. La distancia horizontal es proporcional a días transcurridos o al índice absoluto de mes. Los períodos sin registros conservan su espacio sin agregar puntos ni ceros. Se muestran los períodos con registros y una tabla accesible con los valores exactos. Las otras visualizaciones representan categorías, fuentes, departamentos y sentimiento con barras y cantidades reales.
 
 No hay procesamiento IA, nuevas métricas de relevancia ni alertas automáticas. La indicación de pendientes es informativa. Una consulta no modifica la base. Sin resultados o con filtros inválidos se muestran estados explícitos; las fechas o selecciones inválidas responden HTTP 400.
 
