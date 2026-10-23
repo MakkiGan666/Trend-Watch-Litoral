@@ -101,7 +101,7 @@ class FechasPublicacionTestCase(TestCase):
         self.client.force_login(usuario)
         antigua = self.crear('archivo-panel', instante(1), instante(20))
         nueva = self.crear('manual-panel', None, instante(19))
-        respuesta = self.client.get(reverse('dashboard'))
+        respuesta = self.client.get(reverse('publicaciones'))
         self.assertEqual(list(respuesta.context['publicaciones']), [nueva, antigua])
 
     def test_rss_conserva_zona_y_fecha_invalida_es_nula(self):

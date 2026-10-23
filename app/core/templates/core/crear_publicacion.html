@@ -9,7 +9,7 @@
 
 {% block content %}
 <div class="wrap publication-editor">
-    <a class="btn btn--ghost publication-editor__back" href="{% url 'dashboard' %}">← Volver al Dashboard</a>
+    <a class="btn btn--ghost publication-editor__back" href="{% url 'publicaciones' %}">← Volver a Publicaciones</a>
     <section class="publication-editor__card glass glass--sheen" aria-labelledby="publication-form-title">
         <header class="publication-editor__head">
             <p>Gestión de noticias</p>
@@ -43,7 +43,7 @@
             {% endfor %}
             <div class="publication-editor__actions">
                 <button type="submit" class="btn btn--primary">{{ texto_boton }}</button>
-                <a href="{% url 'dashboard' %}" class="btn btn--ghost">Cancelar</a>
+                <a href="{% url 'publicaciones' %}" class="btn btn--ghost">Cancelar</a>
             </div>
         </form>
     </section>

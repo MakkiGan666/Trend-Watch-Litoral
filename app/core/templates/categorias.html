@@ -14,9 +14,10 @@
 {% endblock %}
 
 {% block categories_nav %}
+        {# Al entrar a Categorías, mostrar las opciones sin un segundo clic. #}
         <div class="categories-dropdown" id="categories-dropdown">
-          <button class="categories-dropdown__toggle" type="button" aria-expanded="false" aria-controls="categories-nav-menu">Categorías <svg class="categories-dropdown__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
-          <div class="categories-dropdown__panel" id="categories-nav-menu" hidden>
+          <button class="categories-dropdown__toggle" type="button" aria-expanded="true" aria-controls="categories-nav-menu">Categorías <svg class="categories-dropdown__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+          <div class="categories-dropdown__panel" id="categories-nav-menu">
             <a href="#localidades">Localidades</a>
             <a href="#grafico">Análisis</a>
             <a href="#resultados">Tendencias</a>

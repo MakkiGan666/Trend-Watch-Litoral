@@ -664,3 +664,4 @@ body.app{padding:0}
 .auth-card>.brand__mark{display:block;width:76px;height:76px;margin:0 0 16px}
 .litoral-brand{display:inline-flex;align-items:center;gap:12px}
 .shell.is-collapsed .sidebar__top{flex-direction:column;gap:10px}
+.nav .account-actions>.account-user{cursor:pointer}

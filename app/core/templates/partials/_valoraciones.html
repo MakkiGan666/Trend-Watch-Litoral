@@ -1,7 +1,8 @@
 <section class="news-rating glass glass--sheen" id="valoraciones" aria-labelledby="news-rating-title">
   <header class="news-rating__head">
-    <h2 id="news-rating-title">¿Qué sentimiento te genera esta noticia?</h2>
-    <p>Opinión de quienes la leen. Estas respuestas se muestran por separado del análisis automático de la noticia.</p>
+    <div><h2 id="news-rating-title">¿Qué sentimiento te genera esta noticia?</h2>
+    <p>Tu opinión como lector, independiente del análisis automático.</p></div>
+    {% if not request.user.is_authenticated %}<a class="btn btn--ghost news-rating__login" href="#login-modal" aria-haspopup="dialog">Ingresar para valorar</a>{% endif %}
   </header>
   <form method="post" action="{% url 'valorar_noticia' publicacion.pk %}" class="news-rating__form">
     {% csrf_token %}
@@ -27,5 +28,5 @@
       {% if valoracion_propia %}<button class="btn btn--ghost" type="submit" name="sentimiento" value="retirar">Retirar mi valoración</button>{% endif %}
     </div>
   </form>
-  {% if not request.user.is_authenticated %}<a class="btn btn--ghost news-rating__login" href="#login-modal" aria-haspopup="dialog">Ingresar para valorar</a>{% else %}<p class="news-rating__hint">Una elección por noticia. Podés cambiarla o retirarla cuando quieras.</p>{% endif %}
+  {% if request.user.is_authenticated %}<p class="news-rating__hint">Una elección por noticia. Podés cambiarla o retirarla.</p>{% endif %}
 </section>

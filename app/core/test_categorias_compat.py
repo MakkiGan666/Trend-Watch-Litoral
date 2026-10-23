@@ -100,7 +100,7 @@ class LecturaCategoriasCompatTestCase(TestCase):
     def test_dashboard_y_detalle_muestran_todas_las_categorias_asociadas(self):
         usuario = get_user_model().objects.create_superuser(username='categorias-panel')
         self.client.force_login(usuario)
-        panel = self.client.get(reverse('dashboard'))
+        panel = self.client.get(reverse('publicaciones'))
         p = list(panel.context['publicaciones'])[0]
         self.assertEqual(p.dashboard_categorias, [self.salud.pk, self.turismo.pk])
         self.assertEqual(p.categorias_navegacion, ['Salud', 'Turismo'])

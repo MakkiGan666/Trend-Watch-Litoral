@@ -19,7 +19,7 @@ class DashboardDepartamentosTests(TestCase):
         for categoria in [salud, salud, sociedad]:
             tema = Tema.objects.create(id_categoria=categoria, descripcion='Tema de prueba')
             PublicacionTema.objects.create(id_publicacion_api=directa, id_temas=tema)
-        response = self.client.get(reverse('dashboard'))
+        response = self.client.get(reverse('publicaciones'))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context['departamentos']), 17)
         for departamento in DEPARTAMENTOS:
