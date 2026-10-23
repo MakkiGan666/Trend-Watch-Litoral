@@ -31,7 +31,7 @@ ejecutar() {
     local red=none
     if [[ "$1" != sqlite ]]; then red="container:$pg"; fi
     docker run --rm --label "trendwatch.validacion=$etiqueta" --network "$red" --read-only --tmpfs /tmp \
-        -e TW_GENERADAS_AISLADO=1 -e "TW_GENERADAS_LECTURAS=${TW_GENERADAS_LECTURAS:-0}" -v "$raiz/app:/app:ro" -v "$raiz/tools/buscador:/validacion:ro" \
+        -e TW_GENERADAS_AISLADO=1 -e "TW_BUSCADOR_FRONTEND=${TW_BUSCADOR_FRONTEND:-0}" -e "TW_GENERADAS_LECTURAS=${TW_GENERADAS_LECTURAS:-0}" -v "$raiz/app:/app:ro" -v "$raiz/tools/buscador:/validacion:ro" \
         -v "$raiz/docs/buscador-noticias-persistido-resultados.json:/referencia.json:ro" \
         --entrypoint python trendwatch-litoral-web:latest -B /validacion/validar_generadas.py "$1"
 }

@@ -2,7 +2,8 @@
 
 Implementado tras aprobación, 2026-10-23. Rama `feat/buscador-noticias`, worktree
 `/home/sebas/Escritorio/trendwatch-buscador`, base
-`abfb6a31f91db029f29e5f6a677b49d24fb2d2b7`. Sin frontend.
+`abfb6a31f91db029f29e5f6a677b49d24fb2d2b7`. Esta etapa fue sólo backend; la interfaz posterior se documenta en
+[buscador-noticias-frontend.md](buscador-noticias-frontend.md).
 Los experimentos y resultados anteriores se conservan como históricos.
 
 ## Cambio y contrato

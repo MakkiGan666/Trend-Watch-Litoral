@@ -38,3 +38,48 @@ def buscar_publicaciones(request):
         'siguiente': enlace(pagina.next_page_number()) if pagina.has_next() else None,
         'resultados': resultados,
     })
+
+
+@require_GET
+def buscar_noticias(request):
+    import unicodedata
+    from datetime import date, datetime
+    from urllib.parse import urlencode
+    from django.shortcuts import render
+    from .presentacion_busqueda import imagen_segura, segmentos_resaltados
+
+    raw = request.GET.get('q', '')
+    contexto = {'search_query': raw, 'busqueda_realizada': False}
+    # Sólo el estado inicial HTML es distinto de la API obligatoria; el servicio
+    # sigue siendo el único que valida y consulta una búsqueda real.
+    vacia = all(c.isspace() and (not unicodedata.category(c).startswith('C') or c in '\t\r\n') for c in raw)
+    if vacia:
+        return render(request, 'core/buscar.html', contexto)
+    try:
+        consulta, terminos, pagina = buscar(raw, request.GET.get('page', '1'))
+    except EntradaInvalida as error:
+        contexto.update(error=str(error), error_codigo=error.codigo)
+        return render(request, 'core/buscar.html', contexto, status=400)
+    resultados = []
+    for publicacion in pagina.object_list:
+        fecha = datos_fecha(publicacion)
+        valor_fecha = fecha['fecha_efectiva']
+        presentacion_fecha = (date.fromisoformat(valor_fecha) if fecha['fecha_precision'] == 'dia'
+                              else datetime.fromisoformat(valor_fecha)) if valor_fecha else None
+        resultados.append({
+            'titulo': segmentos_resaltados(publicacion.titulo, terminos),
+            'extracto': segmentos_resaltados(extracto(publicacion.contenido, terminos), terminos),
+            'fuente': publicacion.fuente,
+            'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
+            'imagen_url': imagen_segura(publicacion.imagen_publica_url),
+            'fecha': presentacion_fecha, **fecha,
+        })
+
+    def enlace(numero):
+        return reverse('buscar_noticias') + '?' + urlencode({'q': consulta, 'page': numero})
+
+    contexto.update(consulta=consulta, search_query=consulta, busqueda_realizada=True,
+                    resultados=resultados, pagina=pagina, total=pagina.paginator.count,
+                    anterior=enlace(pagina.previous_page_number()) if pagina.has_previous() else None,
+                    siguiente=enlace(pagina.next_page_number()) if pagina.has_next() else None)
+    return render(request, 'core/buscar.html', contexto)

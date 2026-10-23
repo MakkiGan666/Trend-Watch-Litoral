@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views_buscador import buscar_publicaciones
+from .views_buscador import buscar_publicaciones, buscar_noticias
 from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
@@ -17,6 +17,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('buscar/', buscar_noticias, name='buscar_noticias'),
     path('perfil/', views_perfil.perfil, name='perfil'),
     path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
     path('perfil/notificaciones/', views_perfil.perfil, {'seccion': 'notificaciones'}, name='perfil_notificaciones'),

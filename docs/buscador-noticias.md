@@ -1,6 +1,6 @@
 # Buscador público de noticias
 
-Backend de lectura, sin frontend. Implementación y operación en
+Buscador público con API de lectura e interfaz HTML. Implementación y operación en
 [buscador-noticias-implementacion.md](buscador-noticias-implementacion.md).
 Las verificaciones finales se conservan en
 [buscador-noticias-generadas-resultados.json](buscador-noticias-generadas-resultados.json).
@@ -105,7 +105,7 @@ Errores 400 con códigos estables y mensaje claro:
 {"error":{"codigo":"pagina_invalida","mensaje":"La página está fuera del rango."}}
 ```
 
-## Operación, pruebas y frontend pendiente
+## Operación y pruebas
 
 Aplicar `0011_publicacion_texto_busqueda` antes de servir código que consulta los
 campos. V1 está congelada en core.busqueda_texto_v1, sin depender de lógica de negocio
@@ -124,6 +124,9 @@ limitaciones de rendimiento y pasos de reversión están en la documentación de
 implementación. El JSON de referencia persistido incluido es necesario para que
 el validador compare con la consulta original, sin repetir su investigación.
 
-No se implementó interfaz. Quedan formulario, estados de carga/error/vacío,
-paginación, accesibilidad y escape de contenido. No se agregan resaltado HTML,
+La interfaz GET `/buscar/`, navegación, resaltado seguro y revisión visual están
+documentados en [buscador-noticias-frontend.md](buscador-noticias-frontend.md).
+No hay consultas asíncronas ni estados de carga artificiales. No se agregan
 agrupación de hechos ni cambios a clasificación o ingesta.
+
+Para probar la rama desde cero: [guía para compañeros](buscador-noticias-probar.md).

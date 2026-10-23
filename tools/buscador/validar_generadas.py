@@ -52,7 +52,7 @@ def comando(nombre, *args, **kwargs):
         with redirect_stdout(log), redirect_stderr(log):
             call_command(nombre, *args, **kwargs)
     except BaseException:
-        emitir('error', comando=nombre, detalle=log.getvalue()[-7000:])
+        emitir('error', comando=nombre, detalle='\n'.join(linea[:600] for linea in log.getvalue().splitlines())[-7000:])
         raise
     return log.getvalue()
 
@@ -104,6 +104,12 @@ if fase != 'medir':
                  'core.test_publicacion_imagen', 'core.test_integracion_pr24',
                  'core.test_categorias_compat', 'core.test_perfil', 'core.test_navegacion_admin',
                  'core.test_new_dashboard', 'core.test_dashboard_localidades', 'core.test_localidades']
+    if os.environ.get('TW_BUSCADOR_FRONTEND') in ('1', 'html'):
+        etiquetas = ['core.test_busqueda_html', 'core.test_buscador', 'core.test_texto_busqueda',
+                     'core.test_fechas', 'core.test_perfil', 'core.test_navegacion_admin',
+                     'core.test_integracion_pr24', 'core.test_categorias_compat']
+    if os.environ.get('TW_BUSCADOR_FRONTEND') == 'html':
+        etiquetas = ['core.test_busqueda_html']
     if os.environ.get('TW_GENERADAS_LECTURAS') == '1':
         etiquetas = ['core.test_texto_busqueda.TextoBusquedaTests', 'core.test_comentarios']
     resultado = comando('test', *etiquetas, interactive=False, verbosity=1)
