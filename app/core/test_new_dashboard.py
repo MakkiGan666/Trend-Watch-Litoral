@@ -80,3 +80,32 @@ class DashboardAnaliticoTests(TestCase):
             response = self.client.get(reverse('dashboard'), params)
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.context['resumen']['total'], 0)
+
+    def test_escala_diaria_proporcional_con_dias_ausentes(self):
+        for dia in (1, 2, 31):
+            self.noticia(f'dia-{dia}', fecha_publicacion=datetime(2026, 10, dia, 12, tzinfo=timezone.utc))
+        self.client.force_login(self.root)
+        response = self.client.get(reverse('dashboard'))
+        serie = response.context['serie']
+        self.assertFalse(response.context['mensual'])
+        self.assertEqual([f['fecha'] for f in serie], ['01/10/2026', '02/10/2026', '31/10/2026'])
+        self.assertEqual([f['x'] for f in serie], ['30.00', '51.33', '670.00'])
+        self.assertEqual(response.context['puntos'], '30.00,35.00 51.33,35.00 670.00,35.00')
+
+    def test_escala_mensual_con_huecos_y_cambio_de_anio(self):
+        for i, (anio, mes) in enumerate(((2025, 12), (2026, 1), (2026, 6))):
+            self.noticia(f'mes-{i}', fecha_publicacion=datetime(anio, mes, 1, 12, tzinfo=timezone.utc))
+        self.client.force_login(self.root)
+        response = self.client.get(reverse('dashboard'))
+        self.assertTrue(response.context['mensual'])
+        serie = response.context['serie']
+        self.assertEqual([f['fecha'] for f in serie], ['12/2025', '01/2026', '06/2026'])
+        self.assertEqual([f['x'] for f in serie], ['30.00', '136.67', '670.00'])
+        self.assertEqual([f['total'] for f in serie], [1, 1, 1])
+
+    def test_escala_un_periodo_y_conjunto_vacio(self):
+        self.client.force_login(self.root)
+        self.assertEqual(self.client.get(reverse('dashboard')).context['puntos'], '')
+        self.noticia('unica')
+        response = self.client.get(reverse('dashboard'))
+        self.assertEqual(response.context['puntos'], '30.00,35.00')
