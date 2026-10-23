@@ -551,7 +551,8 @@ def actualizar_publicacion(request, pk):
         validated_data = serializer.validated_data or {}
         for campo, valor in validated_data.items():
             setattr(pub, campo, valor)
-        pub.save()
+        # Sólo los campos recibidos: no pisar estado escrito en paralelo (p. ej. procesado_ia de Gemini).
+        pub.save(update_fields=list(validated_data))
         return JsonResponse({"status": "success", "mensaje": f"Publicación {pk} actualizada."})
     return JsonResponse({"status": "error", "mensaje": "Método no permitido"}, status=405)
 
@@ -706,7 +707,8 @@ def editar_publicacion_view(request, pk):
                 # Mismo bloqueo que el reprocesamiento de sentimiento por la API.
                 Publicacion.objects.select_for_update().get(pk=publicacion.pk)
                 # El hash representa el origen: editar título o URL no lo regenera.
-                form.save()
+                # La instancia se leyó antes del bloqueo: guardar sólo los campos del formulario.
+                form.save(commit=False).save(update_fields=form._meta.fields)
                 if {'titulo', 'contenido'} & set(form.changed_data):
                     _analizar_y_guardar_sentimiento(publicacion)
                 if 'categorias' in form.changed_data:

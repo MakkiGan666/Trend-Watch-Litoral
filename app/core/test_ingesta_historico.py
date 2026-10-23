@@ -7,7 +7,7 @@ autocommit de producción (en TestCase un IntegrityError invalida la transacció
 import hashlib
 import logging
 from contextlib import contextmanager
-from datetime import datetime, timezone as dt_timezone
+from datetime import date, datetime, timezone as dt_timezone
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,11 +21,14 @@ from django.core.management.base import CommandError
 from django.db import OperationalError, connection, connections, transaction
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
+from core.forms import PublicacionForm
 from core.models import (
     Categoria, Locacion, Publicacion, PublicacionTema, RegistroDatos, Sentimiento, Tema,
 )
-from core.services.scraper import fetch_and_store_elterritorio
+from core.serializers import PublicacionUpdateSerializer
+from core.services.scraper import fetch_and_store_elterritorio, ingestar_historico_elterritorio
 
 BASE = 'https://www.elterritorio.com.ar/noticias/2026/10/16/'
 FUENTE_OFICIAL = 'El Territorio (Misiones)'
@@ -230,7 +233,7 @@ class ErroresIndividualesTestCase(IngestaSimuladaMixin, TransactionTestCase):
         self.assertEqual(resultado['capturados'], 1)
         self.assertEqual(resultado['omitidas'], 1)
 
-    def _comprobar_invalida_registrada(self, invalida, valida_1, valida_2):
+    def _comprobar_invalida_registrada(self, invalida, valida_1, valida_2, codigos=('datos_invalidos',)):
         with capturar_avisos() as avisos:
             resultado = self.ingerir(valida_1, invalida, valida_2)
 
@@ -245,9 +248,8 @@ class ErroresIndividualesTestCase(IngestaSimuladaMixin, TransactionTestCase):
         self.assertEqual(RegistroDatos.objects.get(pk=resultado['registro_id']).estado, 'ERROR: PARCIAL')
         self.assertTrue(any(invalida[1] in aviso for aviso in avisos),
                         'El error de la noticia no quedó registrado en el log.')
-        self.assertEqual(len(resultado.get('errores', [])), 1)
-        self.assertEqual(resultado['errores'][0]['link'], invalida[1])
-        self.assertEqual(resultado['errores'][0]['codigo'], 'datos_invalidos')
+        self.assertEqual([(e['link'], e['codigo']) for e in resultado.get('errores', [])],
+                         [(invalida[1], codigo) for codigo in codigos])
 
     def test_c1_titulo_demasiado_largo_se_registra_y_el_lote_continua(self):
         self._comprobar_invalida_registrada(
@@ -273,6 +275,46 @@ class ErroresIndividualesTestCase(IngestaSimuladaMixin, TransactionTestCase):
         self.assertEqual(resultado['capturados'], 1)
         self.assertTrue(avisos, 'La noticia sin enlace se descartó sin dejar registro en el log.')
         self.assertEqual([e['codigo'] for e in resultado.get('errores', [])], ['sin_enlace'])
+
+    def test_c7_noticia_sin_titulo_se_registra_y_el_lote_continua(self):
+        for titulo in (None, '   '):
+            with self.subTest(titulo=titulo):
+                Publicacion.objects.all().delete()
+                self._comprobar_invalida_registrada(
+                    (titulo, BASE + '900061-sin-titulo', 'Resumen'),
+                    ('Válida uno', BASE + '900062-valida-uno', 'Resumen'),
+                    ('Válida dos', BASE + '900063-valida-dos', 'Resumen'),
+                    codigos=('articulo_incompleto',),
+                )
+
+    def test_c8_noticia_sin_contenido_se_registra_y_el_lote_continua(self):
+        sin_texto = BASE + '900064-sin-contenido'
+
+        def articulo_sin_texto(url, language=None, **kwargs):
+            if url == sin_texto:
+                return SimpleNamespace(text='', download=lambda **kwargs: None, parse=lambda: None)
+            return articulo_simulado(url)
+
+        self.article.side_effect = articulo_sin_texto
+        # Primero falla la extracción y después el respaldo del RSS también está vacío:
+        # el scraper deja registrados los dos motivos para la misma noticia.
+        self._comprobar_invalida_registrada(
+            ('Sin contenido', sin_texto, '<p> </p>'),
+            ('Válida uno', BASE + '900065-valida-uno', 'Resumen'),
+            ('Válida dos', BASE + '900066-valida-dos', 'Resumen'),
+            codigos=('extraccion_incompleta', 'articulo_incompleto'),
+        )
+
+    def test_c9_enlace_relativo_o_no_http_se_registra_y_el_lote_continua(self):
+        for link in ('/noticias/2026/10/16/900067-relativo', 'javascript:alert(1)', 'ftp://elterritorio.com.ar/x'):
+            with self.subTest(link=link):
+                Publicacion.objects.all().delete()
+                self._comprobar_invalida_registrada(
+                    ('Enlace inválido', link, 'Resumen'),
+                    ('Válida uno', BASE + '900068-valida-uno', 'Resumen'),
+                    ('Válida dos', BASE + '900069-valida-dos', 'Resumen'),
+                    codigos=('url_invalida',),
+                )
 
     def test_c5_fallo_de_infraestructura_corta_el_lote_e_informa_lo_capturado(self):
         crear_real = Publicacion.objects.create
@@ -329,6 +371,31 @@ class ErroresDeFeedTestCase(IngestaSimuladaMixin, TestCase):
                 self.assertTrue(RegistroDatos.objects.latest('pk').estado.startswith('ERROR'))
 
 
+class ErroresIngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
+    def test_c10_enlace_no_http_del_sitemap_se_registra_y_el_lote_continua(self):
+        relativo = '/noticias/2026/09/02/900120-relativo'
+        ftp = 'ftp://www.elterritorio.com.ar/noticias/2026/09/03/900122-ftp'
+        valido = 'https://www.elterritorio.com.ar/noticias/2026/09/01/900121-valido'
+        self.article.side_effect = lambda url, language=None, **kwargs: SimpleNamespace(
+            title='Histórica', text='Texto', top_image='', publish_date=None,
+            download=lambda **kwargs: None, parse=lambda: None,
+        )
+        # Los enlaces se validan al leer el sitemap, así que se simula el XML y no _urls_de_sitemaps.
+        self.urlopen.return_value = (
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            + ''.join(f'<url><loc>{escape(link)}</loc></url>' for link in (relativo, ftp, valido))
+            + '</urlset>'
+        ).encode()
+        resultado = ingestar_historico_elterritorio(date(2026, 9, 1), date(2026, 9, 30), pausa=0)
+
+        # Un enlace descartado vuelve parcial el lote, igual que en la ingesta RSS.
+        self.assertEqual((resultado['status'], resultado['estado']), ('ERROR', 'PARCIAL'))
+        self.assertEqual(resultado['capturados'], 1)
+        self.assertEqual(list(Publicacion.objects.values_list('url', flat=True)), [valido])
+        self.assertEqual([(e['link'], e['codigo']) for e in resultado['errores']],
+                         [(relativo, 'url_invalida'), (ftp, 'url_invalida')])
+
+
 # ---------------------------------------------------------------- D. Relaciones y borrados
 class BorradoRegistroDatosAdminTestCase(TestCase):
     """Se prueban dos casos: con sentimiento, el admin ya bloquea la cascada porque nadie puede
@@ -374,6 +441,68 @@ class BorradoRegistroDatosAdminTestCase(TestCase):
                 })
                 self.comprobar_historico_intacto(registro, publicacion)
                 self.assertEqual(respuesta.status_code, 403)
+
+
+class ActualizacionConcurrenteTestCase(TestCase):
+    """Gemini confirma su resultado mientras una edición ya tiene la publicación en memoria.
+
+    Antes, la edición guardaba la fila completa y devolvía procesado_ia a False: Gemini volvía a
+    tomarla y la rechazaba en cada lote con `locaciones_preexistentes`.
+    """
+
+    def setUp(self):
+        call_command('configurar_roles', stdout=StringIO())
+        usuario = get_user_model().objects.create_user(username='editor-ing02', is_staff=True)
+        usuario.groups.add(Group.objects.get(name='Administrador'))
+        self.client.force_login(usuario)
+        self.api = APIClient()
+        self.api.force_authenticate(usuario)
+        link = BASE + '900130-concurrente'
+        self.publicacion = Publicacion.objects.create(
+            hash_origen=identidad(link), fuente=FUENTE_OFICIAL, titulo='Original', contenido='Texto', url=link,
+        )
+
+    def confirmar_gemini_en_paralelo(self):
+        Locacion.objects.create(id_publicacion_api=self.publicacion, location='Posadas', latitud=-27.36, longitud=-55.9)
+        Publicacion.objects.filter(pk=self.publicacion.pk).update(procesado_ia=True, departamento='capital')
+
+    def comprobar_estado_de_gemini_conservado(self):
+        self.publicacion.refresh_from_db()
+        self.assertTrue(self.publicacion.procesado_ia, 'La edición revirtió el resultado confirmado de Gemini.')
+        self.assertEqual(self.publicacion.departamento, 'capital')
+        self.assertEqual(Locacion.objects.filter(id_publicacion_api=self.publicacion).count(), 1)
+
+    def test_d3_patch_api_no_revierte_estado_confirmado_en_paralelo(self):
+        validar = PublicacionUpdateSerializer.is_valid
+
+        def validar_con_gemini(serializer, *args, **kwargs):
+            self.confirmar_gemini_en_paralelo()
+            return validar(serializer, *args, **kwargs)
+
+        with patch.object(PublicacionUpdateSerializer, 'is_valid', validar_con_gemini):
+            respuesta = self.api.patch(f'/api/publicaciones/{self.publicacion.pk}/actualizar/',
+                                       {'titulo': 'Editado'}, format='json')
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.comprobar_estado_de_gemini_conservado()
+        self.assertEqual(self.publicacion.titulo, 'Editado')
+
+    def test_d4_edicion_del_panel_no_revierte_estado_confirmado_en_paralelo(self):
+        validar = PublicacionForm.is_valid
+
+        def validar_con_gemini(form):
+            self.confirmar_gemini_en_paralelo()
+            return validar(form)
+
+        with patch.object(PublicacionForm, 'is_valid', validar_con_gemini):
+            respuesta = self.client.post(f'/publicaciones/{self.publicacion.pk}/editar/', {
+                'titulo': 'Original', 'fuente': 'Fuente editada', 'contenido': 'Texto', 'url': self.publicacion.url,
+            })
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.comprobar_estado_de_gemini_conservado()
+        self.assertEqual(self.publicacion.fuente, 'Fuente editada')
+        self.assertEqual(self.publicacion.hash_origen, identidad(self.publicacion.url))
 
 
 # ---------------------------------------------------------------- E. Scraper oficial e identidad unificada
