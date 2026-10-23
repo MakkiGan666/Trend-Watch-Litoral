@@ -12,9 +12,12 @@ from .models import Comentario, Publicacion
 
 
 def contexto_comentarios(request, publicacion):
-    pagina = Paginator(publicacion.comentarios.select_related('autor'), 10).get_page(
-        request.GET.get('pagina_comentarios')
-    )
+    # `select_related('sentimiento')` evita una consulta extra por comentario al
+    # pintar la etiqueta de análisis automático en la plantilla.
+    pagina = Paginator(
+        publicacion.comentarios.select_related('autor', 'sentimiento'),
+        10,
+    ).get_page(request.GET.get('pagina_comentarios'))
     return {
         'comentarios_pagina': pagina,
         'comentario_form': ComentarioForm(),
