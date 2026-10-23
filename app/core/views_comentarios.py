@@ -55,7 +55,9 @@ def crear_comentario(request, pk):
 @require_http_methods(['GET', 'POST'])
 @login_required(login_url='login')
 def editar_comentario(request, pk):
-    comentario = get_object_or_404(Comentario.objects.select_related('publicacion'), pk=pk)
+    comentario = get_object_or_404(Comentario.objects.select_related('publicacion').defer(
+        'publicacion__titulo_busqueda', 'publicacion__contenido_busqueda',
+    ), pk=pk)
     if comentario.autor_id != request.user.pk:
         raise PermissionDenied
     form = ComentarioForm(request.POST if request.method == 'POST' else None, instance=comentario)

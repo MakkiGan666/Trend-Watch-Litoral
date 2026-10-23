@@ -1,0 +1,21 @@
+{
+  "browser": "145.0.1",
+  "checks": [
+    {
+      "label": "Sin JS: enlace alternativo visible",
+      "ok": true
+    },
+    {
+      "label": "Sin JS: formulario GET produce resultados",
+      "ok": true
+    },
+    {
+      "label": "Sin JS: paginación enlazada",
+      "ok": true
+    }
+  ],
+  "screens": [
+    "sin-javascript-movil.png"
+  ],
+  "blockedExternal": 3
+}
