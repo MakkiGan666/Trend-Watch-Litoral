@@ -21,6 +21,7 @@
           <strong>{{ comentario.autor.username|default:"Usuario eliminado" }}</strong>
           <time datetime="{{ comentario.fecha_creacion|date:'c' }}">{{ comentario.fecha_creacion|date:"d/m/Y H:i" }}</time>
           {% if comentario.fecha_edicion %}<span class="news-comment__edited">Editado el {{ comentario.fecha_edicion|date:"d/m/Y H:i" }}</span>{% endif %}
+          {% include "partials/_sentimiento_comentario.html" with comentario=comentario %}
         </header>
         <div class="news-comment__text">{{ comentario.texto|linebreaksbr }}</div>
         {% if request.user.is_authenticated %}

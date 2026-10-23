@@ -269,3 +269,80 @@ class ValoracionPublicacion(models.Model):
 
     def __str__(self):
         return f'{self.get_sentimiento_display()} en publicación #{self.publicacion_id}'
+
+
+class SentimientoComentario(models.Model):
+    """Análisis automático de sentimiento sobre un comentario.
+
+    Independiente del modelo Sentimiento (sentimiento del texto de las noticias)
+    y de ValoracionPublicacion (voto manual del lector). Se guarda una sola fila
+    por comentario: al reanalizar se actualiza la misma fila, sin historial de
+    versiones. texto_hash permite detectar que el comentario cambió y requiere
+    reproceso; el método y el modelo utilizados quedan registrados para no
+    presentar la predicción como una verdad objetiva.
+    """
+    class Metodo(models.TextChoices):
+        LEXICON = 'lexicon', 'Léxico determinista'
+        IA = 'ia', 'Modelo de IA'
+
+    class Estado(models.TextChoices):
+        PROCESADO = 'procesado', 'Procesado'
+        ERROR = 'error', 'Error'
+
+    comentario = models.OneToOneField(Comentario, on_delete=models.CASCADE, related_name='sentimiento')
+    # polaridad y confianza quedan en null cuando el estado es error.
+    polaridad = models.FloatField(null=True, blank=True)
+    confianza = models.FloatField(null=True, blank=True)
+    metodo = models.CharField(max_length=16, choices=Metodo.choices)
+    # Identificador versionado del analizador (p. ej. "lexicon_v1" u "ollama:llama3.1:latest").
+    modelo = models.CharField(max_length=80)
+    # SHA-256 hexadecimal del texto efectivamente analizado; cambia si el comentario se edita.
+    texto_hash = models.CharField(max_length=64)
+    estado = models.CharField(max_length=16, choices=Estado.choices, default=Estado.PROCESADO)
+    codigo_error = models.CharField(max_length=64, blank=True, default='')
+    fecha_analisis = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            # Fuera de rango el resultado no se puede presentar; null se admite para errores.
+            models.CheckConstraint(
+                condition=models.Q(polaridad__isnull=True) | (
+                    models.Q(polaridad__gte=-1) & models.Q(polaridad__lte=1)
+                ),
+                name='sentcom_polaridad_rango',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(confianza__isnull=True) | (
+                    models.Q(confianza__gte=0) & models.Q(confianza__lte=1)
+                ),
+                name='sentcom_confianza_rango',
+            ),
+            # Un comentario en error no debería exponer una polaridad "sin significado".
+            models.CheckConstraint(
+                condition=(
+                    models.Q(estado='procesado', polaridad__isnull=False, confianza__isnull=False)
+                    | models.Q(estado='error')
+                ),
+                name='sentcom_procesado_requiere_valores',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['estado', 'fecha_actualizacion'], name='sentcom_estado_fecha_idx'),
+        ]
+
+    def __str__(self):
+        if self.estado == self.Estado.ERROR:
+            return f'Sentimiento del comentario #{self.comentario_id}: error ({self.codigo_error or "sin código"})'
+        return f'Sentimiento del comentario #{self.comentario_id}: pol={self.polaridad}'
+
+    @property
+    def etiqueta(self):
+        """Positivo, neutral o negativo para presentar; None si está en error."""
+        if self.estado != self.Estado.PROCESADO or self.polaridad is None:
+            return None
+        if self.polaridad > 0.05:
+            return 'positivo'
+        if self.polaridad < -0.05:
+            return 'negativo'
+        return 'neutral'
