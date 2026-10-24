@@ -61,7 +61,8 @@ python app/manage.py analizar_sentimiento_comentarios [--limite N] [--reanalizar
 - Es **idempotente**: no toca los comentarios cuyo texto no cambió desde el
   último análisis (comparación por `texto_hash`).
 - `--reanalizar` fuerza el reproceso de todos (útil al cambiar la versión o
-  el método).
+  el método). Recorre cada comentario una sola vez por corrida, incluidos
+  nuevos, errores y editados; `--limite` cuenta comentarios únicos.
 - `--metodo ia` intenta usar Ollama; si falla, cae al léxico sin interrumpir
   el lote.
 - `--dry-run` imprime qué se procesaría sin escribir en la base.
@@ -99,6 +100,13 @@ cada comentario cuando hay un análisis en estado `procesado`. El badge:
 - Aclara explícitamente que la etiqueta es una "predicción automática".
 - No aparece si el análisis todavía no se ejecutó o si está en error, para no
   presentar un dato que no existe.
+- Sólo aparece si el hash del análisis coincide con el texto actual. Después
+  de editar, el resultado anterior se conserva pero se oculta hasta que el
+  comando lo actualice; no se llama a Ollama durante la edición HTTP.
+
+Las respuestas de Ollama deben tener un objeto JSON exterior con `response`
+de tipo texto, que contenga el JSON de la predicción. Envoltorios inválidos,
+errores HTTP, timeouts y predicciones inválidas activan el fallback léxico.
 
 ## Separación respecto de otras fuentes
 

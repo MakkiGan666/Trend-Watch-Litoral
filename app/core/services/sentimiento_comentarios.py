@@ -138,7 +138,12 @@ def predecir_ollama(texto, cliente_http=None):
                 },
             )
             response.raise_for_status()
-            raw = response.json().get('response', '')
+            envoltorio = response.json()
+            if not isinstance(envoltorio, dict):
+                raise SentimientoNoDisponible('respuesta_invalida')
+            raw = envoltorio.get('response')
+            if not isinstance(raw, str):
+                raise SentimientoNoDisponible('respuesta_invalida')
         finally:
             if cerrar:
                 http.close()
