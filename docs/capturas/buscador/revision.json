@@ -1,0 +1,80 @@
+{
+  "browser": "145.0.1",
+  "checks": [
+    {
+      "label": "20 resultados renderizados",
+      "ok": true
+    },
+    {
+      "label": "Escritorio sin desbordes",
+      "ok": true
+    },
+    {
+      "label": "Abrir enfoca campo",
+      "ok": true
+    },
+    {
+      "label": "Escape cierra y devuelve foco",
+      "ok": true
+    },
+    {
+      "label": "Conserva texto al plegar",
+      "ok": true
+    },
+    {
+      "label": "Segunda pulsación cierra",
+      "ok": true
+    },
+    {
+      "label": "Móvil anónimo sin desbordes",
+      "ok": true
+    },
+    {
+      "label": "Buscar cierra menú móvil",
+      "ok": true
+    },
+    {
+      "label": "Barra Inicio móvil completa",
+      "ok": true
+    },
+    {
+      "label": "Cuenta sin conflicto con barra",
+      "ok": true
+    },
+    {
+      "label": "Escape de cuenta conserva su comportamiento",
+      "ok": true
+    },
+    {
+      "label": "Móvil autenticado 320px sin desbordes",
+      "ok": true
+    },
+    {
+      "label": "Estado vacío",
+      "ok": true
+    },
+    {
+      "label": "Error conserva consulta",
+      "ok": true
+    },
+    {
+      "label": "Paginación conserva consulta",
+      "ok": true
+    },
+    {
+      "label": "Imágenes fallidas no ocultan el texto",
+      "ok": true
+    },
+    {
+      "label": "Categorías comparte la lupa",
+      "ok": true
+    }
+  ],
+  "screens": [
+    "resultados-escritorio.png",
+    "resultados-movil.png",
+    "inicio-movil-barra.png",
+    "cuenta-movil-320.png"
+  ],
+  "blockedExternal": 12
+}

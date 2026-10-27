@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=16">
   <link rel="stylesheet" href="{% static 'css/auth-flow.css' %}?v=7">
   <link rel="stylesheet" href="{% static 'css/notification-prompt.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'css/news-search.css' %}?v=1">
   {% block extra_head %}{% endblock %}
   <link rel="stylesheet" href="{% static 'css/controls-glow.css' %}?v=1">
 </head>
@@ -58,8 +59,10 @@
       <div class="nav__act">
         {% include "partials/_account_actions.html" %}
       </div>
+      {% include "partials/_search_toggle.html" %}
       <button class="public-nav-toggle icon-btn" id="public-nav-toggle" type="button" aria-label="Abrir navegación" aria-expanded="false" aria-controls="public-nav-links">☰</button>
     </nav>
+    {% include "partials/_search_row.html" %}
   </div>
   {% endblock %}
 
@@ -110,6 +113,7 @@
   <script src="{% static 'js/trendwatch.js' %}?v=8" defer></script>
   <script src="{% static 'js/auth-flow.js' %}?v=4" defer></script>
   <script src="{% static 'js/notification-prompt.js' %}?v=2" defer></script>
+  <script src="{% static 'js/news-search.js' %}?v=1" defer></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>

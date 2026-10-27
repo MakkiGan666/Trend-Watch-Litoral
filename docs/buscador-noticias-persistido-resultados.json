@@ -1,0 +1,1156 @@
+[
+  {
+    "tipo": "entorno",
+    "postgresql": [
+      "PostgreSQL 17.5 (Debian 17.5-1.pgdg110+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit",
+      "en_US.utf8",
+      "en_US.utf8",
+      "c"
+    ],
+    "python": "3.13.16",
+    "django": "6.1.2",
+    "sqlite": "3.46.1",
+    "funciones": [
+      [
+        "lower",
+        "i"
+      ],
+      [
+        "translate",
+        "i"
+      ],
+      [
+        "normalize",
+        "i"
+      ],
+      [
+        "is_normalized",
+        "i"
+      ]
+    ]
+  },
+  {
+    "tipo": "ddl",
+    "filas": 500,
+    "carga_ms": 349.456,
+    "columnas": [
+      [
+        "titulo_busqueda",
+        "s"
+      ],
+      [
+        "contenido_busqueda",
+        "s"
+      ]
+    ],
+    "indices_nuevos": 0
+  },
+  {
+    "tipo": "validacion",
+    "consultas": 14,
+    "paginas": 3,
+    "escrituras": 7,
+    "equivalentes": true
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "educacion provincial",
+    "variante": "A",
+    "endpoint_ms": 44.512,
+    "repeticiones_ms": [
+      47.058,
+      44.512,
+      43.641,
+      42.48,
+      45.383
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 500,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 6.971,
+      "ms": [
+        10.427,
+        6.549,
+        6.971
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 9.256,
+      "ms": [
+        9.256,
+        11.115,
+        8.071
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "educacion provincial",
+    "variante": "B",
+    "endpoint_ms": 29.192,
+    "repeticiones_ms": [
+      29.192,
+      29.791,
+      28.321,
+      28.545,
+      30.608
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 500,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 0.489,
+      "ms": [
+        0.554,
+        0.489,
+        0.483
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 1.147,
+      "ms": [
+        1.141,
+        1.16,
+        1.147
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "singularis",
+    "variante": "A",
+    "endpoint_ms": 529.678,
+    "repeticiones_ms": [
+      520.837,
+      537.807,
+      528.197,
+      529.678,
+      582.795
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 2,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 257.772,
+      "ms": [
+        257.772,
+        257.219,
+        306.127
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 257.046,
+      "ms": [
+        255.773,
+        262.547,
+        257.046
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "singularis",
+    "variante": "B",
+    "endpoint_ms": 15.53,
+    "repeticiones_ms": [
+      15.362,
+      15.43,
+      16.062,
+      15.53,
+      15.836
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 2,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 3.358,
+      "ms": [
+        4.531,
+        3.358,
+        3.209
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 3.6,
+      "ms": [
+        3.137,
+        3.6,
+        3.629
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "inexistentezz",
+    "variante": "A",
+    "endpoint_ms": 270.522,
+    "repeticiones_ms": [
+      265.875,
+      282.094,
+      270.522,
+      288.969,
+      266.985
+    ],
+    "consultas": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total": 0,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 253.612,
+      "ms": [
+        298.016,
+        250.383,
+        253.612
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 281.412,
+      "ms": [
+        255.692,
+        281.412,
+        311.468
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "inexistentezz",
+    "variante": "B",
+    "endpoint_ms": 12.712,
+    "repeticiones_ms": [
+      12.116,
+      12.712,
+      13.369,
+      12.435,
+      13.605
+    ],
+    "consultas": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total": 0,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 7.068,
+      "ms": [
+        7.068,
+        6.463,
+        8.693
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 5.821,
+      "ms": [
+        6.974,
+        5.821,
+        5.203
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "educacion economia provincial",
+    "variante": "A",
+    "endpoint_ms": 578.344,
+    "repeticiones_ms": [
+      589.485,
+      578.344,
+      608.635,
+      559.158,
+      564.083
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 500,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 262.44,
+      "ms": [
+        257.09,
+        262.44,
+        268.51
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 271.949,
+      "ms": [
+        259.463,
+        293.544,
+        271.949
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 500,
+    "q": "educacion economia provincial",
+    "variante": "B",
+    "endpoint_ms": 53.44,
+    "repeticiones_ms": [
+      55.118,
+      55.95,
+      53.44,
+      46.459,
+      31.514
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 500,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 0.999,
+      "ms": [
+        1.167,
+        0.999,
+        0.914
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    },
+    "pagina": {
+      "mediana_ms": 2.01,
+      "ms": [
+        2.029,
+        1.804,
+        2.01
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 32
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "educacion provincial",
+    "variante": "A",
+    "endpoint_ms": 183.671,
+    "repeticiones_ms": [
+      194.587,
+      178.923,
+      175.017,
+      188.745,
+      183.671
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 5000,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 73.615,
+      "ms": [
+        73.615,
+        72.432,
+        74.649
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 84.322,
+      "ms": [
+        86.212,
+        84.322,
+        78.554
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "educacion provincial",
+    "variante": "B",
+    "endpoint_ms": 46.261,
+    "repeticiones_ms": [
+      72.692,
+      66.408,
+      42.048,
+      45.639,
+      46.261
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 5000,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 4.161,
+      "ms": [
+        4.161,
+        4.246,
+        4.043
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 12.761,
+      "ms": [
+        14.43,
+        11.549,
+        12.761
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "singularis",
+    "variante": "A",
+    "endpoint_ms": 5270.625,
+    "repeticiones_ms": [
+      5303.475,
+      5259.281,
+      5240.25,
+      5270.625,
+      5308.23
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 11,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 2635.27,
+      "ms": [
+        2635.27,
+        2547.672,
+        2638.554
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 2605.364,
+      "ms": [
+        2605.364,
+        2639.041,
+        2582.453
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "singularis",
+    "variante": "B",
+    "endpoint_ms": 85.416,
+    "repeticiones_ms": [
+      83.018,
+      90.533,
+      86.934,
+      85.416,
+      83.35
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 11,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 33.812,
+      "ms": [
+        33.227,
+        33.812,
+        35.189
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 32.491,
+      "ms": [
+        32.491,
+        30.56,
+        34.611
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "inexistentezz",
+    "variante": "A",
+    "endpoint_ms": 2674.426,
+    "repeticiones_ms": [
+      2573.082,
+      2543.209,
+      2707.021,
+      2694.093,
+      2674.426
+    ],
+    "consultas": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total": 0,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 2606.536,
+      "ms": [
+        2565.841,
+        2625.845,
+        2606.536
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 2648.988,
+      "ms": [
+        2692.673,
+        2648.988,
+        2623.012
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "inexistentezz",
+    "variante": "B",
+    "endpoint_ms": 56.498,
+    "repeticiones_ms": [
+      60.255,
+      55.991,
+      58.865,
+      55.067,
+      56.498
+    ],
+    "consultas": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total": 0,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 66.404,
+      "ms": [
+        89.69,
+        66.404,
+        50.14
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 50.742,
+      "ms": [
+        50.742,
+        49.126,
+        51.629
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "educacion economia provincial",
+    "variante": "A",
+    "endpoint_ms": 5434.897,
+    "repeticiones_ms": [
+      5493.476,
+      5434.897,
+      5369.255,
+      5411.988,
+      5541.662
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 5000,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 2667.639,
+      "ms": [
+        2667.639,
+        2645.407,
+        2722.609
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 2637.398,
+      "ms": [
+        2634.055,
+        2750.702,
+        2637.398
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "base_2040",
+    "filas": 5000,
+    "q": "educacion economia provincial",
+    "variante": "B",
+    "endpoint_ms": 65.175,
+    "repeticiones_ms": [
+      65.456,
+      75.739,
+      65.175,
+      59.955,
+      53.76
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 5000,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 10.016,
+      "ms": [
+        9.226,
+        10.016,
+        12.036
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 17.533,
+      "ms": [
+        17.533,
+        17.837,
+        16.001
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "20_notas_20412",
+    "filas": 5000,
+    "q": "finalextenso",
+    "variante": "A",
+    "endpoint_ms": 5601.279,
+    "repeticiones_ms": [
+      5651.359,
+      5581.956,
+      5576.593,
+      5601.279,
+      5636.624
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 20,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 2699.554,
+      "ms": [
+        2647.31,
+        2699.554,
+        2712.749
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 2675.44,
+      "ms": [
+        2632.196,
+        2732.152,
+        2675.44
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "20_notas_20412",
+    "filas": 5000,
+    "q": "finalextenso",
+    "variante": "B",
+    "endpoint_ms": 256.142,
+    "repeticiones_ms": [
+      243.1,
+      256.142,
+      263.141,
+      280.962,
+      235.345
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 20,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 31.407,
+      "ms": [
+        31.305,
+        31.442,
+        31.407
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 31.691,
+      "ms": [
+        31.691,
+        31.9,
+        31.515
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "20_notas_20412",
+    "filas": 5000,
+    "q": "educacion economia finalextenso",
+    "variante": "A",
+    "endpoint_ms": 11044.003,
+    "repeticiones_ms": [
+      11088.473,
+      11002.243,
+      11044.003,
+      10986.088,
+      11075.673
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 20,
+    "equivalencia": false,
+    "count": {
+      "mediana_ms": 5409.326,
+      "ms": [
+        5373.681,
+        5501.452,
+        5409.326
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 5405.695,
+      "ms": [
+        5239.366,
+        5405.695,
+        5525.448
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "medicion",
+    "corpus": "20_notas_20412",
+    "filas": 5000,
+    "q": "educacion economia finalextenso",
+    "variante": "B",
+    "endpoint_ms": 255.455,
+    "repeticiones_ms": [
+      294.515,
+      252.841,
+      255.455,
+      245.625,
+      266.624
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "total": 20,
+    "equivalencia": true,
+    "count": {
+      "mediana_ms": 38.515,
+      "ms": [
+        39.208,
+        38.515,
+        38.01
+      ],
+      "nodos": [
+        "Aggregate",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    },
+    "pagina": {
+      "mediana_ms": 37.96,
+      "ms": [
+        38.058,
+        37.516,
+        37.96
+      ],
+      "nodos": [
+        "Limit",
+        "Sort",
+        "Seq Scan"
+      ],
+      "bloques_leidos": 0,
+      "bloques_cache": 212
+    }
+  },
+  {
+    "tipo": "carga_existentes",
+    "filas": 5000,
+    "carga_ms": 3037.654,
+    "almacenamiento": [
+      11318150,
+      10691550,
+      563600,
+      2523136
+    ]
+  },
+  {
+    "tipo": "sqlite",
+    "stored_y_unicode": true,
+    "registro_por_conexion_necesario": true
+  },
+  {
+    "tipo": "fin",
+    "exito": true,
+    "indices_nuevos": 0
+  }
+]
