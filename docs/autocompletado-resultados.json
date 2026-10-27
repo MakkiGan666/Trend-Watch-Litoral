@@ -1,0 +1,322 @@
+[
+  {
+    "tipo": "check",
+    "fase": "postgresql",
+    "django": "6.1.2",
+    "python": "3.13.16",
+    "incidencias": 0,
+    "migraciones_pendientes": 0
+  },
+  {
+    "tipo": "pruebas",
+    "fase": "postgresql",
+    "etiquetas": [
+      "core.test_sugerencias",
+      "core.test_buscador",
+      "core.test_busqueda_html",
+      "core.test_texto_busqueda",
+      "core.test_fechas",
+      "core.test_comentarios",
+      "core.test_valoraciones",
+      "core.test_navegacion_admin"
+    ],
+    "resumen": [
+      "System check identified no issues (0 silenced).",
+      "................................................s..............Roles configurados.",
+      "......................",
+      "----------------------------------------------------------------------",
+      "Ran 85 tests in 4.077s",
+      "",
+      "OK (skipped=1)",
+      "Destroying test database for alias 'default'..."
+    ]
+  },
+  {
+    "tipo": "fin",
+    "fase": "postgresql",
+    "exito": true
+  },
+  {
+    "tipo": "check",
+    "fase": "sqlite",
+    "django": "6.1.2",
+    "python": "3.13.16",
+    "incidencias": 0,
+    "migraciones_pendientes": 0
+  },
+  {
+    "tipo": "pruebas",
+    "fase": "sqlite",
+    "etiquetas": [
+      "core.test_sugerencias",
+      "core.test_buscador",
+      "core.test_busqueda_html",
+      "core.test_texto_busqueda",
+      "core.test_fechas",
+      "core.test_comentarios",
+      "core.test_valoraciones",
+      "core.test_navegacion_admin"
+    ],
+    "resumen": [
+      "System check identified no issues (0 silenced).",
+      "...............................................................Roles configurados.",
+      "......................",
+      "----------------------------------------------------------------------",
+      "Ran 85 tests in 3.226s",
+      "",
+      "OK",
+      "Destroying test database for alias 'default'..."
+    ]
+  },
+  {
+    "tipo": "fin",
+    "fase": "sqlite",
+    "exito": true
+  },
+  {
+    "tipo": "check",
+    "fase": "medir",
+    "django": "6.1.2",
+    "python": "3.13.16",
+    "incidencias": 0,
+    "migraciones_pendientes": 0
+  },
+  {
+    "tipo": "entorno",
+    "fase": "medir",
+    "postgresql": [
+      "PostgreSQL 17.5 (Debian 17.5-1.pgdg110+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit",
+      "UTF8",
+      "en_US.utf8",
+      "en_US.utf8"
+    ],
+    "cpu": "",
+    "sistema": "Linux-6.8.0-62-generic-x86_64-with-glibc2.41"
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 500,
+    "q": "ed",
+    "mediana_endpoint_ms": 8.576,
+    "terminos_sql_ms": 4.923,
+    "noticias_sql_ms": 0.854,
+    "repeticiones_ms": [
+      9.321,
+      8.576,
+      8.538,
+      8.069,
+      9.938
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 1,
+    "noticias": 4,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 500,
+    "q": "singularis",
+    "mediana_endpoint_ms": 9.599,
+    "terminos_sql_ms": 4.274,
+    "noticias_sql_ms": 1.815,
+    "repeticiones_ms": [
+      9.624,
+      8.453,
+      10.551,
+      8.936,
+      9.599
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 0,
+    "noticias": 2,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 500,
+    "q": "inexistentezz",
+    "mediana_endpoint_ms": 9.6,
+    "terminos_sql_ms": 4.571,
+    "noticias_sql_ms": 2.417,
+    "repeticiones_ms": [
+      8.294,
+      9.6,
+      9.584,
+      10.159,
+      10.444
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 0,
+    "noticias": 0,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 500,
+    "q": "educacion pro",
+    "mediana_endpoint_ms": 10.503,
+    "terminos_sql_ms": 6.063,
+    "noticias_sql_ms": 0.887,
+    "repeticiones_ms": [
+      10.503,
+      8.704,
+      11.598,
+      11.349,
+      9.281
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 1,
+    "noticias": 4,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 5000,
+    "q": "ed",
+    "mediana_endpoint_ms": 65.851,
+    "terminos_sql_ms": 59.949,
+    "noticias_sql_ms": 3.564,
+    "repeticiones_ms": [
+      65.589,
+      65.851,
+      66.198,
+      66.183,
+      65.842
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 1,
+    "noticias": 4,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 5000,
+    "q": "singularis",
+    "mediana_endpoint_ms": 68.238,
+    "terminos_sql_ms": 49.947,
+    "noticias_sql_ms": 14.617,
+    "repeticiones_ms": [
+      69.09,
+      67.348,
+      68.685,
+      68.238,
+      62.636
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 0,
+    "noticias": 4,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 5000,
+    "q": "inexistentezz",
+    "mediana_endpoint_ms": 76.9,
+    "terminos_sql_ms": 51.671,
+    "noticias_sql_ms": 22.772,
+    "repeticiones_ms": [
+      76.9,
+      79.947,
+      76.35,
+      76.593,
+      78.644
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 0,
+    "noticias": 0,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "medicion",
+    "fase": "medir",
+    "filas": 5000,
+    "q": "educacion pro",
+    "mediana_endpoint_ms": 76.035,
+    "terminos_sql_ms": 67.582,
+    "noticias_sql_ms": 4.703,
+    "repeticiones_ms": [
+      73.751,
+      77.199,
+      76.583,
+      76.035,
+      75.568
+    ],
+    "consultas": [
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "terminos": 1,
+    "noticias": 4,
+    "equivalencia_repeticiones": true
+  },
+  {
+    "tipo": "rollback",
+    "fase": "medir",
+    "publicaciones": 0
+  },
+  {
+    "tipo": "fin",
+    "fase": "medir",
+    "exito": true
+  }
+]

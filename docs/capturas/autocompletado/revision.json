@@ -1,0 +1,71 @@
+{
+  "browser": "145.0.1",
+  "checks": [
+    {
+      "label": "Entrada nativa produce sugerencias",
+      "ok": true
+    },
+    {
+      "label": "Dos grupos y opciones limitadas",
+      "ok": true
+    },
+    {
+      "label": "Flecha y activedescendant",
+      "ok": true
+    },
+    {
+      "label": "Escape conserva foco y texto",
+      "ok": true
+    },
+    {
+      "label": "Enter nativo selecciona término y busca",
+      "ok": true
+    },
+    {
+      "label": "Enter sin opción conserva GET nativo",
+      "ok": true
+    },
+    {
+      "label": "Clic nativo navega al detalle",
+      "ok": true
+    },
+    {
+      "label": "Móvil sin desbordes",
+      "ok": true
+    },
+    {
+      "label": "Arrastre táctil no navega",
+      "ok": true
+    },
+    {
+      "label": "Toque selecciona término",
+      "ok": true
+    },
+    {
+      "label": "Fallo de red cierra sugerencias y conserva formulario",
+      "ok": true
+    },
+    {
+      "label": "Búsqueda tradicional funciona con sugerencias caídas",
+      "ok": true
+    },
+    {
+      "label": "Vacío sin panel",
+      "ok": true
+    },
+    {
+      "label": "Primer Escape cierra sólo sugerencias de barra",
+      "ok": true
+    },
+    {
+      "label": "Segundo Escape pliega barra y restaura foco",
+      "ok": true
+    }
+  ],
+  "screens": [
+    "sugerencias-1440.png",
+    "sugerencias-390.png"
+  ],
+  "requests": 10,
+  "blockedExternal": 12
+}

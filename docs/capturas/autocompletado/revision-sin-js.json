@@ -1,0 +1,18 @@
+{
+  "browser": "145.0.1",
+  "checks": [
+    {
+      "label": "Sin JS: enlace y ausencia de panel",
+      "ok": true
+    },
+    {
+      "label": "Sin JS: GET y paginación",
+      "ok": true
+    }
+  ],
+  "screens": [
+    "sin-js-390.png"
+  ],
+  "requests": 0,
+  "blockedExternal": 2
+}
