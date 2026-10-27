@@ -1,7 +1,8 @@
 {% comment %}Badge discreto con el sentimiento automático del comentario.
    No muestra nada si todavía no se procesó o si el análisis falló; la
    plataforma declara así que la predicción es tentativa y no censura
-   contenido en función de ella.{% endcomment %}
+   contenido en función de ella. `sentimiento_vigente` lo calcula
+   contexto_comentarios con el servicio; sin él no se muestra nada.{% endcomment %}
 {% with sent=comentario.sentimiento_vigente %}
   {% if sent and sent.etiqueta %}
     <span class="comment-sentiment comment-sentiment--{{ sent.etiqueta }}"

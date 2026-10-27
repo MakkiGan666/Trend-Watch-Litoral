@@ -248,18 +248,6 @@ class Comentario(models.Model):
     def __str__(self):
         return f'Comentario #{self.pk} de la publicación #{self.publicacion_id}'
 
-    @property
-    def sentimiento_vigente(self):
-        """Resultado visible sólo si corresponde al texto actual del comentario."""
-        from .services.sentimiento_comentarios import calcular_texto_hash
-
-        sentimiento = getattr(self, 'sentimiento', None)
-        if (sentimiento is not None
-                and sentimiento.estado == SentimientoComentario.Estado.PROCESADO
-                and sentimiento.texto_hash == calcular_texto_hash(self.texto)):
-            return sentimiento
-        return None
-
 
 class ValoracionPublicacion(models.Model):
     class Sentimiento(models.TextChoices):

@@ -62,7 +62,9 @@ class Command(BaseCommand):
                 # Un error inesperado se registra y sigue el lote; no se propaga para
                 # no detener el proceso en segundo plano. Se audita en el log de Django.
                 self.stderr.write(f'comentario #{comentario.pk}: {exc!r}')
-                registrar_error_analisis(comentario, 'excepcion_inesperada')
+                registro = registrar_error_analisis(comentario, 'excepcion_inesperada')
+                if registro is not None and registro.estado == registro.Estado.PROCESADO:
+                    self.stderr.write(f'comentario #{comentario.pk}: se conserva el análisis vigente.')
                 fallidos += 1
                 continue
             if accion == 'creado':
