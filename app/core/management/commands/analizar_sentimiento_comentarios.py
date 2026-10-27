@@ -82,6 +82,17 @@ class Command(BaseCommand):
         Si `reanalizar=True` abarca todos (incluidos los que están al día), lo que
         permite recorrer la tabla completa cuando cambia el método o la versión.
         """
+        if reanalizar:
+            from core.models import Comentario
+
+            # Un solo recorrido: incluye nuevos, errores, editados y vigentes,
+            # sin volver a emitir los ya procesados durante esta corrida.
+            qs = Comentario.objects.select_related('sentimiento').order_by('pk')
+            if limite:
+                qs = qs[:limite]
+            yield from qs.iterator(chunk_size=200)
+            return
+
         pendientes = candidatos_sin_analisis_validos().order_by('pk')
         if limite:
             pendientes = pendientes[:limite]
@@ -91,24 +102,10 @@ class Command(BaseCommand):
             emitidos += 1
 
         restante = (limite - emitidos) if limite else None
-        if restante is not None and restante <= 0 and not reanalizar:
+        if restante is not None and restante <= 0:
             return
 
         for comentario in candidatos_con_hash_desactualizado():
-            if restante is not None and emitidos >= limite:
-                return
-            yield comentario
-            emitidos += 1
-
-        if not reanalizar:
-            return
-
-        from core.models import Comentario  # pylint: disable=import-outside-toplevel
-        qs = (Comentario.objects
-              .select_related('sentimiento')
-              .filter(sentimiento__isnull=False)
-              .order_by('pk'))
-        for comentario in qs:
             if restante is not None and emitidos >= limite:
                 return
             yield comentario
