@@ -83,3 +83,17 @@ def buscar_noticias(request):
                     anterior=enlace(pagina.previous_page_number()) if pagina.has_previous() else None,
                     siguiente=enlace(pagina.next_page_number()) if pagina.has_next() else None)
     return render(request, 'core/buscar.html', contexto)
+
+
+@require_GET
+def sugerencias_publicaciones(request):
+    from .services.sugerencias import sugerir
+    try:
+        datos = sugerir(request.GET.get('q'))
+    except EntradaInvalida as error:
+        respuesta = JsonResponse({'error': {'codigo': error.codigo, 'mensaje': str(error)}}, status=400)
+        respuesta['Cache-Control'] = 'no-store'
+        return respuesta
+    respuesta = JsonResponse(datos)
+    respuesta['Cache-Control'] = 'no-store'
+    return respuesta
