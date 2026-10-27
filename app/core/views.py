@@ -4,8 +4,10 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q
-from django.db.models.functions import Coalesce
-from .fechas import datos_fecha
+from django.db.models import Exists, OuterRef
+from django.db.models.functions import Coalesce, TruncDate
+from django.core.paginator import Paginator
+from .fechas import ZONA_LOCAL, datos_fecha
 from .categorias import datos_categorias
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
@@ -20,6 +22,7 @@ from django.http import Http404
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
+from .busqueda_texto_v1 import plegar_v1
 from .services.cotizaciones import obtener_cotizaciones
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
@@ -36,7 +39,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from core.models import (
     Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
 )
-from .forms import PublicacionForm
+from .forms import FiltrosPublicaciones, PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
@@ -303,12 +306,86 @@ def logout_view(request):
 @login_required(login_url='login')
 @permission_required(PERMISOS_PANEL, raise_exception=True)
 def publicaciones(request):
-    """ Muestra el panel con las publicaciones, sentimientos y locaciones """
-    publicaciones = Publicacion.objects.select_related('id_registro')\
-                                       .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
-                                       .order_by(*_orden_por_publicacion())[:100]
+    """Filtra todo el archivo en la base y renderiza sólo la página solicitada."""
+    nombres_fuente = list(Publicacion.objects.order_by().values_list('fuente', flat=True).distinct())
+    fuentes_territorio = [
+        nombre for nombre in nombres_fuente
+        if re.fullmatch(r'El\s+Territorio(?:\s*\([^)]*\))?', nombre or '', re.I)
+    ]
+    fuentes = sorted({
+        'El Territorio' if re.fullmatch(r'El\s+Territorio(?:\s*\([^)]*\))?', nombre, re.I) else nombre
+        for nombre in nombres_fuente if nombre
+    }, key=str.casefold)
+    filtros = FiltrosPublicaciones(request.GET, fuentes=fuentes)
+    filtros_validos = filtros.is_valid()
+    fecha_seleccionada = filtros.cleaned_data.get('fecha')
+    publicaciones_filtradas = Publicacion.objects.all() if filtros_validos else Publicacion.objects.none()
+    if filtros_validos:
+        valores = filtros.cleaned_data
+        for termino in valores['q'].split():
+            comparable = plegar_v1(termino)
+            publicaciones_filtradas = publicaciones_filtradas.filter(
+                Q(titulo_busqueda__contains=comparable) |
+                Q(contenido_busqueda__contains=comparable) |
+                Q(fuente__icontains=termino)
+            )
+        if valores['fecha']:
+            publicaciones_filtradas = publicaciones_filtradas.annotate(
+                dia_visible=TruncDate(Coalesce('fecha_publicacion', 'fecha_captura'), tzinfo=ZONA_LOCAL)
+            ).filter(dia_visible=valores['fecha'])
+        if valores['fuente']:
+            if valores['fuente'] == 'El Territorio':
+                publicaciones_filtradas = publicaciones_filtradas.filter(fuente__in=fuentes_territorio)
+            else:
+                publicaciones_filtradas = publicaciones_filtradas.filter(fuente=valores['fuente'])
+        if valores['categoria'] == '__missing':
+            publicaciones_filtradas = publicaciones_filtradas.exclude(
+                pk__in=PublicacionTema.objects.order_by().values('id_publicacion_api_id')
+            )
+        elif valores['categoria']:
+            publicaciones_filtradas = publicaciones_filtradas.filter(temas__id_categoria_id=valores['categoria'])
+        if valores['localidad']:
+            ubicaciones = {departamento['slug']: [] for departamento in DEPARTAMENTOS}
+            for nombre in Locacion.objects.order_by().values_list('location', flat=True).distinct():
+                slug = departamento_de_ubicacion(nombre)
+                if slug:
+                    ubicaciones[slug].append(nombre)
+            if valores['localidad'] == '__missing':
+                publicaciones_filtradas = publicaciones_filtradas.exclude(
+                    departamento__in=ubicaciones
+                ).exclude(locacion__location__in=[nombre for grupo in ubicaciones.values() for nombre in grupo])
+            else:
+                slug = valores['localidad']
+                publicaciones_filtradas = publicaciones_filtradas.filter(
+                    Q(departamento=slug) | Q(locacion__location__in=ubicaciones[slug])
+                )
+    ids = publicaciones_filtradas.order_by().values('pk').distinct()
+    base = Publicacion.objects.filter(pk__in=ids).annotate(
+        tiene_analisis=Exists(Sentimiento.objects.filter(id_publicacion_api=OuterRef('pk')))
+    )
+    pagina = Paginator(
+        base.select_related('id_registro')
+        .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')
+        .order_by(*_orden_por_publicacion()), 25,
+    ).get_page(request.GET.get('page'))
+    analizadas = base.filter(tiene_analisis=True).count()
+    resumen = {'total': pagina.paginator.count, 'analizadas': analizadas,
+               'pendientes': pagina.paginator.count - analizadas}
+
+    def enlace_pagina(numero):
+        parametros = request.GET.copy()
+        parametros['page'] = numero
+        return reverse('publicaciones') + '?' + parametros.urlencode()
+
+    enlaces = [
+        {'numero': numero, 'url': enlace_pagina(numero), 'actual': numero == pagina.number,
+         'separador': numero == Paginator.ELLIPSIS}
+        for numero in pagina.paginator.get_elided_page_range(pagina.number, on_each_side=2, on_ends=1)
+    ]
     departamentos_por_slug = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
-    for publicacion in publicaciones:
+    for publicacion in pagina.object_list:
+        publicacion.dashboard_fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
+        publicacion.dashboard_fecha_info = datos_fecha(publicacion)
         detalles = datos_categorias(publicacion)['categorias_detalle']
         publicacion.dashboard_categorias = [c['id'] for c in detalles]
         publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))
@@ -320,7 +397,16 @@ def publicaciones(request):
         publicacion.dashboard_departamentos = sorted(slugs)
         publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
     return render(request, 'core/publicaciones.html', {
-        'publicaciones': publicaciones,
+        'publicaciones': pagina.object_list,
+        'pagina': pagina,
+        'enlaces_pagina': enlaces,
+        'anterior_url': enlace_pagina(pagina.previous_page_number()) if pagina.has_previous() else None,
+        'siguiente_url': enlace_pagina(pagina.next_page_number()) if pagina.has_next() else None,
+        'resumen': resumen,
+        'total_global': Publicacion.objects.count(),
+        'filtros': filtros,
+        'fecha_seleccionada': fecha_seleccionada.isoformat() if fecha_seleccionada else '',
+        'fuentes_dashboard': fuentes,
         'departamentos': DEPARTAMENTOS,
         'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
     })

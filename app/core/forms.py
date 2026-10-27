@@ -1,6 +1,43 @@
 from django import forms
 from django.core.validators import URLValidator
+from datetime import date
+import unicodedata
+
+from .localidades import DEPARTAMENTOS
 from .models import Publicacion, Categoria, Comentario
+
+
+class FiltrosPublicaciones(forms.Form):
+    q = forms.CharField(required=False, max_length=150)
+    fecha = forms.DateField(required=False)
+    fuente = forms.ChoiceField(required=False)
+    localidad = forms.ChoiceField(required=False, choices=[
+        ('', 'Todas las localidades'),
+        *((departamento['slug'], departamento['nombre']) for departamento in DEPARTAMENTOS),
+        ('__missing', 'Sin departamento identificado'),
+    ])
+    categoria = forms.ChoiceField(required=False)
+
+    def __init__(self, *args, fuentes=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['fuente'].choices = [('', 'Todas las fuentes'), *((nombre, nombre) for nombre in fuentes)]
+        self.fields['categoria'].choices = [
+            ('', 'Todas las categorías'),
+            *((str(pk), nombre) for pk, nombre in Categoria.objects.order_by('nombre_categoria', 'pk').values_list('pk', 'nombre_categoria')),
+            ('__missing', 'Sin categoría asignada'),
+        ]
+
+    def clean_q(self):
+        consulta = ' '.join(unicodedata.normalize('NFC', self.cleaned_data['q']).split())
+        if any(unicodedata.category(caracter).startswith('C') for caracter in consulta) or len(consulta.split()) > 10:
+            raise forms.ValidationError('La búsqueda admite hasta 10 términos y no puede contener caracteres de control.')
+        return consulta
+
+    def clean_fecha(self):
+        fecha = self.cleaned_data['fecha']
+        if fecha and fecha < date(2026, 1, 1):
+            raise forms.ValidationError('La fecha debe ser de 2026 en adelante.')
+        return fecha
 
 class PublicacionForm(forms.ModelForm):
     imagen_archivo = forms.ImageField(
