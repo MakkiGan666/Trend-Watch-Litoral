@@ -530,7 +530,8 @@ class RegresionesRevisionPR32Tests(TestCase):
         obj = SentimientoComentario.objects.get(comentario=comentario)
         self.assertEqual(obj.estado, SentimientoComentario.Estado.PROCESADO)
         self.assertIsNotNone(obj.polaridad)
-        self.assertEqual(obj.codigo_error, '')
+        # El fallback deja constancia del fallo de IA para poder reintentarlo.
+        self.assertEqual(obj.codigo_error, 'ia:ollama_sin_respuesta')
 
     def test_reanalizar_con_excepcion_inesperada_conserva_el_analisis_vigente(self):
         comentario = self._comentario()

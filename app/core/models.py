@@ -298,7 +298,15 @@ class SentimientoComentario(models.Model):
     modelo = models.CharField(max_length=80)
     # SHA-256 hexadecimal del texto efectivamente analizado; cambia si el comentario se edita.
     texto_hash = models.CharField(max_length=64)
+    # Una de las 12 categorías del proyecto (clasificacion.CATEGORIAS_PROYECTO), la misma
+    # tabla que usan las noticias; null si el analizador no pudo determinarla.
+    categoria = models.ForeignKey(
+        Categoria, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='sentimientos_comentarios',
+    )
     estado = models.CharField(max_length=16, choices=Estado.choices, default=Estado.PROCESADO)
+    # En estado error explica el fallo; en un resultado procesado por el léxico,
+    # "ia:<código>" indica que se pidió IA y falló (el comando puede reintentarlo).
     codigo_error = models.CharField(max_length=64, blank=True, default='')
     fecha_analisis = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
