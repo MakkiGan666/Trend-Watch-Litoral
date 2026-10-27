@@ -330,3 +330,19 @@ roles: usa IDs de permisos y contiene el conjunto anterior de Analista. Usar
 Scraping e IA por HTTP requieren POST. La API sigue requiriendo JWT; una sesión
 web no reemplaza el token. Los comandos de scraping de terminal son operaciones
 del servidor y su acceso depende de los permisos operativos de Docker/servidor.
+
+## Análisis de sentimiento de comentarios
+
+Primera etapa de la rama `feat/llm-rag-interacciones`. Agrega un análisis
+automático por comentario, almacenado en `SentimientoComentario` y
+procesado de forma independiente a las peticiones HTTP:
+
+```
+python app/manage.py migrate core 0011
+python app/manage.py analizar_sentimiento_comentarios --limite 200
+```
+
+El flag `--metodo ia` usa Ollama local (`OLLAMA_BASE_URL`, `OLLAMA_MODELO_CHAT`,
+`OLLAMA_TIMEOUT`); si el servicio no responde, cae al método léxico. El
+comando es idempotente: no reanaliza comentarios cuyo texto no cambió.
+Detalles en [`docs/sentimiento-comentarios.md`](docs/sentimiento-comentarios.md).
