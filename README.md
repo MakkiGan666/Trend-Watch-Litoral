@@ -31,11 +31,21 @@ Las dependencias están fijadas en `requirements.txt` con las versiones validada
 ## Configuración (`.env`)
 
 Toda la configuración sensible se lee de variables de entorno; no hay claves ni
-contraseñas en el código. Desde la raíz del repositorio:
+contraseñas en el código. Copiar el ejemplo **solamente si `.env` todavía no
+existe**; conservar la configuración de una instalación existente. Desde la raíz,
+este comando Python sirve también en PowerShell y usa creación exclusiva (`xb`):
 
 ```bash
-cp .env.example .env            # Windows (PowerShell): Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(50))"   # pegar como SECRET_KEY
+python -c "from pathlib import Path; datos = Path('.env.example').read_bytes(); archivo = Path('.env').open('xb'); archivo.write(datos); archivo.close()"
+```
+
+Si `.env` ya existe, omitir el comando. Si se repite accidentalmente, termina con
+`FileExistsError` sin sobrescribir el archivo, incluso si es un enlace simbólico.
+Para una instalación nueva, generar una clave propia y pegarla como `SECRET_KEY`;
+no reemplazar la clave de una instalación existente como parte de esta actualización:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(50))"
 ```
 
 | Variable | Obligatoria | Uso |
@@ -64,6 +74,16 @@ antes de habilitar web para atender tráfico:
 ```bash
 docker compose build web
 docker compose up -d db
+docker compose ps
+```
+
+**Antes de cualquier `migrate`, completar la [comprobación de identidad de
+PostgreSQL](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql)**:
+contrastar el servicio `db` propio y su IP con la conexión efectiva de Django.
+Esperar a que `db` esté saludable y detenerse si el destino no coincide.
+Solo después de confirmar esa identidad, continuar:
+
+```bash
 docker compose run --rm --no-deps web python manage.py migrate
 docker compose run --rm --no-deps web python manage.py showmigrations token_blacklist
 docker compose run --rm --no-deps web python manage.py check
@@ -75,6 +95,16 @@ Esperar a que `db` esté saludable antes de ejecutar los comandos puntuales;
 puede comprobarse con `docker compose ps`. No iniciar web si falla una migración
 o quedan migraciones de blacklist sin aplicar. Abrir http://localhost:8000.
 
+### Cargar noticias reales sin Gemini
+
+Levantar Docker y aplicar migraciones no ejecuta el scraper ni carga noticias.
+Con una base vacía, la portada no tendrá publicaciones hasta realizar una ingesta
+explícita o un alta manual.
+
+Seguir la [guía de carga inicial de noticias](docs/carga-inicial-noticias.md) para
+comprobar la base de destino, ejecutar un lote pequeño con `--sin-ia`, interpretar
+resultados parciales y verificar las fotografías en la API y el navegador.
+
 ### Despliegue sobre una base existente
 
 Antes de ejecutar migraciones sobre PostgreSQL compartido, obtener autorización
@@ -82,10 +112,19 @@ explícita del equipo, coordinar una ventana sin tráfico y realizar un respaldo
 de la base. Ejecutar
 `docker compose stop web` **antes de actualizar el código montado**, ya que Compose
 utiliza un volumen del repositorio. Este paso no detiene `db`.
-Con la versión nueva disponible, conservar la base existente y ejecutar:
+Con la versión nueva disponible, conservar la base existente y reconstruir web:
 
 ```bash
 docker compose build web
+```
+
+**Antes de `migrate --plan` o `migrate`, repetir la [comprobación de identidad de
+PostgreSQL](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql)**
+con la configuración actualizada. El servicio `db` propio debe seguir disponible;
+no iniciar otro proyecto ni reutilizar una base ajena. Si la identidad coincide
+y se dispone del respaldo y la autorización indicados, revisar el plan y continuar:
+
+```bash
 docker compose run --rm --no-deps web python manage.py migrate --plan
 docker compose run --rm --no-deps web python manage.py migrate
 docker compose run --rm --no-deps web python manage.py showmigrations token_blacklist
@@ -123,7 +162,17 @@ Elegir la base según `DB_HOST` en `.env`:
   (ignorado por git).
 - **PostgreSQL local:** `DB_HOST=localhost` y las variables `DB_*`. Puede usarse
   la base del Compose con `docker compose up -d db` (publicada sólo en
-  `127.0.0.1:5432`).
+  `127.0.0.1:5433`; configurar `DB_PORT=5433` al conectar desde el anfitrión).
+  Entre servicios Compose, Django usa `db:5432`; ese puerto interno no cambia.
+
+**Antes de `migrate`, verificar el motor y el destino de Django.** Con PostgreSQL,
+seguir la [comprobación de identidad](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql),
+pero abrir el shell con `python app/manage.py shell` al ejecutar Django en el
+anfitrión. Si PostgreSQL no pertenece al Compose, contrastar servidor, base,
+usuario y puerto con la instancia local autorizada, en lugar de buscar un
+contenedor `db`. Con SQLite, verificar `connection.vendor` y el `NAME` configurado
+para confirmar que corresponde al archivo local esperado; no ejecutar la consulta
+SQL específica de PostgreSQL. Solo después continuar:
 
 ```bash
 python app/manage.py migrate
