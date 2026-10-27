@@ -1,0 +1,545 @@
+{
+  "etapa": "integracion_generatedfield",
+  "rama": "feat/buscador-noticias",
+  "base": "abfb6a31f91db029f29e5f6a677b49d24fb2d2b7",
+  "migracion": "0011_publicacion_texto_busqueda",
+  "sha256_normalizacion_v1": "2c947e2cd7681d377d96c33ea13e1563ef2e022191989137db9c2bb9b663ab6d",
+  "migraciones_historicas_sin_cambios": true,
+  "baseline_makemigrations": [
+    "Migrations for 'core':",
+    "  core/migrations/0011_alter_publicaciontema_id_alter_tematrend_id_and_more.py",
+    "    ~ Alter field id on publicaciontema",
+    "    ~ Alter field id on tematrend",
+    "    ~ Alter field id on userauditoria",
+    "    ~ Alter field id on votopublicacion"
+  ],
+  "resultados": {
+    "sqlite": [
+      {
+        "tipo": "instalacion",
+        "fase": "sqlite",
+        "desde_cero": true,
+        "migraciones_pendientes": 0,
+        "motor": "sqlite"
+      },
+      {
+        "tipo": "conexion_sqlite",
+        "fase": "sqlite",
+        "reabierta": true,
+        "funcion_antes_de_buscar": true,
+        "escritura_y_busqueda": true
+      },
+      {
+        "tipo": "control_modelos",
+        "fase": "sqlite",
+        "diferencias_previas": [
+          [
+            "AlterField",
+            "publicaciontema",
+            "id"
+          ],
+          [
+            "AlterField",
+            "tematrend",
+            "id"
+          ],
+          [
+            "AlterField",
+            "userauditoria",
+            "id"
+          ],
+          [
+            "AlterField",
+            "votopublicacion",
+            "id"
+          ]
+        ],
+        "nuevas_ajenas": 0,
+        "makemigrations_check_exit": 1,
+        "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+      },
+      {
+        "tipo": "check",
+        "fase": "sqlite",
+        "incidencias": 0
+      },
+      {
+        "tipo": "pruebas",
+        "fase": "sqlite",
+        "etiquetas": [
+          "core.test_buscador",
+          "core.test_texto_busqueda",
+          "core.test_fechas",
+          "core.test_publicacion_imagen",
+          "core.test_integracion_pr24",
+          "core.test_categorias_compat",
+          "core.test_perfil",
+          "core.test_navegacion_admin",
+          "core.test_new_dashboard",
+          "core.test_dashboard_localidades",
+          "core.test_localidades"
+        ],
+        "resumen": [
+          "Destroying old test database for alias 'default'...",
+          "System check identified no issues (0 silenced).",
+          "............................................................................................ss.....",
+          "----------------------------------------------------------------------",
+          "Ran 99 tests in 40.530s",
+          "",
+          "OK (skipped=2)",
+          "Destroying test database for alias 'default'..."
+        ]
+      },
+      {
+        "tipo": "fin",
+        "fase": "sqlite",
+        "exito": true
+      }
+    ],
+    "postgresql": [
+      {
+        "tipo": "instalacion",
+        "fase": "postgresql",
+        "desde_cero": true,
+        "migraciones_pendientes": 0,
+        "motor": "postgresql"
+      },
+      {
+        "tipo": "control_modelos",
+        "fase": "postgresql",
+        "diferencias_previas": [
+          [
+            "AlterField",
+            "publicaciontema",
+            "id"
+          ],
+          [
+            "AlterField",
+            "tematrend",
+            "id"
+          ],
+          [
+            "AlterField",
+            "userauditoria",
+            "id"
+          ],
+          [
+            "AlterField",
+            "votopublicacion",
+            "id"
+          ]
+        ],
+        "nuevas_ajenas": 0,
+        "makemigrations_check_exit": 1,
+        "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+      },
+      {
+        "tipo": "check",
+        "fase": "postgresql",
+        "incidencias": 0
+      },
+      {
+        "tipo": "pruebas",
+        "fase": "postgresql",
+        "etiquetas": [
+          "core.test_buscador",
+          "core.test_texto_busqueda",
+          "core.test_fechas",
+          "core.test_publicacion_imagen",
+          "core.test_integracion_pr24",
+          "core.test_categorias_compat",
+          "core.test_perfil",
+          "core.test_navegacion_admin",
+          "core.test_new_dashboard",
+          "core.test_dashboard_localidades",
+          "core.test_localidades"
+        ],
+        "resumen": [
+          "Creating test database for alias 'default'...",
+          "System check identified no issues (0 silenced).",
+          ".........................s.........................................................................",
+          "----------------------------------------------------------------------",
+          "Ran 99 tests in 57.306s",
+          "",
+          "OK (skipped=1)",
+          "Destroying test database for alias 'default'..."
+        ]
+      },
+      {
+        "tipo": "fin",
+        "fase": "postgresql",
+        "exito": true
+      }
+    ],
+    "medicion": [
+      {
+        "tipo": "instalacion",
+        "fase": "medir",
+        "desde_cero": true,
+        "migraciones_pendientes": 0,
+        "motor": "postgresql"
+      },
+      {
+        "tipo": "control_modelos",
+        "fase": "medir",
+        "diferencias_previas": [
+          [
+            "AlterField",
+            "publicaciontema",
+            "id"
+          ],
+          [
+            "AlterField",
+            "tematrend",
+            "id"
+          ],
+          [
+            "AlterField",
+            "userauditoria",
+            "id"
+          ],
+          [
+            "AlterField",
+            "votopublicacion",
+            "id"
+          ]
+        ],
+        "nuevas_ajenas": 0,
+        "makemigrations_check_exit": 1,
+        "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+      },
+      {
+        "tipo": "check",
+        "fase": "medir",
+        "incidencias": 0
+      },
+      {
+        "tipo": "entorno",
+        "fase": "medir",
+        "python": "3.13.16",
+        "django": "6.1.2",
+        "postgresql": [
+          "PostgreSQL 17.5 (Debian 17.5-1.pgdg110+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit",
+          "UTF8",
+          "en_US.utf8",
+          "en_US.utf8"
+        ],
+        "columnas": [
+          [
+            "contenido_busqueda",
+            "s"
+          ],
+          [
+            "titulo_busqueda",
+            "s"
+          ]
+        ]
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 500,
+        "q": "educacion provincial",
+        "total": 500,
+        "mediana_ms": 38.285,
+        "repeticiones_ms": [
+          54.443,
+          52.001,
+          38.285,
+          34.493,
+          35.632
+        ],
+        "consultas": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 44.512,
+        "mejora": 1.16
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 500,
+        "q": "singularis",
+        "total": 2,
+        "mediana_ms": 16.317,
+        "repeticiones_ms": [
+          16.954,
+          15.981,
+          16.513,
+          15.044,
+          16.317
+        ],
+        "consultas": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 529.678,
+        "mejora": 32.46
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 500,
+        "q": "inexistentezz",
+        "total": 0,
+        "mediana_ms": 10.662,
+        "repeticiones_ms": [
+          11.761,
+          10.662,
+          11.329,
+          10.19,
+          9.752
+        ],
+        "consultas": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 270.522,
+        "mejora": 25.37
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 5000,
+        "q": "educacion provincial",
+        "total": 5000,
+        "mediana_ms": 44.403,
+        "repeticiones_ms": [
+          44.403,
+          43.52,
+          44.544,
+          46.018,
+          41.908
+        ],
+        "consultas": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 183.671,
+        "mejora": 4.14
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 5000,
+        "q": "singularis",
+        "total": 11,
+        "mediana_ms": 81.118,
+        "repeticiones_ms": [
+          83.391,
+          79.856,
+          82.025,
+          80.493,
+          81.118
+        ],
+        "consultas": [
+          2,
+          2,
+          2,
+          2,
+          2,
+          2
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 5270.625,
+        "mejora": 64.98
+      },
+      {
+        "tipo": "medicion",
+        "fase": "medir",
+        "filas": 5000,
+        "q": "inexistentezz",
+        "total": 0,
+        "mediana_ms": 58.513,
+        "repeticiones_ms": [
+          58.513,
+          53.831,
+          53.114,
+          82.988,
+          82.063
+        ],
+        "consultas": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "equivalencia_a": true,
+        "referencia_a_ms": 2674.426,
+        "mejora": 45.71
+      },
+      {
+        "tipo": "rollback_medicion",
+        "fase": "medir",
+        "publicaciones": 0
+      },
+      {
+        "tipo": "fin",
+        "fase": "medir",
+        "exito": true
+      }
+    ],
+    "lecturas-sqlite": [
+      {
+        "tipo": "instalacion",
+        "fase": "sqlite",
+        "desde_cero": true,
+        "migraciones_pendientes": 0,
+        "motor": "sqlite"
+      },
+      {
+        "tipo": "conexion_sqlite",
+        "fase": "sqlite",
+        "reabierta": true,
+        "funcion_antes_de_buscar": true,
+        "escritura_y_busqueda": true
+      },
+      {
+        "tipo": "control_modelos",
+        "fase": "sqlite",
+        "diferencias_previas": [
+          [
+            "AlterField",
+            "publicaciontema",
+            "id"
+          ],
+          [
+            "AlterField",
+            "tematrend",
+            "id"
+          ],
+          [
+            "AlterField",
+            "userauditoria",
+            "id"
+          ],
+          [
+            "AlterField",
+            "votopublicacion",
+            "id"
+          ]
+        ],
+        "nuevas_ajenas": 0,
+        "makemigrations_check_exit": 1,
+        "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+      },
+      {
+        "tipo": "check",
+        "fase": "sqlite",
+        "incidencias": 0
+      },
+      {
+        "tipo": "pruebas",
+        "fase": "sqlite",
+        "etiquetas": [
+          "core.test_texto_busqueda.TextoBusquedaTests",
+          "core.test_comentarios"
+        ],
+        "resumen": [
+          "System check identified no issues (0 silenced).",
+          ".......Roles configurados.",
+          "..........",
+          "----------------------------------------------------------------------",
+          "Ran 17 tests in 3.354s",
+          "",
+          "OK",
+          "Destroying test database for alias 'default'..."
+        ]
+      },
+      {
+        "tipo": "fin",
+        "fase": "sqlite",
+        "exito": true
+      }
+    ],
+    "lecturas-postgresql": [
+      {
+        "tipo": "instalacion",
+        "fase": "postgresql",
+        "desde_cero": true,
+        "migraciones_pendientes": 0,
+        "motor": "postgresql"
+      },
+      {
+        "tipo": "control_modelos",
+        "fase": "postgresql",
+        "diferencias_previas": [
+          [
+            "AlterField",
+            "publicaciontema",
+            "id"
+          ],
+          [
+            "AlterField",
+            "tematrend",
+            "id"
+          ],
+          [
+            "AlterField",
+            "userauditoria",
+            "id"
+          ],
+          [
+            "AlterField",
+            "votopublicacion",
+            "id"
+          ]
+        ],
+        "nuevas_ajenas": 0,
+        "makemigrations_check_exit": 1,
+        "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+      },
+      {
+        "tipo": "check",
+        "fase": "postgresql",
+        "incidencias": 0
+      },
+      {
+        "tipo": "pruebas",
+        "fase": "postgresql",
+        "etiquetas": [
+          "core.test_texto_busqueda.TextoBusquedaTests",
+          "core.test_comentarios"
+        ],
+        "resumen": [
+          "System check identified no issues (0 silenced).",
+          "......sRoles configurados.",
+          "..........",
+          "----------------------------------------------------------------------",
+          "Ran 17 tests in 3.752s",
+          "",
+          "OK (skipped=1)",
+          "Destroying test database for alias 'default'..."
+        ]
+      },
+      {
+        "tipo": "fin",
+        "fase": "postgresql",
+        "exito": true
+      }
+    ]
+  }
+}

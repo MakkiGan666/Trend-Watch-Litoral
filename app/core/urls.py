@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from .views_buscador import buscar_publicaciones, buscar_noticias
 from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
@@ -16,6 +17,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('buscar/', buscar_noticias, name='buscar_noticias'),
     path('perfil/', views_perfil.perfil, name='perfil'),
     path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
     path('perfil/notificaciones/', views_perfil.perfil, {'seccion': 'notificaciones'}, name='perfil_notificaciones'),
@@ -39,6 +41,7 @@ urlpatterns = [
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),
 
     # API REST - CRUD de Publicaciones
+    path('api/publicaciones/buscar/', buscar_publicaciones, name='buscar_publicaciones'),
     path('api/publicaciones/crear/', views.crear_o_ingestar_publicacion, name='crear_publicacion'),
     path('api/publicaciones/ingestar/<str:categoria>/', views.disparar_ingesta, name='disparar_ingesta'),
     path('api/publicaciones/', views.listar_publicaciones, name='listar_publicaciones'),
