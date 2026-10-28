@@ -321,3 +321,278 @@ class SeparacionFuentesTests(TestCase):
         obj = SentimientoComentario.objects.get()
         self.assertEqual(obj.comentario_id, self.comentario.pk)
         self.assertEqual(ValoracionPublicacion.objects.count(), 1)
+
+
+class RegresionesAuditoriaPR31Tests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.usuario = get_user_model().objects.create_user('aud31', password='test-only-password')
+        cls.noticia = Publicacion.objects.create(hash_origen='aud31', titulo='t', contenido='c')
+
+    def _comentario(self, texto='Es excelente'):
+        return Comentario.objects.create(publicacion=self.noticia, autor=self.usuario, texto=texto)
+
+    def _lote_mixto(self):
+        nuevo = self._comentario()
+        error = self._comentario()
+        servicio.registrar_error_analisis(error, 'prueba')
+        editado = self._comentario()
+        servicio.analizar_comentario(editado)
+        Comentario.objects.filter(pk=editado.pk).update(texto='Fue terrible')
+        vigente = self._comentario()
+        servicio.analizar_comentario(vigente)
+        return [nuevo.pk, error.pk, editado.pk, vigente.pk]
+
+    def test_editar_por_http_oculta_etiqueta_hasta_reanalizar(self):
+        comentario = self._comentario()
+        servicio.analizar_comentario(comentario)
+        self.client.force_login(self.usuario)
+        respuesta = self.client.post(reverse('editar_comentario', args=[comentario.pk]),
+                                     {'texto': 'Fue terrible'})
+        self.assertEqual(respuesta.status_code, 302)
+        url = reverse('noticia', args=[self.noticia.pk])
+        respuesta = self.client.get(url)
+        self.assertContains(respuesta, 'Fue terrible')
+        self.assertNotContains(respuesta, 'comment-sentiment--')
+        # Se conserva el resultado anterior, pero no se presenta como vigente.
+        self.assertEqual(SentimientoComentario.objects.get().etiqueta, 'positivo')
+        comentario.refresh_from_db()
+        servicio.analizar_comentario(comentario)
+        self.assertContains(self.client.get(url), 'comment-sentiment--negativo')
+
+    def test_editar_fuera_del_formulario_tambien_oculta_etiqueta(self):
+        comentario = self._comentario()
+        servicio.analizar_comentario(comentario)
+        Comentario.objects.filter(pk=comentario.pk).update(texto='Fue terrible')
+        comentario = Comentario.objects.select_related('sentimiento').get(pk=comentario.pk)
+        with self.assertNumQueries(0):
+            self.assertIsNone(servicio.sentimiento_vigente(comentario))
+
+    def test_vigente_precargado_no_agrega_consultas(self):
+        comentario = self._comentario()
+        servicio.analizar_comentario(comentario)
+        comentario = Comentario.objects.select_related('sentimiento').get(pk=comentario.pk)
+        with self.assertNumQueries(0):
+            self.assertEqual(servicio.sentimiento_vigente(comentario).etiqueta, 'positivo')
+
+    def test_sin_analisis_no_expone_comentario_de_plantilla(self):
+        from django.template.loader import render_to_string
+        html = render_to_string('partials/_sentimiento_comentario.html',
+                                {'comentario': self._comentario()})
+        self.assertEqual(html.strip(), '')
+
+    def test_reanalizar_lote_mixto_una_inferencia_por_comentario(self):
+        pks = self._lote_mixto()
+        out = StringIO()
+        with patch.object(servicio, 'predecir_ollama', return_value=servicio.Prediccion(
+                -0.7, 0.8, SentimientoComentario.Metodo.IA, 'ollama:mock')) as inferir:
+            call_command('analizar_sentimiento_comentarios', reanalizar=True,
+                         metodo='ia', stdout=out)
+        self.assertEqual(inferir.call_count, len(pks))
+        self.assertIn('procesados=1 actualizados=3 omitidos=0 fallidos=0', out.getvalue())
+        self.assertEqual(SentimientoComentario.objects.count(), len(pks))
+
+    def test_reanalizar_limite_cuenta_comentarios_unicos(self):
+        pks = self._lote_mixto()
+        out = StringIO()
+        with patch('core.management.commands.analizar_sentimiento_comentarios.analizar_comentario',
+                   wraps=servicio.analizar_comentario) as analizar:
+            call_command('analizar_sentimiento_comentarios', reanalizar=True,
+                         limite=3, stdout=out)
+        self.assertEqual([c.args[0].pk for c in analizar.call_args_list], pks[:3])
+
+    def test_reanalizar_dry_run_es_unico_y_no_escribe(self):
+        pks = self._lote_mixto()
+        antes = list(SentimientoComentario.objects.order_by('pk').values())
+        out = StringIO()
+        with patch.object(servicio, 'predecir_ollama') as inferir:
+            call_command('analizar_sentimiento_comentarios', reanalizar=True,
+                         dry_run=True, metodo='ia', limite=0, stdout=out)
+        self.assertEqual([l for l in out.getvalue().splitlines() if l.startswith('[dry-run]')],
+                         [f'[dry-run] comentario #{pk}' for pk in pks])
+        inferir.assert_not_called()
+        self.assertEqual(list(SentimientoComentario.objects.order_by('pk').values()), antes)
+
+    def test_modo_normal_procesa_pendientes_editados_y_omite_vigentes(self):
+        self._lote_mixto()
+        out = StringIO()
+        with patch.object(servicio, 'predecir_lexicon', wraps=servicio.predecir_lexicon) as inferir:
+            call_command('analizar_sentimiento_comentarios', stdout=out)
+        self.assertEqual(inferir.call_count, 3)
+        self.assertIn('procesados=1 actualizados=2 omitidos=0 fallidos=0', out.getvalue())
+
+    def test_ollama_envoltorios_invalidos_caen_a_lexico(self):
+        for envoltorio in ([], None, 'texto', 42, {}, {'response': None}, {'response': {}}):
+            with self.subTest(envoltorio=envoltorio):
+                comentario = self._comentario()
+                cliente = MagicMock()
+                cliente.post.return_value.json.return_value = envoltorio
+                obj, _ = servicio.analizar_comentario(comentario, usar_ia=True, cliente_http=cliente)
+                self.assertEqual(obj.estado, SentimientoComentario.Estado.PROCESADO)
+                self.assertEqual(obj.metodo, SentimientoComentario.Metodo.LEXICON)
+                self.assertGreater(obj.polaridad, 0)
+
+    def test_ollama_timeout_cae_a_lexico(self):
+        import httpx
+        cliente = MagicMock()
+        cliente.post.side_effect = httpx.ReadTimeout('timeout de prueba')
+        obj, _ = servicio.analizar_comentario(self._comentario(), usar_ia=True, cliente_http=cliente)
+        self.assertEqual(obj.metodo, SentimientoComentario.Metodo.LEXICON)
+
+    def test_ollama_numeros_invalidos_se_rechazan(self):
+        cliente = MagicMock()
+        for raw in ('{"polaridad": true, "confianza": 0.5}',
+                    '{"polaridad": 0, "confianza": NaN}',
+                    '{"polaridad": 0, "confianza": 1.1}'):
+            with self.subTest(raw=raw):
+                cliente.post.return_value.json.return_value = {'response': raw}
+                with self.assertRaises(servicio.SentimientoNoDisponible):
+                    servicio.predecir_ollama('texto', cliente_http=cliente)
+
+
+class RegresionesRevisionPR32Tests(TestCase):
+    """Fallback completo de Ollama, preservación del análisis vigente y vigencia sin tocar Comentario."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.usuario = get_user_model().objects.create_user('rev32', password='test-only-password')
+        cls.noticia = Publicacion.objects.create(hash_origen='rev32', titulo='t', contenido='c')
+
+    def _comentario(self, texto='Es excelente'):
+        return Comentario.objects.create(publicacion=self.noticia, autor=self.usuario, texto=texto)
+
+    def _cliente_con_respuesta(self, raw):
+        cliente = MagicMock()
+        cliente.post.return_value.json.return_value = {'response': raw}
+        return cliente
+
+    def _analisis_ia_vigente(self, comentario):
+        prediccion = servicio.Prediccion(0.9, 0.95, SentimientoComentario.Metodo.IA, 'ollama:mock')
+        with patch.object(servicio, 'predecir_ollama', return_value=prediccion):
+            servicio.analizar_comentario(comentario, usar_ia=True)
+        return SentimientoComentario.objects.get(comentario=comentario)
+
+    # --- AUD31-03: los fallos esperables se convierten en SentimientoNoDisponible ---
+
+    def test_invalid_url_en_la_llamada_se_convierte_en_no_disponible(self):
+        import httpx
+        cliente = MagicMock()
+        cliente.post.side_effect = httpx.InvalidURL('URL mal formada')
+        with self.assertRaises(servicio.SentimientoNoDisponible) as ctx:
+            servicio.predecir_ollama('texto', cliente_http=cliente)
+        self.assertEqual(ctx.exception.codigo, 'ollama_sin_respuesta')
+
+    def test_invalid_url_al_crear_el_cliente_cae_a_lexico(self):
+        import httpx
+        with patch.object(servicio.httpx, 'Client', side_effect=httpx.InvalidURL('URL mal formada')):
+            obj, _ = servicio.analizar_comentario(self._comentario(), usar_ia=True)
+        self.assertEqual(obj.estado, SentimientoComentario.Estado.PROCESADO)
+        self.assertEqual(obj.metodo, SentimientoComentario.Metodo.LEXICON)
+
+    def test_recursion_error_en_la_prediccion_y_en_el_envoltorio(self):
+        anidado = '[' * 100000 + ']' * 100000
+        with self.assertRaises(servicio.SentimientoNoDisponible) as ctx:
+            servicio.predecir_ollama('texto', cliente_http=self._cliente_con_respuesta(anidado))
+        self.assertEqual(ctx.exception.codigo, 'respuesta_invalida')
+        cliente = MagicMock()
+        cliente.post.return_value.json.side_effect = RecursionError('envoltorio anidado')
+        with self.assertRaises(servicio.SentimientoNoDisponible) as ctx:
+            servicio.predecir_ollama('texto', cliente_http=cliente)
+        self.assertEqual(ctx.exception.codigo, 'ollama_sin_respuesta')
+
+    def test_overflow_error_por_entero_gigante(self):
+        raw = '{"polaridad": 1' + '0' * 400 + ', "confianza": 0.5}'
+        with self.assertRaises(servicio.SentimientoNoDisponible) as ctx:
+            servicio.predecir_ollama('texto', cliente_http=self._cliente_con_respuesta(raw))
+        self.assertEqual(ctx.exception.codigo, 'respuesta_fuera_de_rango')
+
+    def test_fallos_esperables_caen_a_lexico_sin_cortar_el_lote(self):
+        import httpx
+        for _ in range(3):
+            self._comentario()
+        out = StringIO()
+        with patch.object(servicio.httpx, 'Client', side_effect=httpx.InvalidURL('URL mal formada')):
+            call_command('analizar_sentimiento_comentarios', metodo='ia', stdout=out, stderr=StringIO())
+        self.assertIn('procesados=3 actualizados=0 omitidos=0 fallidos=0', out.getvalue())
+        self.assertEqual(set(SentimientoComentario.objects.values_list('estado', 'metodo')),
+                         {(SentimientoComentario.Estado.PROCESADO, SentimientoComentario.Metodo.LEXICON)})
+
+    # --- Preservación del análisis anterior ---
+
+    def test_reanalizar_ia_con_ollama_caido_no_deja_error_ni_polaridad_nula(self):
+        # Caso reproducido en la auditoría: antes quedaba ('error', None, 'excepcion_inesperada').
+        import httpx
+        comentario = self._comentario()
+        self._analisis_ia_vigente(comentario)
+        with patch.object(servicio.httpx, 'Client', side_effect=httpx.InvalidURL('URL mal formada')):
+            call_command('analizar_sentimiento_comentarios', reanalizar=True, metodo='ia',
+                         stdout=StringIO(), stderr=StringIO())
+        obj = SentimientoComentario.objects.get(comentario=comentario)
+        self.assertEqual(obj.estado, SentimientoComentario.Estado.PROCESADO)
+        self.assertIsNotNone(obj.polaridad)
+        self.assertEqual(obj.codigo_error, '')
+
+    def test_reanalizar_con_excepcion_inesperada_conserva_el_analisis_vigente(self):
+        comentario = self._comentario()
+        antes = self._analisis_ia_vigente(comentario)
+        out, err = StringIO(), StringIO()
+        with patch.object(servicio, 'predecir_ollama', side_effect=KeyError('inesperado')):
+            call_command('analizar_sentimiento_comentarios', reanalizar=True, metodo='ia',
+                         stdout=out, stderr=err)
+        despues = SentimientoComentario.objects.get(comentario=comentario)
+        for campo in ('estado', 'polaridad', 'confianza', 'metodo', 'modelo',
+                      'texto_hash', 'codigo_error', 'fecha_actualizacion'):
+            self.assertEqual(getattr(despues, campo), getattr(antes, campo), campo)
+        self.assertIn('fallidos=1', out.getvalue())
+        self.assertIn('se conserva el análisis vigente', err.getvalue())
+
+    def test_analisis_desactualizado_con_fallo_no_queda_vigente(self):
+        comentario = self._comentario()
+        self._analisis_ia_vigente(comentario)
+        Comentario.objects.filter(pk=comentario.pk).update(texto='Fue terrible')
+        with patch.object(servicio, 'predecir_ollama', side_effect=KeyError('inesperado')):
+            call_command('analizar_sentimiento_comentarios', metodo='ia',
+                         stdout=StringIO(), stderr=StringIO())
+        obj = SentimientoComentario.objects.get(comentario=comentario)
+        self.assertEqual(obj.estado, SentimientoComentario.Estado.ERROR)
+        self.assertEqual(obj.texto_hash, servicio.calcular_texto_hash('Fue terrible'))
+        actual = Comentario.objects.select_related('sentimiento').get(pk=comentario.pk)
+        self.assertIsNone(servicio.sentimiento_vigente(actual))
+        respuesta = self.client.get(reverse('noticia', args=[self.noticia.pk]))
+        self.assertContains(respuesta, 'Fue terrible')
+        self.assertNotContains(respuesta, 'comment-sentiment--')
+
+    def test_registrar_error_de_comentario_borrado_no_corta_el_lote(self):
+        comentario = self._comentario()
+        Comentario.objects.filter(pk=comentario.pk).delete()
+        self.assertIsNone(servicio.registrar_error_analisis(comentario, 'prueba'))
+        self.assertFalse(SentimientoComentario.objects.exists())
+
+    # --- Vigencia resuelta fuera del modelo Comentario ---
+
+    def test_modelo_comentario_no_define_vigencia(self):
+        self.assertFalse(hasattr(Comentario, 'sentimiento_vigente'))
+
+    def test_plantilla_sin_vigencia_calculada_no_muestra_etiqueta(self):
+        from django.template.loader import render_to_string
+        comentario = self._comentario()
+        servicio.analizar_comentario(comentario)
+        comentario = Comentario.objects.select_related('sentimiento').get(pk=comentario.pk)
+        # Fuera de contexto_comentarios la plantilla falla cerrada.
+        html = render_to_string('partials/_sentimiento_comentario.html', {'comentario': comentario})
+        self.assertEqual(html.strip(), '')
+
+    def test_contexto_calcula_vigencia_sin_consultas_por_comentario(self):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        for _ in range(4):
+            servicio.analizar_comentario(self._comentario())
+        url = reverse('noticia', args=[self.noticia.pk])
+        self.client.get(url)
+        with CaptureQueriesContext(connection) as con_cuatro:
+            respuesta = self.client.get(url)
+        self.assertContains(respuesta, 'comment-sentiment--positivo', count=4)
+        servicio.analizar_comentario(self._comentario())
+        with CaptureQueriesContext(connection) as con_cinco:
+            self.client.get(url)
+        self.assertEqual(len(con_cinco), len(con_cuatro))

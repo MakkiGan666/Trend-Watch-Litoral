@@ -46,6 +46,9 @@ la necesidad.
   Si `usar_ia=True` falla, cae automáticamente al método léxico y lo registra
   como `metodo='lexicon'` para que la UI no afirme algo falso.
 - `calcular_texto_hash(texto)`: SHA-256 del texto normalizado (strip).
+- `sentimiento_vigente(comentario)`: única definición de vigencia (estado
+  `procesado` y hash igual al texto actual). La usan el análisis, el registro
+  de errores y `contexto_comentarios`; el modelo `Comentario` no se modifica.
 - `candidatos_sin_analisis_validos()` y `candidatos_con_hash_desactualizado()`:
   iteradores para procesamiento por lote.
 
@@ -61,12 +64,16 @@ python app/manage.py analizar_sentimiento_comentarios [--limite N] [--reanalizar
 - Es **idempotente**: no toca los comentarios cuyo texto no cambió desde el
   último análisis (comparación por `texto_hash`).
 - `--reanalizar` fuerza el reproceso de todos (útil al cambiar la versión o
-  el método).
+  el método). Recorre cada comentario una sola vez por corrida, incluidos
+  nuevos, errores y editados; `--limite` cuenta comentarios únicos.
 - `--metodo ia` intenta usar Ollama; si falla, cae al léxico sin interrumpir
   el lote.
 - `--dry-run` imprime qué se procesaría sin escribir en la base.
 - Un error inesperado por comentario queda registrado con `estado='error'` y
-  un `codigo_error`; el lote continúa.
+  un `codigo_error`; el lote continúa. Si el comentario ya tenía un análisis
+  vigente (por ejemplo, con `--reanalizar`), ese análisis se conserva sin
+  cambios y el comando lo informa por stderr. Si el análisis previo estaba
+  desactualizado, se registra el error porque no hay resultado vigente.
 
 ### Reintento de errores
 
@@ -99,6 +106,15 @@ cada comentario cuando hay un análisis en estado `procesado`. El badge:
 - Aclara explícitamente que la etiqueta es una "predicción automática".
 - No aparece si el análisis todavía no se ejecutó o si está en error, para no
   presentar un dato que no existe.
+- Sólo aparece si el hash del análisis coincide con el texto actual. Después
+  de editar, el resultado anterior se conserva pero se oculta hasta que el
+  comando lo actualice; no se llama a Ollama durante la edición HTTP.
+
+Las respuestas de Ollama deben tener un objeto JSON exterior con `response`
+de tipo texto, que contenga el JSON de la predicción. Envoltorios inválidos,
+errores HTTP, timeouts, `OLLAMA_BASE_URL` mal formada (`httpx.InvalidURL`),
+JSON anidado en exceso (`RecursionError`), enteros que no caben en un float
+(`OverflowError`) y predicciones inválidas activan el fallback léxico.
 
 ## Separación respecto de otras fuentes
 

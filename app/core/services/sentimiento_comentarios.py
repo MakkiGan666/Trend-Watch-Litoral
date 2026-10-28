@@ -123,6 +123,10 @@ def predecir_ollama(texto, cliente_http=None):
     base, modelo, timeout = _config_ollama()
     prompt = _PROMPT_IA + (texto or '').strip()[:_LARGO_MAX_PROMPT]
     cerrar = cliente_http is None
+    # Fallos esperables de la llamada: red, timeout, HTTP, URL mal configurada
+    # (InvalidURL no hereda de HTTPError) y envoltorios JSON patológicos.
+    fallos_llamada = (httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError,  # type: ignore[attr-defined]
+                      RecursionError, OverflowError)
     try:
         http = cliente_http or httpx.Client(timeout=timeout)
         try:
@@ -138,23 +142,33 @@ def predecir_ollama(texto, cliente_http=None):
                 },
             )
             response.raise_for_status()
-            raw = response.json().get('response', '')
+            envoltorio = response.json()
+            if not isinstance(envoltorio, dict):
+                raise SentimientoNoDisponible('respuesta_invalida')
+            raw = envoltorio.get('response')
+            if not isinstance(raw, str):
+                raise SentimientoNoDisponible('respuesta_invalida')
         finally:
             if cerrar:
                 http.close()
-    except (httpx.HTTPError, ValueError) as exc:  # type: ignore[attr-defined]
+    except fallos_llamada as exc:
         raise SentimientoNoDisponible('ollama_sin_respuesta') from exc
 
     try:
         contenido = json.loads(raw)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
+        # RecursionError: JSON anidado en exceso generado por el modelo.
         raise SentimientoNoDisponible('respuesta_invalida') from exc
     pol = contenido.get('polaridad') if isinstance(contenido, dict) else None
     conf = contenido.get('confianza') if isinstance(contenido, dict) else None
     if (not isinstance(pol, (int, float)) or isinstance(pol, bool)
             or not isinstance(conf, (int, float)) or isinstance(conf, bool)):
         raise SentimientoNoDisponible('respuesta_invalida')
-    pol, conf = float(pol), float(conf)
+    try:
+        pol, conf = float(pol), float(conf)
+    except OverflowError as exc:
+        # Un entero JSON gigante no se puede representar como float.
+        raise SentimientoNoDisponible('respuesta_fuera_de_rango') from exc
     if not (-1 <= pol <= 1 and 0 <= conf <= 1):
         raise SentimientoNoDisponible('respuesta_fuera_de_rango')
     return Prediccion(
@@ -207,6 +221,21 @@ def _guardar_error(comentario, texto_hash, codigo):
 # ----------------------------------------------------------------------------
 
 
+def sentimiento_vigente(comentario):
+    """Análisis presentable: procesado y calculado sobre el texto actual.
+
+    Única definición de vigencia; la usan el análisis, el registro de errores
+    y el contexto de la plantilla. Con `select_related('sentimiento')` no
+    agrega consultas.
+    """
+    sentimiento = getattr(comentario, 'sentimiento', None)
+    if (sentimiento is not None
+            and sentimiento.estado == SentimientoComentario.Estado.PROCESADO
+            and sentimiento.texto_hash == calcular_texto_hash(comentario.texto)):
+        return sentimiento
+    return None
+
+
 def analizar_comentario(comentario, usar_ia=False, cliente_http=None, forzar=False):
     """Analiza y persiste el sentimiento de un único comentario.
 
@@ -220,11 +249,9 @@ def analizar_comentario(comentario, usar_ia=False, cliente_http=None, forzar=Fal
     texto_hash = calcular_texto_hash(texto)
     # Puede venir prefetchado por `select_related('sentimiento')` o no.
     existente = getattr(comentario, 'sentimiento', None)
-    if (existente is not None
-            and existente.estado == SentimientoComentario.Estado.PROCESADO
-            and existente.texto_hash == texto_hash
-            and not forzar):
-        return existente, 'omitido'
+    vigente = sentimiento_vigente(comentario)
+    if vigente is not None and not forzar:
+        return vigente, 'omitido'
 
     prediccion = None
     if usar_ia:
@@ -243,7 +270,24 @@ def analizar_comentario(comentario, usar_ia=False, cliente_http=None, forzar=Fal
 
 
 def registrar_error_analisis(comentario, codigo):
-    """Permite que el llamador documente un fallo genuino (p. ej. excepción inesperada)."""
+    """Documenta un fallo genuino (p. ej. excepción inesperada) sin perder resultados válidos.
+
+    Si el comentario ya tiene un análisis vigente (p. ej. al correr
+    `--reanalizar` con Ollama caído), se conserva y se devuelve sin cambios.
+    Si el análisis previo no existe, falló o quedó desactualizado por una
+    edición, se registra el error: no hay resultado vigente que preservar.
+    """
+    # Se relee de la base: la instancia en memoria pudo cargarse antes del fallo.
+    actual = Comentario.objects.select_related('sentimiento').filter(pk=comentario.pk).first()
+    if actual is None:
+        # Borrado durante la corrida: no hay nada que registrar.
+        return None
+    comentario = actual
+    vigente = sentimiento_vigente(comentario)
+    if vigente is not None:
+        logger.warning('Se conserva el análisis vigente del comentario %s tras el fallo %s.',
+                       comentario.pk, codigo)
+        return vigente
     texto_hash = calcular_texto_hash(comentario.texto or '')
     return _guardar_error(comentario, texto_hash, codigo)
 
