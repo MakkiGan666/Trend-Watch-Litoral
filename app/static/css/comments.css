@@ -30,3 +30,10 @@
 .news-comments__errors ul{margin:0;padding-left:16px}
 .comment-editor{max-width:850px;padding-top:32px;padding-bottom:64px}
 @media(max-width:600px){.news-comments{padding:22px 18px}.news-comments__head h1,.news-comments__head h2{font-size:24px}.news-comments__submit{align-items:stretch}.news-comments__submit small{width:100%}.news-comments__submit .btn{flex:1}.news-comments__invitation .btn{width:100%}}
+.comment-sentiment{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;border:1px solid var(--edge);background:var(--glass-hi);font-size:11px;color:var(--tx-2);line-height:1}
+.comment-sentiment__dot{width:7px;height:7px;border-radius:50%;background:var(--tx-3)}
+.comment-sentiment__label{color:var(--mist);font-weight:500}
+.comment-sentiment__note{color:var(--tx-3);font-size:10px}
+.comment-sentiment--positivo .comment-sentiment__dot{background:#3fd0b4}
+.comment-sentiment--negativo .comment-sentiment__dot{background:#ef6a6a}
+.comment-sentiment--neutral .comment-sentiment__dot{background:#8aa0b5}
