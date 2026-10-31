@@ -1,3 +1,5 @@
+from .busqueda_texto_v1 import TextoComparableV1
+
 from django.db import models
 from django.utils import timezone
 from uuid import uuid4
@@ -64,12 +66,27 @@ class RegistroDatos(models.Model):
         return f"Registro {self.id_registro} - {self.fuentes_api}"
 
 
+class PublicacionManager(models.Manager):
+    def get_queryset(self):
+        # Sólo son necesarios para filtrar en SQL; no se presentan ni se leen
+        # desde instancias en las vistas. Evitar duplicar texto transferido.
+        return super().get_queryset().defer('titulo_busqueda', 'contenido_busqueda')
+
+
 class Publicacion(models.Model):
+    objects = PublicacionManager()
+
     id_publicacion_api = models.AutoField(primary_key=True)
     hash_origen = models.CharField(max_length=64, unique=True, default="")
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
     titulo = models.CharField(max_length=255, default="")
     contenido = models.TextField()
+    titulo_busqueda = models.GeneratedField(
+        expression=TextoComparableV1('titulo'), output_field=models.TextField(), db_persist=True, serialize=False,
+    )
+    contenido_busqueda = models.GeneratedField(
+        expression=TextoComparableV1('contenido'), output_field=models.TextField(), db_persist=True, serialize=False,
+    )
     # El Territorio usa slugs largos: 200 (el valor por defecto) descartaba noticias reales.
     url = models.URLField(max_length=500, default="")
     # Se enlaza la foto original del medio (no se copia); la web le superpone el crédito.

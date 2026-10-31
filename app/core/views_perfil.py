@@ -66,7 +66,9 @@ def perfil(request, seccion='datos'):
     guardados = None
     if seccion == 'guardados':
         guardados = Paginator(
-            PublicacionGuardada.objects.filter(usuario=request.user).select_related('publicacion'), 12
+            PublicacionGuardada.objects.filter(usuario=request.user).select_related('publicacion').defer(
+                'publicacion__titulo_busqueda', 'publicacion__contenido_busqueda',
+            ), 12
         ).get_page(request.GET.get('pagina'))
     return render(request, 'core/perfil.html', {
         'seccion': seccion, 'datos_form': datos, 'password_form': password, 'guardados': guardados,

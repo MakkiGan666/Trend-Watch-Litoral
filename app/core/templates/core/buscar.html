@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Buscar noticias · TrendWatch Litoral{% endblock %}
+{% block content %}
+<section class="search-page wrap" aria-labelledby="search-title">
+  <header class="search-heading">
+    <p class="search-eyebrow">Archivo de noticias</p>
+    <h1 id="search-title">{% if busqueda_realizada %}Resultados de búsqueda{% else %}Buscá en las noticias del Litoral{% endif %}</h1>
+    <p class="search-intro">Encontrá las palabras que te interesan en el título y el contenido de todas las noticias.</p>
+  </header>
+  <div class="search-page-form glass glass--sheen">
+    {% include "partials/_search_form.html" with search_prefix="page-search" %}
+    {% if error %}<p class="search-error" id="search-error" role="alert" data-error-code="{{ error_codigo }}">{{ error }}</p>{% endif %}
+  </div>
+  {% if busqueda_realizada %}
+    <div class="search-summary"><h2>{{ total }} noticia{{ total|pluralize:"s" }} para <q>{{ consulta }}</q></h2><p>Más recientes primero</p></div>
+    {% if resultados %}
+    <ol class="search-results" aria-label="Noticias encontradas">
+      {% for resultado in resultados %}
+      <li><article class="search-result glass{% if resultado.imagen_url %} search-result--image{% endif %}">
+        {% if resultado.imagen_url %}<div class="search-result__image"><img src="{{ resultado.imagen_url }}" alt="" loading="lazy" width="140" height="104" data-search-image></div>{% endif %}
+        <div class="search-result__body">
+          <div class="search-result__meta"><span>{{ resultado.fuente }}</span>{% if resultado.fecha %}<span>{% if resultado.fecha_origen == 'captura' %}Capturada el{% else %}Publicada el{% endif %} <time datetime="{{ resultado.fecha_efectiva }}">{{ resultado.fecha|date:"j M Y" }}{% if resultado.fecha_precision == 'instante' %} · {{ resultado.fecha|date:"H:i" }}{% endif %}</time></span>{% endif %}</div>
+          <h3><a href="{{ resultado.detalle_url }}">{% include "partials/_search_segments.html" with segmentos=resultado.titulo %}</a></h3>
+          <p class="search-result__excerpt">{% include "partials/_search_segments.html" with segmentos=resultado.extracto %}</p>
+        </div>
+      </article></li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <div class="search-empty glass"><h2>No encontramos noticias con esas palabras</h2><p>Probá con menos palabras o con una parte del título. La búsqueda no corrige errores de escritura.</p></div>
+    {% endif %}
+    {% if pagina.paginator.num_pages > 1 %}<nav class="search-pagination" aria-label="Páginas de resultados">
+      {% if anterior %}<a class="btn btn--ghost" href="{{ anterior }}">← Anterior</a>{% else %}<span></span>{% endif %}
+      <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+      {% if siguiente %}<a class="btn btn--ghost" href="{{ siguiente }}">Siguiente →</a>{% else %}<span></span>{% endif %}
+    </nav>{% endif %}
+  {% endif %}
+</section>
+{% endblock %}

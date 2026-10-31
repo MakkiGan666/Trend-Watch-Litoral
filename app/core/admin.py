@@ -48,6 +48,14 @@ class PublicacionAdmin(admin.ModelAdmin):
     readonly_fields = ('hash_origen', 'procesado_ia')
 
 
+class PublicacionRelacionAdmin(admin.ModelAdmin):
+    """Omitir derivados también cuando el changelist une la publicación."""
+    def get_queryset(self, request):
+        return super().get_queryset(request).defer(
+            'id_publicacion_api__titulo_busqueda', 'id_publicacion_api__contenido_busqueda',
+        )
+
+
 class SentimientoAdminForm(forms.ModelForm):
     class Meta:
         model = Sentimiento
@@ -89,7 +97,7 @@ class SentimientoAdminForm(forms.ModelForm):
 
 
 @admin.register(Sentimiento)
-class SentimientoAdmin(admin.ModelAdmin):
+class SentimientoAdmin(PublicacionRelacionAdmin):
     form = SentimientoAdminForm
     list_display = ('id_publicacion_api', 'polaridad', 'confianza')
     list_filter = ('polaridad',)
@@ -123,7 +131,7 @@ class SentimientoAdmin(admin.ModelAdmin):
 
 
 @admin.register(Locacion)
-class LocacionAdmin(admin.ModelAdmin):
+class LocacionAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api', 'location', 'latitud', 'longitud')
     search_fields = ('location',)
 
@@ -155,7 +163,7 @@ class TemaTrendAdmin(admin.ModelAdmin):
 
 
 @admin.register(PublicacionTema)
-class PublicacionTemaAdmin(admin.ModelAdmin):
+class PublicacionTemaAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
 
 
@@ -165,7 +173,7 @@ class UserAuditoriaAdmin(admin.ModelAdmin):
 
 
 @admin.register(VotoPublicacion)
-class VotoPublicacionAdmin(admin.ModelAdmin):
+class VotoPublicacionAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
 
 

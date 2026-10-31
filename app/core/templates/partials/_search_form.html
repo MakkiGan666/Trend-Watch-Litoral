@@ -1,0 +1,8 @@
+<form class="news-search-form" action="{% url 'buscar_noticias' %}" method="get" role="search">
+  <label for="{{ search_prefix }}-q">Buscar noticias</label>
+  <div class="news-search-form__controls">
+    <input type="search" id="{{ search_prefix }}-q" name="q" value="{{ search_query }}" placeholder="Título o contenido…" aria-describedby="{{ search_prefix }}-hint{% if error %} search-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
+    <button class="btn btn--primary" type="submit">Buscar</button>
+  </div>
+  <p id="{{ search_prefix }}-hint" class="news-search-hint">Todas las noticias · Entre 2 y 150 caracteres, hasta 10 palabras.</p>
+</form>

@@ -1,0 +1,149 @@
+[
+  {
+    "tipo": "instalacion",
+    "fase": "sqlite",
+    "desde_cero": true,
+    "migraciones_pendientes": 0,
+    "motor": "sqlite"
+  },
+  {
+    "tipo": "conexion_sqlite",
+    "fase": "sqlite",
+    "reabierta": true,
+    "funcion_antes_de_buscar": true,
+    "escritura_y_busqueda": true
+  },
+  {
+    "tipo": "control_modelos",
+    "fase": "sqlite",
+    "diferencias_previas": [
+      [
+        "AlterField",
+        "publicaciontema",
+        "id"
+      ],
+      [
+        "AlterField",
+        "tematrend",
+        "id"
+      ],
+      [
+        "AlterField",
+        "userauditoria",
+        "id"
+      ],
+      [
+        "AlterField",
+        "votopublicacion",
+        "id"
+      ]
+    ],
+    "nuevas_ajenas": 0,
+    "makemigrations_check_exit": 1,
+    "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+  },
+  {
+    "tipo": "check",
+    "fase": "sqlite",
+    "incidencias": 0
+  },
+  {
+    "tipo": "pruebas",
+    "fase": "sqlite",
+    "etiquetas": [
+      "core.test_busqueda_html",
+      "core.test_buscador",
+      "core.test_texto_busqueda",
+      "core.test_fechas",
+      "core.test_perfil",
+      "core.test_navegacion_admin",
+      "core.test_integracion_pr24",
+      "core.test_categorias_compat"
+    ],
+    "resumen": [
+      "Destroying old test database for alias 'default'...",
+      "System check identified no issues (0 silenced).",
+      ".......................................................................................ss",
+      "----------------------------------------------------------------------",
+      "Ran 89 tests in 33.166s",
+      "",
+      "OK (skipped=2)",
+      "Destroying test database for alias 'default'..."
+    ]
+  },
+  {
+    "tipo": "fin",
+    "fase": "sqlite",
+    "exito": true
+  },
+  {
+    "tipo": "instalacion",
+    "fase": "postgresql",
+    "desde_cero": true,
+    "migraciones_pendientes": 0,
+    "motor": "postgresql"
+  },
+  {
+    "tipo": "control_modelos",
+    "fase": "postgresql",
+    "diferencias_previas": [
+      [
+        "AlterField",
+        "publicaciontema",
+        "id"
+      ],
+      [
+        "AlterField",
+        "tematrend",
+        "id"
+      ],
+      [
+        "AlterField",
+        "userauditoria",
+        "id"
+      ],
+      [
+        "AlterField",
+        "votopublicacion",
+        "id"
+      ]
+    ],
+    "nuevas_ajenas": 0,
+    "makemigrations_check_exit": 1,
+    "solo_migracion_nueva": "0011_publicacion_texto_busqueda"
+  },
+  {
+    "tipo": "check",
+    "fase": "postgresql",
+    "incidencias": 0
+  },
+  {
+    "tipo": "pruebas",
+    "fase": "postgresql",
+    "etiquetas": [
+      "core.test_busqueda_html",
+      "core.test_buscador",
+      "core.test_texto_busqueda",
+      "core.test_fechas",
+      "core.test_perfil",
+      "core.test_navegacion_admin",
+      "core.test_integracion_pr24",
+      "core.test_categorias_compat"
+    ],
+    "resumen": [
+      "Creating test database for alias 'default'...",
+      "System check identified no issues (0 silenced).",
+      ".................................s.......................................................",
+      "----------------------------------------------------------------------",
+      "Ran 89 tests in 45.714s",
+      "",
+      "OK (skipped=1)",
+      "Destroying test database for alias 'default'..."
+    ]
+  },
+  {
+    "tipo": "fin",
+    "fase": "postgresql",
+    "exito": true
+  }
+]
