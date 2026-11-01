@@ -124,12 +124,12 @@ class GestionAdministradoresTests(TestCase):
                 self.client.force_login(usuario)
             response = self.client.get(reverse('landing'))
             if usuario in (self.admin, self.root):
-                self.assertContains(response, 'Gestión de administradores')
+                self.assertContains(response, 'href="/administradores/"')
                 self.assertContains(response, 'id="inicio-indicadores"')
                 for vista in ('publicaciones', 'dashboard'):
-                    self.assertContains(self.client.get(reverse(vista)), 'Gestión de administradores')
+                    self.assertContains(self.client.get(reverse(vista)), 'href="/administradores/"')
             else:
-                self.assertNotContains(response, 'Gestión de administradores')
+                self.assertNotContains(response, 'href="/administradores/"')
 
     def test_staff_sin_permisos_no_autoriza(self):
         self.normal.is_staff = True
@@ -217,7 +217,7 @@ class SeguridadAdministrativaTests(TestCase):
         self.assertEqual(self.client.get(self.url).status_code, 403)
         self.assertEqual(self.client.post(self.url, self.datos).status_code, 403)
         self.assertFalse(User.objects.filter(username='pepe').exists())
-        self.assertNotContains(self.client.get(reverse('landing')), 'Gestión de administradores')
+        self.assertNotContains(self.client.get(reverse('landing')), 'href="/administradores/"')
 
     def test_escrituras_auth_reservadas_incluso_con_permisos_historicos(self):
         # Simular una instalación anterior y permisos directos accidentales.
@@ -321,7 +321,7 @@ class SeguridadAdministrativaTests(TestCase):
         grupo.permissions.clear()
         self.client.force_login(self.admin)
         self.assertEqual(self.client.post(self.url, self.datos).status_code, 403)
-        self.assertNotContains(self.client.get(reverse('landing')), 'Gestión de administradores')
+        self.assertNotContains(self.client.get(reverse('landing')), 'href="/administradores/"')
         self.root.is_active = False
         self.root.save()
         self.client.force_login(self.root)

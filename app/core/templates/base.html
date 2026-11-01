@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}?v=2">
-  <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=16">
+  <link rel="stylesheet" href="{% static 'css/trendwatch.css' %}?v=17">
   <link rel="stylesheet" href="{% static 'css/auth-flow.css' %}?v=7">
   <link rel="stylesheet" href="{% static 'css/notification-prompt.css' %}?v=2">
   <link rel="stylesheet" href="{% static 'css/news-search.css' %}?v=1">
@@ -51,11 +51,12 @@
         {% include "partials/_mark.html" %}
         TrendWatch <em>Litoral</em>
       </a>
-      <div class="nav__links">
+      <div class="nav__links" id="public-nav-links">
         <a href="{% url 'landing' %}" {% if request.resolver_match.url_name == 'landing' %}aria-current="page"{% endif %}>Inicio</a>
         {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}" {% if request.resolver_match.url_name == 'publicaciones' %}aria-current="page"{% endif %}>Publicaciones</a>{% endif %}
         {% block categories_nav %}<a href="{% url 'categorias' %}" {% if request.resolver_match.url_name == 'categorias' %}aria-current="page"{% endif %}>Categorías</a>{% endblock %}
         {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion %}<a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}aria-current="page"{% endif %}>Dashboard</a>{% endif %}
+        {% include "partials/_administradores_nav.html" %}
       </div>
       <div class="nav__act">
         {% include "partials/_account_actions.html" %}
@@ -96,7 +97,6 @@
         </div>
         <div>
           <h4>Cuenta</h4>
-          {% puede_gestionar_administradores request.user as gestionar_administradores %}{% if gestionar_administradores %}<a class="btn btn--ghost" href="{% url 'gestion_administradores' %}">Gestión de administradores</a>{% endif %}
           {% if request.user.is_authenticated %}
             <a href="{% url 'logout' %}">Cerrar sesión</a>
           {% else %}

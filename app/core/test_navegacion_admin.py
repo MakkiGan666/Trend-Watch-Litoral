@@ -10,18 +10,24 @@ class NavegacionAdminTests(TestCase):
         admin = get_user_model().objects.create_user('nav_admin', is_staff=True)
         admin.user_permissions.set(Permission.objects.all())
         self.client.force_login(root)
-        for ruta in ('landing', 'categorias', 'publicaciones', 'dashboard'):
+        for ruta in ('landing', 'categorias', 'publicaciones', 'dashboard', 'gestion_administradores'):
             response = self.client.get(reverse(ruta))
             self.assertEqual(response.status_code, 200)
             html = response.content.decode()
             nav = html[html.index('class="nav__links"'):html.index('class="nav__act"')]
-            posiciones = [nav.index('>Inicio<'), nav.index('>Publicaciones<'), nav.index('>Categorías'), nav.index('>Dashboard<')]
+            posiciones = [nav.index('>Inicio<'), nav.index('>Publicaciones<'), nav.index('>Categorías'), nav.index('>Dashboard<'), nav.index('>Administradores<')]
             self.assertEqual(posiciones, sorted(posiciones))
+            self.assertEqual(html.count('href="/administradores/"'), 1)
+            if ruta == 'gestion_administradores':
+                self.assertIn('href="/administradores/" aria-current="page"', nav)
+                self.assertContains(response, 'data-password-toggle="id_password1"', count=1)
+                self.assertContains(response, 'data-password-toggle="id_password2"', count=1)
         self.client.force_login(admin)
         for ruta in ('landing', 'categorias', 'publicaciones'):
             response = self.client.get(reverse(ruta))
             self.assertContains(response, 'href="/publicaciones/"')
             self.assertContains(response, 'href="/dashboard/"')
+            self.assertNotContains(response, 'href="/administradores/"')
         self.client.logout()
         response = self.client.get(reverse('landing'))
         self.assertNotContains(response, 'href="/dashboard/"')
