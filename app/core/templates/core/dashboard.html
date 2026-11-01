@@ -4,8 +4,9 @@
 {% block body_class %}analytics-page{% endblock %}
 {% block extra_head %}<link rel="stylesheet" href="{% static 'css/analytics.css' %}?v=1">{% endblock %}
 {% block content %}
+<div class="wrap">{% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion and perms.auth.add_user %}<a class="btn btn--ghost" href="{% url 'gestion_administradores' %}">Gestión de administradores</a>{% endif %}</div>
 <div class="wrap analytics">
-  <header class="page-head"><p class="analytics-eyebrow">Panel de superusuarios</p><h1>Dashboard</h1><p>Indicadores reales del conjunto completo de publicaciones, sin el límite del panel de gestión.</p></header>
+  <header class="page-head"><p class="analytics-eyebrow">Panel de administración</p><h1>Dashboard</h1><p>Indicadores reales del conjunto completo de publicaciones, sin el límite del panel de gestión.</p></header>
   <form method="get" class="analytics-filters glass glass--sheen">
     {{ filtros.non_field_errors }}
     {% for field in filtros %}<div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}

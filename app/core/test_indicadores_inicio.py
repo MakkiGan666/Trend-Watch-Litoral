@@ -10,11 +10,10 @@ from core.models import Publicacion, Sentimiento
 
 class IndicadoresInicioTests(TestCase):
     def test_visibilidad_y_conteo_coinciden_con_dashboard(self):
-        root = get_user_model().objects.create_superuser('inicio_root', 'inicio@example.com', None)
         admin = get_user_model().objects.create_user('inicio_admin', is_staff=True)
         admin.user_permissions.set(Permission.objects.all())
         lector = get_user_model().objects.create_user('inicio_lector')
-        for usuario in (None, admin, lector):
+        for usuario in (None, lector):
             self.client.logout()
             if usuario:
                 self.client.force_login(usuario)
@@ -25,7 +24,7 @@ class IndicadoresInicioTests(TestCase):
         noticia = Publicacion.objects.create(hash_origen='inicio-analizada', titulo='Noticia', contenido='Texto')
         Sentimiento.objects.create(id_publicacion_api=noticia, polaridad=.6, confianza=.9)
         Publicacion.objects.create(hash_origen='inicio-pendiente', titulo='Otra', contenido='Texto', procesado_ia=True)
-        self.client.force_login(root)
+        self.client.force_login(admin)
         inicio = self.client.get(reverse('landing'))
         dashboard = self.client.get(reverse('dashboard'))
         self.assertContains(inicio, 'id="inicio-indicadores"')

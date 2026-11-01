@@ -1,0 +1,204 @@
+import logging
+from io import StringIO
+from unittest.mock import patch
+
+from django.contrib import admin
+from django.contrib.admin.models import LogEntry
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group, Permission
+from django.core.management import call_command
+from django.db import IntegrityError
+from django.test import Client, RequestFactory, TestCase, override_settings
+from django.urls import reverse
+
+from core.roles import PERMISOS_ADMINISTRADOR
+
+User = get_user_model()
+
+
+class GestionAdministradoresTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        call_command('configurar_roles', stdout=StringIO())
+        cls.admin = User.objects.create_user('juan', is_staff=True)
+        cls.admin.groups.add(Group.objects.get(name='Administrador'))
+        cls.normal = User.objects.create_user('lector')
+        cls.root = User.objects.create_superuser('root')
+
+    def setUp(self):
+        self.url = reverse('gestion_administradores')
+        self.datos = {'username': 'pepe', 'email': 'pepe@example.com',
+                      'password1': 'Rio!Litoral-9xQ482', 'password2': 'Rio!Litoral-9xQ482'}
+
+    def test_autorizacion_get_post(self):
+        for usuario, esperado in ((None, 302), (self.normal, 403), (self.admin, 200), (self.root, 200)):
+            self.client.logout()
+            if usuario:
+                self.client.force_login(usuario)
+            self.assertEqual(self.client.get(self.url).status_code, esperado)
+            if esperado != 200:
+                self.assertEqual(self.client.post(self.url, self.datos).status_code, esperado)
+        self.assertFalse(User.objects.filter(username='pepe').exists())
+
+    @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.PBKDF2PasswordHasher'])
+    def test_creacion_permisos_hash_auditoria_y_tercer_administrador(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(self.url, self.datos, follow=True)
+        self.assertContains(response, 'Administrador creado correctamente')
+        pepe = User.objects.get(username='pepe')
+        self.assertTrue(pepe.check_password(self.datos['password1']))
+        self.assertNotEqual(pepe.password, self.datos['password1'])
+        self.assertTrue(pepe.password.startswith('pbkdf2_sha256$'))
+        self.assertTrue(pepe.is_staff)
+        self.assertFalse(pepe.is_superuser)
+        self.assertEqual(pepe.get_all_permissions(), self.admin.get_all_permissions())
+        self.assertEqual(pepe.get_all_permissions(), PERMISOS_ADMINISTRADOR)
+        self.assertFalse(pepe.user_permissions.exists())
+        self.assertEqual(list(pepe.groups.values_list('name', flat=True)), ['Administrador'])
+        evento = LogEntry.objects.get(object_id=str(pepe.pk))
+        self.assertEqual(evento.user_id, self.admin.pk)
+        self.assertIsNotNone(evento.action_time)
+        self.assertNotIn(self.datos['password1'], str(evento.__dict__))
+        self.assertNotIn(pepe.password, str(evento.__dict__))
+        self.assertNotContains(response, self.datos['password1'])
+        for identificador in (pepe.username, pepe.email):
+            self.client.get(reverse('logout'))
+            self.assertEqual(self.client.post(reverse('login'), {
+                'username': identificador, 'password': self.datos['password1'],
+            }).status_code, 302)
+            self.assertEqual(int(self.client.session['_auth_user_id']), pepe.pk)
+        for vista in ('publicaciones', 'dashboard', 'gestion_administradores'):
+            self.assertEqual(self.client.get(reverse(vista)).status_code, 200)
+        self.assertEqual(self.client.get('/admin/').status_code, 200)
+        self.datos.update(username='tercero', email='tercero@example.com')
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 302)
+        self.assertEqual(User.objects.get(username='tercero').get_all_permissions(), pepe.get_all_permissions())
+
+    def test_formulario_invalido_no_crea_cuentas_ni_auditoria(self):
+        self.client.force_login(self.admin)
+        variantes = [
+            {'username': 'JUAN'}, {'username': 'mal nombre'},
+            {'email': 'invalido'}, {'email': 'a' * 255 + '@example.com'},
+            {'password1': '123', 'password2': '123'},
+            {'password2': 'diferente'},
+            *[{campo: ''} for campo in self.datos],
+        ]
+        User.objects.create_user('existente', email='reservado@example.com')
+        variantes.extend([{'email': 'RESERVADO@example.com'}, {'username': 'reservado@example.com'}])
+        cantidad = User.objects.count()
+        for cambio in variantes:
+            with self.subTest(cambio=cambio):
+                response = self.client.post(self.url, {**self.datos, **cambio})
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.context['form'].errors)
+                self.assertNotContains(response, self.datos['password1'])
+                self.assertEqual(User.objects.count(), cantidad)
+                self.assertEqual(LogEntry.objects.count(), 0)
+
+    def test_privilegios_manipulados_se_ignoran(self):
+        self.client.force_login(self.admin)
+        self.client.post(self.url, {**self.datos, 'is_superuser': 'true', 'is_staff': '',
+                                  'is_active': '', 'groups': Group.objects.get(name='Usuario').pk,
+                                  'user_permissions': list(Permission.objects.values_list('pk', flat=True))})
+        pepe = User.objects.get(username='pepe')
+        self.assertFalse(pepe.is_superuser)
+        self.assertTrue(pepe.is_staff)
+        self.assertTrue(pepe.is_active)
+        self.assertEqual(pepe.get_all_permissions(), PERMISOS_ADMINISTRADOR)
+
+    def test_csrf_y_metodos(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.admin)
+        self.assertEqual(client.post(self.url, self.datos).status_code, 403)
+        client.get(self.url)
+        self.assertEqual(client.post(self.url, self.datos, HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value).status_code, 302)
+        for metodo in ('put', 'patch', 'delete'):
+            self.client.force_login(self.admin)
+            self.assertEqual(getattr(self.client, metodo)(self.url).status_code, 405)
+
+    def test_visibilidad_y_administrador_sin_superusuario(self):
+        for usuario in (None, self.normal, self.admin, self.root):
+            self.client.logout()
+            if usuario:
+                self.client.force_login(usuario)
+            response = self.client.get(reverse('landing'))
+            if usuario in (self.admin, self.root):
+                self.assertContains(response, 'Gestión de administradores')
+                self.assertContains(response, 'id="inicio-indicadores"')
+                for vista in ('publicaciones', 'dashboard'):
+                    self.assertContains(self.client.get(reverse(vista)), 'Gestión de administradores')
+            else:
+                self.assertNotContains(response, 'Gestión de administradores')
+
+    def test_staff_sin_permisos_no_autoriza(self):
+        self.normal.is_staff = True
+        self.normal.save()
+        self.client.force_login(self.normal)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 403)
+
+    def test_grupo_incompleto_falla_sin_alta(self):
+        self.client.force_login(self.root)
+        Group.objects.get(name='Administrador').permissions.clear()
+        response = self.client.post(self.url, self.datos)
+        self.assertTrue(response.context['form'].non_field_errors())
+        self.assertFalse(User.objects.filter(username='pepe').exists())
+
+    def test_fallo_auditoria_revierte_alta_y_no_expone_secretos(self):
+        self.client.force_login(self.admin)
+        with patch('core.views_administradores.LogEntry.objects.log_actions', side_effect=IntegrityError('detalle interno')):
+            response = self.client.post(self.url, self.datos)
+        self.assertFalse(User.objects.filter(username='pepe').exists())
+        self.assertNotContains(response, 'detalle interno')
+        self.assertNotContains(response, self.datos['password1'])
+        self.assertTrue(response.context['form'].non_field_errors())
+
+    def test_registros_y_respuestas_no_contienen_secretos(self):
+        self.client.force_login(self.admin)
+        salida = StringIO()
+        handler = logging.StreamHandler(salida)
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+        try:
+            response = self.client.post(self.url, self.datos, follow=True)
+            self.assertNotContains(response, self.datos['password1'])
+            self.assertNotIn(self.datos['password1'], salida.getvalue())
+            self.assertNotIn(User.objects.get(username='pepe').password, salida.getvalue())
+        finally:
+            logger.removeHandler(handler)
+
+    def test_permisos_efectivos_iguales_entre_administradores_del_rol(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 302)
+        nuevo = User.objects.get(username='pepe')
+        factory = RequestFactory()
+        for modelo, model_admin in admin.site._registry.items():
+            permisos = []
+            for usuario in (self.root, self.admin, nuevo):
+                request = factory.get('/admin/')
+                request.user = usuario
+                permisos.append((model_admin.has_module_permission(request), model_admin.get_model_perms(request)))
+            with self.subTest(modelo=modelo._meta.label):
+                self.assertEqual(permisos[1], permisos[2])
+                # Core y auth ofrecen las mismas operaciones que al superusuario.
+                # Los privilegios técnicos JWT permanecen exclusivos de superusuarios.
+                if modelo._meta.app_label in ('core', 'auth'):
+                    self.assertEqual(permisos[0], permisos[1])
+
+    def test_tokens_jwt_reservados_a_superusuarios(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 302)
+        nuevo = User.objects.get(username='pepe')
+        for usuario in (self.admin, nuevo):
+            self.client.force_login(usuario)
+            self.assertFalse(usuario.has_module_perms('token_blacklist'))
+            for modelo in ('outstandingtoken', 'blacklistedtoken'):
+                for accion in ('view', 'add', 'change', 'delete'):
+                    self.assertFalse(usuario.has_perm(f'token_blacklist.{accion}_{modelo}'))
+                for vista in ('changelist', 'add'):
+                    ruta = reverse(f'admin:token_blacklist_{modelo}_{vista}')
+                    with self.subTest(usuario=usuario.username, modelo=modelo, vista=vista):
+                        self.assertEqual(self.client.get(ruta).status_code, 403)
+                        self.assertEqual(self.client.post(ruta, {}).status_code, 403)
+        self.client.force_login(self.root)
+        for modelo in ('outstandingtoken', 'blacklistedtoken'):
+            self.assertEqual(self.client.get(reverse(f'admin:token_blacklist_{modelo}_changelist')).status_code, 200)

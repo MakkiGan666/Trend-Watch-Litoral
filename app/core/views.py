@@ -77,7 +77,7 @@ def landing(request):
 
     return render(request, 'inicio.html', {
         'featured_trends': featured_trends,
-        'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
+        'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.has_perms(PERMISOS_PANEL) else None,
     })
 
 
