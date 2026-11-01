@@ -1,25 +1,27 @@
 """Alta administrativa con rol fijo y auditoría transaccional."""
 from django.contrib import messages
 from django.contrib.admin.models import ADDITION, LogEntry
-from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group
 from django.db import IntegrityError
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods
 
 from .forms import AdministradorCreationForm
-from .roles import PERMISOS_PANEL, PERMISOS_ADMINISTRADOR
+from .roles import PERMISOS_ADMINISTRADOR, puede_gestionar_administradores
 from .services.identidad import serializar_identidad
 
 
 @login_required(login_url='login')
-@permission_required((*PERMISOS_PANEL, 'auth.add_user'), raise_exception=True)
 @require_http_methods(['GET', 'POST'])
 @sensitive_post_parameters('password1', 'password2')
 @never_cache
 def gestion_administradores(request):
+    if not puede_gestionar_administradores(request.user):
+        raise PermissionDenied
     form = AdministradorCreationForm(request.POST if request.method == 'POST' else None)
     if request.method == 'POST':
         try:

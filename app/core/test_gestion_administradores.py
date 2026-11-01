@@ -8,8 +8,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
 from django.core.management import call_command
 from django.db import IntegrityError
-from django.test import Client, RequestFactory, TestCase, override_settings
+from django.test import Client, RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from core.roles import PERMISOS_ADMINISTRADOR
 
@@ -179,9 +180,9 @@ class GestionAdministradoresTests(TestCase):
                 permisos.append((model_admin.has_module_permission(request), model_admin.get_model_perms(request)))
             with self.subTest(modelo=modelo._meta.label):
                 self.assertEqual(permisos[1], permisos[2])
-                # Core y auth ofrecen las mismas operaciones que al superusuario.
+                # Las operaciones de contenido conservan su alcance administrativo.
                 # Los privilegios técnicos JWT permanecen exclusivos de superusuarios.
-                if modelo._meta.app_label in ('core', 'auth'):
+                if modelo._meta.app_label == 'core':
                     self.assertEqual(permisos[0], permisos[1])
 
     def test_tokens_jwt_reservados_a_superusuarios(self):
@@ -202,3 +203,178 @@ class GestionAdministradoresTests(TestCase):
         self.client.force_login(self.root)
         for modelo in ('outstandingtoken', 'blacklistedtoken'):
             self.assertEqual(self.client.get(reverse(f'admin:token_blacklist_{modelo}_changelist')).status_code, 200)
+
+
+class SeguridadAdministrativaTests(TestCase):
+    setUpTestData = classmethod(GestionAdministradoresTests.setUpTestData.__func__)
+    setUp = GestionAdministradoresTests.setUp
+    # Autorización HTTP y estado persistido, independientes de la interfaz.
+    def test_permisos_sin_rol_no_autorizan(self):
+        self.normal.is_staff = True
+        self.normal.save()
+        self.normal.user_permissions.set(Group.objects.get(name='Administrador').permissions.all())
+        self.client.force_login(self.normal)
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 403)
+        self.assertFalse(User.objects.filter(username='pepe').exists())
+        self.assertNotContains(self.client.get(reverse('landing')), 'Gestión de administradores')
+
+    def test_escrituras_auth_reservadas_incluso_con_permisos_historicos(self):
+        # Simular una instalación anterior y permisos directos accidentales.
+        self.admin.user_permissions.set(Permission.objects.filter(content_type__app_label='auth'))
+        tecnico = Group.objects.create(name='Tecnico')
+        tecnico.permissions.set(Permission.objects.filter(content_type__app_label='token_blacklist'))
+        grupo = Group.objects.get(name='Administrador')
+        permisos = list(grupo.permissions.order_by('pk').values_list('pk', flat=True))
+        self.client.force_login(self.admin)
+        antes = list(User.objects.order_by('pk').values())
+        relaciones = [(u.pk, set(u.groups.values_list('pk', flat=True)),
+                       set(u.user_permissions.values_list('pk', flat=True))) for u in User.objects.all()]
+        for usuario in (self.admin, self.normal, self.root):
+            datos = {'username': usuario.username, 'email': 'alterado@example.com',
+                     'is_active': 'on', 'is_staff': 'on', 'is_superuser': 'on',
+                     'groups': [grupo.pk, tecnico.pk],
+                     'user_permissions': list(Permission.objects.values_list('pk', flat=True)),
+                     '_save': 'Guardar'}
+            for ruta, payload in (
+                (reverse('admin:auth_user_change', args=[usuario.pk]), datos),
+                (reverse('admin:auth_user_delete', args=[usuario.pk]), {'post': 'yes'}),
+                (reverse('admin:auth_user_password_change', args=[usuario.pk]),
+                 {'password1': self.datos['password1'], 'password2': self.datos['password2']}),
+            ):
+                with self.subTest(ruta=ruta):
+                    self.assertEqual(self.client.post(ruta, payload).status_code, 403)
+        for ruta, payload in (
+            (reverse('admin:auth_user_add'), {**self.datos, 'is_superuser': 'on'}),
+            (reverse('admin:auth_user_changelist'), {'action': 'delete_selected', '_selected_action': self.root.pk, 'post': 'yes'}),
+            (reverse('admin:auth_group_add'), {'name': 'Escalada', 'permissions': permisos}),
+            (reverse('admin:auth_group_change', args=[grupo.pk]), {'name': 'Alterado', 'permissions': list(Permission.objects.values_list('pk', flat=True))}),
+            (reverse('admin:auth_group_delete', args=[grupo.pk]), {'post': 'yes'}),
+            (reverse('admin:auth_group_changelist'), {'action': 'delete_selected', '_selected_action': grupo.pk, 'post': 'yes'}),
+        ):
+            with self.subTest(ruta=ruta):
+                self.assertEqual(self.client.post(ruta, payload).status_code, 403)
+        self.assertEqual(list(User.objects.order_by('pk').values()), antes)
+        for pk, grupos, permisos_directos in relaciones:
+            usuario = User.objects.get(pk=pk)
+            self.assertEqual(set(usuario.groups.values_list('pk', flat=True)), grupos)
+            self.assertEqual(set(usuario.user_permissions.values_list('pk', flat=True)), permisos_directos)
+        self.assertEqual(list(grupo.permissions.order_by('pk').values_list('pk', flat=True)), permisos)
+        grupo.refresh_from_db()
+        self.assertEqual(grupo.name, 'Administrador')
+        self.assertFalse(Group.objects.filter(name='Escalada').exists())
+        self.assertEqual(LogEntry.objects.count(), 0)
+
+    def test_superusuario_conserva_escrituras_tecnicas(self):
+        self.client.force_login(self.root)
+        response = self.client.post(reverse('admin:auth_user_change', args=[self.normal.pk]), {
+            'username': self.normal.username, 'is_active': 'on', 'is_staff': 'on',
+            'is_superuser': 'on', '_save': 'Guardar',
+            'date_joined_0': timezone.localdate().isoformat(), 'date_joined_1': '12:00:00',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.normal.refresh_from_db()
+        self.assertTrue(self.normal.is_superuser)
+        self.assertEqual(self.client.post(reverse('admin:auth_group_add'), {
+            'name': 'Tecnico', 'permissions': Permission.objects.first().pk, '_save': 'Guardar',
+        }).status_code, 302)
+        self.assertTrue(Group.objects.get(name='Tecnico').permissions.exists())
+
+    def test_usuario_normal_no_accede_admin(self):
+        self.client.force_login(self.normal)
+        self.assertEqual(self.client.post(reverse('admin:auth_user_change', args=[self.normal.pk]), {'is_superuser': 'on'}).status_code, 302)
+        self.normal.refresh_from_db()
+        self.assertFalse(self.normal.is_superuser)
+
+    def test_configurar_roles_reemplaza_permisos_historicos(self):
+        grupo = Group.objects.get(name='Administrador')
+        grupo.permissions.set(Permission.objects.all())
+        call_command('configurar_roles', stdout=StringIO())
+        self.assertEqual(User.objects.get(pk=self.admin.pk).get_all_permissions(), PERMISOS_ADMINISTRADOR)
+        self.assertFalse(grupo.permissions.filter(codename='change_group').exists())
+
+    def test_rol_canonico_no_eleva_usuario_propio_ni_ajeno(self):
+        self.client.force_login(self.admin)
+        for usuario in (self.normal, self.admin):
+            with self.subTest(usuario=usuario.username):
+                response = self.client.post(reverse('admin:auth_user_change', args=[usuario.pk]), {
+                    'username': usuario.username, 'is_active': 'on', 'is_staff': 'on',
+                    'is_superuser': 'on', '_save': 'Guardar',
+                    'date_joined_0': timezone.localdate().isoformat(), 'date_joined_1': '12:00:00',
+                })
+                usuario.refresh_from_db()
+                self.assertFalse(usuario.is_superuser)
+                self.assertEqual(response.status_code, 403)
+
+    def test_rol_canonico_no_modifica_permisos_del_grupo(self):
+        self.client.force_login(self.admin)
+        grupo = Group.objects.get(name='Administrador')
+        response = self.client.post(reverse('admin:auth_group_change', args=[grupo.pk]), {
+            'name': grupo.name, 'permissions': list(Permission.objects.values_list('pk', flat=True)),
+            '_save': 'Guardar',
+        })
+        self.assertFalse(grupo.permissions.filter(content_type__app_label='token_blacklist').exists())
+        self.assertEqual(response.status_code, 403)
+
+    def test_miembro_sin_permisos_e_inactivo_no_autoriza(self):
+        grupo = Group.objects.get(name='Administrador')
+        grupo.permissions.clear()
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 403)
+        self.assertNotContains(self.client.get(reverse('landing')), 'Gestión de administradores')
+        self.root.is_active = False
+        self.root.save()
+        self.client.force_login(self.root)
+        self.assertEqual(self.client.post(self.url, self.datos).status_code, 302)
+        self.assertFalse(User.objects.filter(username='pepe').exists())
+
+    def test_api_me_no_admite_escrituras(self):
+        from rest_framework.test import APIClient
+        cliente = APIClient()
+        cliente.force_authenticate(self.admin)
+        for metodo in ('post', 'put', 'patch', 'delete'):
+            response = getattr(cliente, metodo)(reverse('user_me'),
+                data={'is_superuser': True}, format='json')
+            self.assertEqual(response.status_code, 405)
+        self.admin.refresh_from_db()
+        self.assertFalse(self.admin.is_superuser)
+
+
+class AltaConcurrenteTests(TransactionTestCase):
+    def test_dos_altas_misma_identidad_solo_confirman_una(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import contextmanager
+        from threading import Barrier
+        from django.db import connection, connections
+        from core.services.identidad import serializar_identidad
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere PostgreSQL y conexiones independientes')
+        call_command('configurar_roles', stdout=StringIO())
+        creador = User.objects.create_user('creador', is_staff=True)
+        creador.groups.add(Group.objects.get(name='Administrador'))
+        barrera = Barrier(2)
+
+        @contextmanager
+        def juntos():
+            barrera.wait(timeout=10)
+            with serializar_identidad():
+                yield
+
+        def alta():
+            try:
+                cliente = Client()
+                cliente.force_login(User.objects.get(pk=creador.pk))
+                return cliente.post(reverse('gestion_administradores'), {
+                    'username': 'duplicado', 'email': 'duplicado@example.com',
+                    'password1': 'Rio!Litoral-9xQ482', 'password2': 'Rio!Litoral-9xQ482',
+                }).status_code
+            finally:
+                connections['default'].close()
+
+        with patch('core.views_administradores.serializar_identidad', juntos), ThreadPoolExecutor(max_workers=2) as worker:
+            futuros = [worker.submit(alta) for _ in range(2)]
+            self.assertEqual(sorted(f.result(timeout=20) for f in futuros), [200, 302])
+        nuevo = User.objects.get(username='duplicado')
+        self.assertFalse(nuevo.is_superuser)
+        self.assertEqual(nuevo.get_all_permissions(), PERMISOS_ADMINISTRADOR)
+        self.assertEqual(LogEntry.objects.filter(object_id=str(nuevo.pk)).count(), 1)

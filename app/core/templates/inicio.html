@@ -1,3 +1,4 @@
+{% load roles %}
 <!DOCTYPE html>
 <html lang="es">
     <head>
@@ -127,7 +128,7 @@
                     </div>
                     <div>
                         <h4>Cuenta</h4>
-                        {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion and perms.auth.add_user %}<a href="{% url 'gestion_administradores' %}">Gestión de administradores</a>{% endif %}
+                        {% puede_gestionar_administradores request.user as gestionar_administradores %}{% if gestionar_administradores %}<a href="{% url 'gestion_administradores' %}">Gestión de administradores</a>{% endif %}
                         {% if request.user.is_authenticated %}
                             <a href="{% url 'logout' %}">Cerrar sesión</a>
                         {% else %}

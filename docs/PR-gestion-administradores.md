@@ -1,25 +1,26 @@
-# Propuesta de PR hacia main
+# PR #34 — Gestión de administradores y corrección de autorización
 
-Título: `feat(admin): permitir crear administradores desde el panel de TrendWatch`
+Permite crear administradores desde TrendWatch, iniciar sesión con la cuenta nueva y crear otras cuentas del mismo rol. Corrige la escalada confirmada del commit `22bd423`: un administrador podía persistir `is_superuser=True` mediante UserAdmin y agregar permisos técnicos al grupo mediante GroupAdmin.
 
-## Descripción
+El alta exige cuenta activa y pertenencia a `Administrador` con los permisos requeridos, o superusuario técnico activo. La vista y los enlaces comparten la política. Permisos equivalentes sin el rol y `is_staff` por sí solos no autorizan.
 
-Permite que un administrador cree otra cuenta del mismo rol desde Publicaciones o Dashboard → Gestión de administradores, con usuario, correo y contraseña confirmada. La cuenta creada puede iniciar sesión y crear otros administradores.
+Django Admin reserva las escrituras de usuarios y grupos, contraseñas ajenas y acciones masivas a superusuarios activos, incluso ante permisos históricos/directos de auth. El administrador conserva consultas y el alta controlada de TrendWatch. Los superusuarios conservan capacidades técnicas y gestión de tokens JWT. El formulario fija el rol sin aceptar privilegios del POST; alta y LogEntry son transaccionales.
 
-El backend exige los permisos del panel más `auth.add_user`, asigna exclusivamente el grupo Administrador y reutiliza las validaciones y el bloqueo de identidad existentes. Las contraseñas usan validadores y hash de Django; el formulario conserva CSRF. El alta y su evento `LogEntry` se guardan en una transacción, sin registrar secretos.
+## Instalación
 
-Dashboard e indicadores usan los permisos del panel para igualar las funciones del rol. No se otorga superusuario ni acceso administrativo a tokens JWT; esos privilegios técnicos permanecen reservados a superusuarios. No hay migraciones, dependencias ni cambios de Compose.
+No hay migraciones, dependencias ni cambios de Compose. Un operador técnico debe actualizar los grupos con el comando existente `configurar_roles` durante el despliegue autorizado: reemplaza los permisos canónicos conservando los grupos. Hasta hacerlo, el alta falla sin crear cuentas si el grupo tiene el conjunto antiguo. La protección de Django Admin es inmediata al desplegar el código. No se modificaron bases habituales ni cuentas reales. Revisar por separado permisos directos históricos concedidos fuera del rol.
 
 ## Validación
 
-- 54 pruebas dirigidas aprobadas y una adicional de equivalencia de permisos aprobada, con PostgreSQL aislado.
-- Prueba adicional de restricción JWT aprobada: GET/POST devuelven 403 a administradores existentes y nuevos; el superusuario mantiene acceso. Total: 56 pruebas dirigidas distintas aprobadas, reutilizando evidencia sin cambios de código de producción.
-- Suite completa comparada: main 407 tests y rama 416 en esa ejecución; ambas con los mismos 10 fallos, un error y una omisión. Los bloques coinciden al normalizar las fechas de captura.
-- Fallos preexistentes en ingesta/clasificación y cuatro subcasos de actualización de publicaciones por los campos derivados del buscador.
-- Checks Django sin incidencias y `git diff --check` correcto. La comprobación de migraciones detecta los mismos cuatro ajustes de claves automáticas ya presentes en main; no se generaron ni aplicaron.
+- Reproducción HTTP previa con PostgreSQL aislado: el original persistió superusuario propio/ajeno y permisos JWT en el grupo; también aceptó acceso al alta sin pertenecer al rol.
+- 82 pruebas dirigidas aprobadas: autorización, permisos históricos, POST manipulado, acciones alternativas/masivas, ausencia de cambios parciales, superusuario legítimo, JWT, CSRF, login, perfil, identidad, navegación, panel, Dashboard e indicadores. Dos altas concurrentes de la misma identidad confirman sólo una cuenta y un LogEntry.
+- Suite completa repetida: **main 407 pruebas; rama 429; ambas con 10 fallos, un error y una omisión**. Los once bloques coinciden normalizando fechas, líneas e IDs de fixtures. Fallos preexistentes en clasificación/ingesta y campos derivados del buscador; ninguna regresión nueva detectada. La suite completa no pasa.
+- Checks Django sin incidencias; `git diff --check` correcto. Sin cambios de modelos ni migraciones aplicadas.
 
-Capturas: [escritorio](capturas/administradores/escritorio.png) y [móvil](capturas/administradores/movil.png). Alcance de auditoría, instrucciones y evidencia: [gestion-administradores.md](gestion-administradores.md).
+Evidencia, permisos definitivos y riesgos: [gestion-administradores.md](gestion-administradores.md). Los logs detallados locales están identificados allí. Las capturas existentes ilustran el formulario: [escritorio](capturas/administradores/escritorio.png), [móvil](capturas/administradores/movil.png).
 
-## Límites conocidos
+## Límites y estado
 
-El grupo Administrador debe estar configurado con sus permisos canónicos. La auditoría general futura deberá integrar los eventos de LogEntry y definir retención/protección. La suite global mantiene los fallos preexistentes documentados; esta propuesta no los corrige.
+`LogEntry` no es inmutable; escritores ORM/SQL externos pueden eludir el protocolo de identidad. La normalización automática de cuentas históricas queda fuera del alcance. No se encontraron otras vías de escalada en las rutas de cuentas revisadas; esto no constituye una auditoría general del repositorio.
+
+Recomendación de la auditoría correctiva: **Aprobado con observaciones**, por configuración operativa pendiente y fallos globales preexistentes. Mantener **Draft**, sin merge; las pruebas dirigidas no declaran el PR listo para integrar.
