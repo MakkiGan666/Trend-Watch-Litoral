@@ -1,3 +1,4 @@
+{% load roles %}
 <!DOCTYPE html>
 <html lang="es">
     <head>
@@ -9,7 +10,7 @@
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
         <link rel="icon" type="image/png" href="/static/img/favicon.png?v=2">
-        <link rel="stylesheet" href="/static/css/trendwatch.css?v=16">
+        <link rel="stylesheet" href="/static/css/trendwatch.css?v=17">
         <link rel="stylesheet" href="/static/css/landing-news.css?v=8">
         <link rel="stylesheet" href="/static/css/exchange-rates.css?v=1">
         <link rel="stylesheet" href="/static/css/auth-flow.css?v=7">
@@ -42,11 +43,12 @@
                     {% include "partials/_mark.html" %}
                     TrendWatch <em>Litoral</em>
                 </a>
-                <div class="nav__links">
+                <div class="nav__links" id="public-nav-links">
                     <a href="/" aria-current="page">Inicio</a>
                     {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
                     <a href="/categorias/">Categorías</a>
-                    {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
+                    {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
+                    {% include "partials/_administradores_nav.html" %}
                 </div>
                 <div class="nav__act">
                     {% include "partials/_account_actions.html" %}
@@ -61,7 +63,7 @@
                 <h1 class="sr-only" id="inicio-title">Noticias por categoría y tendencias de Misiones</h1>
                 <div class="wrap news-layout">
                     <div class="news-feed" data-news-feed="{% url 'listar_publicaciones' %}" aria-busy="false">
-                        {% if request.user.is_superuser %}{% include "partials/_inicio_indicadores.html" %}{% endif %}
+                        {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion %}{% include "partials/_inicio_indicadores.html" %}{% endif %}
                         {% include "partials/_news_category.html" with category_key="salud" category_label="Salud" %}
                         {% include "partials/_news_category.html" with category_key="policiales" category_label="Policiales" %}
                         {% include "partials/_news_category.html" with category_key="turismo" category_label="Turismo" %}
@@ -122,7 +124,7 @@
                         <h4>Plataforma</h4>
                         <a href="/categorias/">Categorías</a>
                         {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
-                        {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
+                        {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
                         <a href="/categorias/#localidades">Localidades</a>
                     </div>
                     <div>

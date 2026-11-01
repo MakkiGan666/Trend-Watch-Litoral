@@ -1,4 +1,7 @@
 from django import forms
+from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import UserCreationForm
+from .services.identidad import errores_identidad
 from django.core.validators import URLValidator
 from .models import Publicacion, Categoria, Comentario
 
@@ -62,3 +65,25 @@ class ComentarioForm(forms.ModelForm):
                 'placeholder': 'Compartí tu opinión sobre esta noticia…',
             }),
         }
+
+
+class AdministradorCreationForm(UserCreationForm):
+    email = forms.EmailField(label='Correo electrónico', max_length=254)
+
+    class Meta:
+        model = get_user_model()
+        fields = ('username', 'email')
+
+    def clean_username(self):
+        username = super().clean_username()
+        if self._meta.model.objects.filter(username__iexact=username).exists():
+            raise forms.ValidationError('Ese nombre de usuario ya está en uso.')
+        return username
+
+    def clean(self):
+        data = super().clean()
+        for campo, mensaje in errores_identidad(
+            username=data.get('username'), email=data.get('email'),
+        ).items():
+            self.add_error(campo, mensaje)
+        return data

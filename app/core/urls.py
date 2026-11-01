@@ -5,6 +5,7 @@ from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
 from . import views_dashboard
+from .views_administradores import gestion_administradores
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -17,6 +18,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('administradores/', gestion_administradores, name='gestion_administradores'),
     path('buscar/', buscar_noticias, name='buscar_noticias'),
     path('perfil/', views_perfil.perfil, name='perfil'),
     path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),

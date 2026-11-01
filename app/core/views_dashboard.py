@@ -8,6 +8,7 @@ from django.db.models.functions import Coalesce, TruncDate, TruncMonth
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
+from .roles import PERMISOS_PANEL
 from .fechas import ZONA_LOCAL
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .models import Categoria, Locacion, Publicacion
@@ -40,7 +41,7 @@ def barras(filas):
 @login_required(login_url='login')
 @require_GET
 def dashboard(request):
-    if not request.user.is_superuser:
+    if not request.user.has_perms(PERMISOS_PANEL):
         raise PermissionDenied
     form = FiltrosDashboard(request.GET)
     valido = form.is_valid()

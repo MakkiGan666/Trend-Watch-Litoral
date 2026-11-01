@@ -19,11 +19,13 @@ class DashboardAnaliticoTests(TestCase):
     def noticia(self, clave, **extra):
         return Publicacion.objects.create(hash_origen=clave, titulo=clave, contenido='Texto', fecha_captura=datetime(2026, 10, 20, 12, tzinfo=timezone.utc), **extra)
 
-    def test_solo_superusuario_y_solo_consulta(self):
+    def test_administradores_y_solo_consulta(self):
         self.assertEqual(self.client.get(reverse('dashboard')).status_code, 302)
-        for usuario in (self.admin, self.lector):
+        for usuario in (self.lector,):
             self.client.force_login(usuario)
             self.assertEqual(self.client.get(reverse('dashboard')).status_code, 403)
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
         self.client.force_login(self.root)
         self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
         self.assertEqual(self.client.post(reverse('dashboard')).status_code, 405)
