@@ -62,3 +62,11 @@
   .news-search-form button { padding:12px; }
 }
 @media (prefers-reduced-motion:reduce) { .public-search-toggle, .search-page a { transition:none; } }
+
+/* Autocompletado: flujo normal, sin tapar controles del formulario en móvil. */
+.search-suggestions { margin-top:10px; max-height: min(55vh, 420px); overflow-y:auto; border:1px solid var(--edge-hi); border-radius:var(--r-sm); background:var(--ink-800); text-align:left; }
+.search-suggestions[hidden] { display:none; }
+.search-suggestions__heading { padding:12px 14px 6px; color:var(--aqua); font-size:.82rem; font-weight:600; }
+.search-suggestions [role="option"] { padding:11px 14px; cursor:pointer; overflow-wrap:anywhere; line-height:1.4; }
+.search-suggestions [role="option"]:hover,
+.search-suggestions [aria-selected="true"] { background:var(--aqua-soft); color:var(--mist); outline:1px solid var(--aqua-line); outline-offset:-1px; }
