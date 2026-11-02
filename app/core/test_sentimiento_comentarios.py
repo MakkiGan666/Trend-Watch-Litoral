@@ -275,7 +275,7 @@ class IntegracionVisualTests(TestCase):
 
     def test_con_analisis_se_muestra_badge_y_aclaracion(self):
         comentario = Comentario.objects.create(
-            publicacion=self.noticia, autor=self.usuario, texto='Es excelente',
+            publicacion=self.noticia, autor=self.usuario, texto='Es excelente', estado=Comentario.Estado.PUBLICADO,
         )
         servicio.analizar_comentario(comentario)
         response = self.client.get(reverse('noticia', args=[self.noticia.pk]))
@@ -285,7 +285,7 @@ class IntegracionVisualTests(TestCase):
 
     def test_etiqueta_no_censura_al_comentario(self):
         comentario = Comentario.objects.create(
-            publicacion=self.noticia, autor=self.usuario, texto='Fue terrible',
+            publicacion=self.noticia, autor=self.usuario, texto='Fue terrible', estado=Comentario.Estado.PUBLICADO,
         )
         servicio.analizar_comentario(comentario)
         response = self.client.get(reverse('noticia', args=[self.noticia.pk]))
@@ -330,7 +330,8 @@ class RegresionesAuditoriaPR31Tests(TestCase):
         cls.noticia = Publicacion.objects.create(hash_origen='aud31', titulo='t', contenido='c')
 
     def _comentario(self, texto='Es excelente'):
-        return Comentario.objects.create(publicacion=self.noticia, autor=self.usuario, texto=texto)
+        return Comentario.objects.create(publicacion=self.noticia, autor=self.usuario, texto=texto,
+                                        estado=Comentario.Estado.PUBLICADO)
 
     def _lote_mixto(self):
         nuevo = self._comentario()
@@ -358,7 +359,7 @@ class RegresionesAuditoriaPR31Tests(TestCase):
         self.assertEqual(SentimientoComentario.objects.get().etiqueta, 'positivo')
         comentario.refresh_from_db()
         servicio.analizar_comentario(comentario)
-        self.assertContains(self.client.get(url), 'comment-sentiment--negativo')
+        self.assertNotContains(self.client.get(url), 'comment-sentiment--negativo')
 
     def test_editar_fuera_del_formulario_tambien_oculta_etiqueta(self):
         comentario = self._comentario()

@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django import forms
 from django.contrib.auth import get_user_model
-from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.admin import GroupAdmin, UserAdmin
+from django.contrib.auth.models import Group
 from .services.identidad import errores_identidad, serializar_identidad
 from django.db import transaction
 from django.core.exceptions import PermissionDenied
@@ -18,6 +19,8 @@ from .models import (
     PublicacionTema,
     UserAuditoria,
     VotoPublicacion,
+    Comentario,
+    RevisionDepartamento,
 )
 
 
@@ -136,6 +139,23 @@ class LocacionAdmin(PublicacionRelacionAdmin):
     search_fields = ('location',)
 
 
+@admin.register(RevisionDepartamento)
+class RevisionDepartamentoAdmin(admin.ModelAdmin):
+    list_display = ('publicacion', 'metodo', 'estado', 'departamento', 'lugar', 'fecha_revision')
+    list_filter = ('metodo', 'estado', 'departamento')
+    search_fields = ('publicacion__titulo', 'lugar', 'evidencia')
+    readonly_fields = ('publicacion', 'metodo', 'estado', 'departamento', 'lugar', 'evidencia', 'modelo', 'historial', 'fecha_revision')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(RegistroDatos)
 class RegistroDatosAdmin(admin.ModelAdmin):
     list_display = ('id_registro', 'fecha_ejecucion', 'estado')
@@ -177,6 +197,22 @@ class VotoPublicacionAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
 
 
+@admin.register(Comentario)
+class ComentarioAdmin(admin.ModelAdmin):
+    list_display = ('id', 'publicacion', 'autor', 'estado', 'fecha_creacion')
+    list_filter = ('estado', 'fecha_creacion')
+    search_fields = ('texto', 'autor__username', 'publicacion__titulo')
+    actions = ('aprobar', 'rechazar')
+
+    @admin.action(description='Aprobar comentarios seleccionados')
+    def aprobar(self, request, queryset):
+        queryset.update(estado=Comentario.Estado.PUBLICADO)
+
+    @admin.action(description='Rechazar comentarios seleccionados')
+    def rechazar(self, request, queryset):
+        queryset.update(estado=Comentario.Estado.RECHAZADO)
+
+
 class IdentidadUsuarioMixin:
     def clean(self):
         data = super().clean()
@@ -206,8 +242,33 @@ if admin.site.is_registered(Usuario):
     admin.site.unregister(Usuario)
 
 
+class EscrituraTecnicaMixin:
+    """Usuarios y grupos son fronteras de privilegios, incluso con permisos antiguos."""
+    def changelist_view(self, request, extra_context=None):
+        if request.method == 'POST' and not self.has_change_permission(request):
+            raise PermissionDenied
+        return super().changelist_view(request, extra_context)
+
+    def has_add_permission(self, request):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+
+admin.site.unregister(Group)
+
+
+@admin.register(Group)
+class GrupoAdmin(EscrituraTecnicaMixin, GroupAdmin):
+    pass
+
+
 @admin.register(Usuario)
-class UsuarioAdmin(UserAdmin):
+class UsuarioAdmin(EscrituraTecnicaMixin, UserAdmin):
     add_form = UsuarioAltaForm
     form = UsuarioCambioForm
 

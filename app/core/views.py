@@ -3,7 +3,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.db.models import Exists, OuterRef
 from django.db.models.functions import Coalesce, TruncDate
 from django.core.paginator import Paginator
@@ -20,6 +20,7 @@ from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
 from django.urls import reverse
+from django.utils.text import slugify
 from django.utils.http import url_has_allowed_host_and_scheme
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
 from .busqueda_texto_v1 import plegar_v1
@@ -37,7 +38,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
+    Publicacion, Sentimiento, Locacion, Tema, PublicacionTema, Categoria, PublicacionGuardada
 )
 from .forms import FiltrosPublicaciones, PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
@@ -46,12 +47,14 @@ from .roles import PERMISOS_PANEL
 from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
 from .services.indicadores import resumen_publicaciones
+from .services.relevancia import noticias_destacadas_por_categoria, tendencias_destacadas, registrar_clic
 from .services.autenticacion import autenticar_identificador
 from .services.identidad import con_identidad_serializada, errores_identidad
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from .services.scraper import fetch_and_store_elterritorio
 from .services.clasificacion import vincular_categoria as _vincular_categoria
+from .services.clasificacion import CATEGORIAS_PROYECTO
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
@@ -65,27 +68,38 @@ from .services.integridad_sentimiento import (
 # ==========================================
 
 
-def landing(request):
-    """
-    Carga la portada (inicio.html) enviando las tendencias/temas destacados
-    y calculando el total de publicaciones por cada tema.
-    """
-    featured_trends = TemaTrend.objects.select_related(
-        'id_temas', 
-        'id_trends', 
-        'id_temas__id_categoria'
-    ).annotate(
-        publication_count=Count('id_temas__publicaciones')
-    ).all()[:6]
-
-    return render(request, 'inicio.html', {
-        'featured_trends': featured_trends,
+def _contexto_inicio(request):
+    return {
+        'categorias_inicio': noticias_destacadas_por_categoria(),
+        'tendencias_inicio': tendencias_destacadas(),
         'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
+    }
+
+
+def landing(request):
+    """Portada regional: hasta quince noticias por categoría y tendencias reales."""
+    return render(request, 'inicio.html', _contexto_inicio(request))
+
+def categorias(request):
+    tarjetas = [{'nombre': nombre, 'slug': slugify(nombre)} for nombre in CATEGORIAS_PROYECTO]
+    return render(request, 'categorias.html', {
+        'categorias_disponibles': tarjetas, 'departamentos': DEPARTAMENTOS,
+        'tendencias': tendencias_destacadas(),
     })
 
 
-def categorias(request):
-    return render(request, 'categorias.html')
+@require_safe
+def publicaciones_categoria(request, slug):
+    categoria = next((nombre for nombre in CATEGORIAS_PROYECTO if slugify(nombre) == slug), None)
+    if categoria is None:
+        raise Http404('Categoría no encontrada')
+    publicaciones = (Publicacion.objects.filter(
+        temas__id_categoria__nombre_categoria=categoria,
+    ).distinct().order_by(*_orden_por_publicacion()))
+    pagina = Paginator(publicaciones, 24).get_page(request.GET.get('pagina'))
+    return render(request, 'categoria_noticias.html', {
+        'categoria': categoria, 'pagina': pagina,
+    })
 
 
 @require_safe
@@ -107,6 +121,7 @@ def credito_fuente(fuente):
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
     publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
+    registrar_clic(publicacion, request.user)
     categorias_noticia = _categorias_de_publicacion(publicacion)
     localidades_noticia = list(dict.fromkeys(
         Locacion.objects.filter(id_publicacion_api=publicacion)
@@ -280,12 +295,8 @@ def login_view(request):
             status=400,
         )
 
-    featured_trends = TemaTrend.objects.select_related(
-        'id_temas', 'id_trends', 'id_temas__id_categoria'
-    ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
-
     return render(request, 'inicio.html', {
-        'featured_trends': featured_trends,
+        **_contexto_inicio(request),
         'open_login_modal': True,
         'login_identifier': identifier,
         'login_error': error_message,

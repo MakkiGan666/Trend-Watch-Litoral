@@ -5,12 +5,13 @@ from django.contrib.auth.forms import PasswordChangeForm
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Case, Count, IntegerField, Q, Value, When
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms_perfil import PerfilForm
 from .services.identidad import serializar_identidad
-from .models import PerfilUsuario, Publicacion, PublicacionGuardada
+from .models import PerfilUsuario, Publicacion, PublicacionGuardada, ValoracionPublicacion
 
 
 @login_required(login_url='login')
@@ -64,14 +65,47 @@ def perfil(request, seccion='datos'):
                     return redirect('perfil')
         status = 400
     guardados = None
+    recomendaciones = []
     if seccion == 'guardados':
         guardados = Paginator(
             PublicacionGuardada.objects.filter(usuario=request.user).select_related('publicacion').defer(
                 'publicacion__titulo_busqueda', 'publicacion__contenido_busqueda',
             ), 12
         ).get_page(request.GET.get('pagina'))
+        guardados_ids = list(PublicacionGuardada.objects.filter(usuario=request.user).values_list('publicacion_id', flat=True))
+        positivos_ids = list(ValoracionPublicacion.objects.filter(
+            usuario=request.user, sentimiento=ValoracionPublicacion.Sentimiento.POSITIVO,
+        ).values_list('publicacion_id', flat=True))
+        preferidos_ids = set(guardados_ids + positivos_ids)
+        if preferidos_ids:
+            negativos_ids = list(ValoracionPublicacion.objects.filter(
+                usuario=request.user, sentimiento=ValoracionPublicacion.Sentimiento.NEGATIVO,
+            ).values_list('publicacion_id', flat=True))
+            categorias_ids = list(Publicacion.objects.filter(
+                pk__in=preferidos_ids, temas__id_categoria_id__isnull=False,
+            ).values_list('temas__id_categoria_id', flat=True).distinct())
+            departamentos = list(Publicacion.objects.filter(pk__in=preferidos_ids).exclude(
+                departamento='',
+            ).values_list('departamento', flat=True).distinct())
+            coincidencias = Q()
+            if categorias_ids:
+                coincidencias |= Q(temas__id_categoria_id__in=categorias_ids)
+            if departamentos:
+                coincidencias |= Q(departamento__in=departamentos)
+            if coincidencias:
+                recomendaciones = list(Publicacion.objects.filter(coincidencias).exclude(
+                    pk__in=preferidos_ids,
+                ).exclude(pk__in=negativos_ids).annotate(
+                    afinidad=Count('temas__id_categoria_id',
+                                   filter=Q(temas__id_categoria_id__in=categorias_ids), distinct=True),
+                    proximidad=Case(When(departamento__in=departamentos, then=Value(1)),
+                                    default=Value(0), output_field=IntegerField()),
+                ).order_by(
+                    '-afinidad', '-proximidad', '-fecha_publicacion', '-pk',
+                ).distinct()[:3])
     return render(request, 'core/perfil.html', {
-        'seccion': seccion, 'datos_form': datos, 'password_form': password, 'guardados': guardados,
+        'seccion': seccion, 'datos_form': datos, 'password_form': password,
+        'guardados': guardados, 'recomendaciones': recomendaciones,
     }, status=status)
 
 

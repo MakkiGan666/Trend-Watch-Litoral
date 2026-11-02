@@ -18,7 +18,8 @@ class ComentariosTests(TestCase):
         cls.noticia = Publicacion.objects.create(hash_origen='comentarios-prueba', titulo='Noticia de prueba', contenido='Contenido')
 
     def comentario(self, texto='Comentario de prueba'):
-        return Comentario.objects.create(publicacion=self.noticia, autor=self.autor, texto=texto)
+        return Comentario.objects.create(publicacion=self.noticia, autor=self.autor, texto=texto,
+                                        estado=Comentario.Estado.PUBLICADO)
 
     def test_lectura_publica_y_html_escapado_sin_acciones_ajenas(self):
         comentario = self.comentario('<script>alert(1)</script>')
@@ -50,7 +51,10 @@ class ComentariosTests(TestCase):
         self.assertEqual(comentario.autor, self.autor)
         self.assertEqual(comentario.publicacion, self.noticia)
         self.assertEqual(comentario.texto, 'Mi opinión')
+        self.assertEqual(comentario.estado, Comentario.Estado.PENDIENTE)
         self.assertContains(self.client.get(reverse('noticia', args=[self.noticia.pk])), 'Mi opinión')
+        self.client.logout()
+        self.assertNotContains(self.client.get(reverse('noticia', args=[self.noticia.pk])), 'Mi opinión')
 
     def test_vacio_largo_y_noticia_inexistente(self):
         self.client.force_login(self.autor)
@@ -74,6 +78,7 @@ class ComentariosTests(TestCase):
         self.assertEqual(comentario.texto, 'Actualizado')
         self.assertEqual(comentario.fecha_creacion, original)
         self.assertIsNotNone(comentario.fecha_edicion)
+        self.assertEqual(comentario.estado, Comentario.Estado.PENDIENTE)
         self.assertEqual(self.client.post(reverse('eliminar_comentario', args=[comentario.pk])).status_code, 302)
         self.assertFalse(Comentario.objects.exists())
 

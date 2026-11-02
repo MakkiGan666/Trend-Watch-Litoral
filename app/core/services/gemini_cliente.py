@@ -88,8 +88,8 @@ class ConflictoResultadoIA(ValueError):
 
 
 class GeminiCliente:
-    def __init__(self, api_key=None, model_name='gemini-3.8-flash'):
-        self.model_name = model_name
+    def __init__(self, api_key=None, model_name=None):
+        self.model_name = model_name or settings.GEMINI_MODEL
         self.api_key = api_key or getattr(settings, 'GEMINI_API_KEY', None)
         self.client = None
         self.types = None

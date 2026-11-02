@@ -30,3 +30,10 @@
 .publication-editor__actions{display:flex;flex-wrap:wrap;gap:12px;padding-top:22px;margin-top:4px;border-top:1px solid var(--edge)}
 @media(max-width:760px){.publication-editor{margin-top:20px}.publication-editor__card{padding:24px;border-radius:22px}.publication-editor__options{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:420px){.publication-editor__card{padding:20px}.publication-editor__options{grid-template-columns:1fr}.publication-editor__actions .btn{width:100%}}
+
+/* Compartir el control de contraseña sin ampliar el campo en móvil. */
+.publication-editor__password{position:relative;min-width:0}
+.publication-editor__password input{padding-right:52px}
+.publication-editor__password .input__toggle{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px}
+.publication-editor__password .input__toggle[hidden]{display:none}
+.publication-editor__password .input__toggle:focus-visible{outline:2px solid var(--aqua);outline-offset:1px}

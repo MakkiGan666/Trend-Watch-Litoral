@@ -5,6 +5,7 @@ from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
 from . import views_dashboard
+from .views_administradores import gestion_administradores
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -17,6 +18,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('administradores/', gestion_administradores, name='gestion_administradores'),
     path('buscar/', buscar_noticias, name='buscar_noticias'),
     path('perfil/', views_perfil.perfil, name='perfil'),
     path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
@@ -25,6 +27,7 @@ urlpatterns = [
     # Vistas Web / Templates
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),
+    path('categorias/<slug:slug>/', views.publicaciones_categoria, name='publicaciones_categoria'),
     path('noticia/<int:pk>/', views.noticia, name='noticia'),
     path('noticia/<int:pk>/comentarios/', views_comentarios.crear_comentario, name='crear_comentario'),
     path('noticia/<int:pk>/valoracion/', views_valoraciones.valorar_noticia, name='valorar_noticia'),

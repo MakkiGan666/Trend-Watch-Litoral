@@ -9,7 +9,7 @@
       {% csrf_token %}
       {{ comentario_form.texto.label_tag }}
       {{ comentario_form.texto }}
-      <div class="news-comments__submit"><small>Máximo 2000 caracteres.</small><button class="btn btn--primary" type="submit">Publicar comentario</button></div>
+      <div class="news-comments__submit"><small>Máximo 2000 caracteres. Los comentarios se revisan antes de publicarse.</small><button class="btn btn--primary" type="submit">Enviar comentario</button></div>
     </form>
   {% else %}
     <div class="news-comments__invitation"><p>Iniciá sesión para escribir un comentario.</p><a class="btn btn--ghost" href="#login-modal" aria-haspopup="dialog">Ingresar para participar</a></div>
@@ -19,9 +19,10 @@
       <article class="news-comment" id="comentario-{{ comentario.pk }}">
         <header class="news-comment__head">
           <strong>{{ comentario.autor.username|default:"Usuario eliminado" }}</strong>
+          {% if comentario.estado == 'pendiente' %}<span class="news-comment__edited">Pendiente de revisión · solo vos podés verlo</span>{% elif comentario.estado == 'rechazado' %}<span class="news-comment__edited">No publicado · solo vos podés verlo</span>{% endif %}
           <time datetime="{{ comentario.fecha_creacion|date:'c' }}">{{ comentario.fecha_creacion|date:"d/m/Y H:i" }}</time>
           {% if comentario.fecha_edicion %}<span class="news-comment__edited">Editado el {{ comentario.fecha_edicion|date:"d/m/Y H:i" }}</span>{% endif %}
-          {% include "partials/_sentimiento_comentario.html" with comentario=comentario %}
+          {% if comentario.estado == 'publicado' %}{% include "partials/_sentimiento_comentario.html" with comentario=comentario %}{% endif %}
         </header>
         <div class="news-comment__text">{{ comentario.texto|linebreaksbr }}</div>
         {% if request.user.is_authenticated %}

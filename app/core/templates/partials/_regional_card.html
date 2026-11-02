@@ -1,0 +1,11 @@
+<a class="news-card" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}">
+  <div class="news-card__media">
+    {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
+    {% else %}<span class="news-card__fallback">Imagen no disponible</span>{% endif %}
+  </div>
+  <div class="news-card__body">
+    <span class="news-card__source">{{ publicacion.fuente }}</span>
+    <h3>{{ publicacion.titulo }}</h3>
+    <span class="news-card__link">Leer noticia →</span>
+  </div>
+</a>

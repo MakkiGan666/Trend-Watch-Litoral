@@ -27,6 +27,19 @@ class PublicacionGuardada(models.Model):
         constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='guardado_unico_usuario_noticia')]
 
 
+class ClicPublicacion(models.Model):
+    """Lectura única por usuario y noticia, con actividad reciente para tendencias."""
+
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='clics_noticias')
+    publicacion = models.ForeignKey('Publicacion', on_delete=models.CASCADE, related_name='clics')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    ultima_visita = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='clic_unico_usuario_noticia')]
+        indexes = [models.Index(fields=['fecha_creacion'], name='clic_noticia_fecha_idx')]
+
+
 class Role(models.Model):
     id_rol = models.AutoField(primary_key=True)
     nombre_rol = models.CharField(max_length=100)
@@ -114,6 +127,34 @@ class Publicacion(models.Model):
         return self.imagen_archivo.url if self.imagen_archivo else self.imagen_url
 
 
+class RevisionDepartamento(models.Model):
+    """Decisión auditable para noticias que llegaron sin departamento."""
+
+    class Metodo(models.TextChoices):
+        REGLAS = 'reglas', 'Reglas locales'
+        IA = 'ia', 'IA'
+
+    class Estado(models.TextChoices):
+        ASIGNADO = 'asignado', 'Departamento asignado'
+        PROVINCIAL = 'provincial', 'Misiones sin departamento claro'
+        FUERA = 'fuera', 'Fuera de Misiones'
+        VARIOS = 'varios', 'Varios departamentos'
+        SIN_EVIDENCIA = 'sin_evidencia', 'Sin evidencia suficiente'
+
+    publicacion = models.OneToOneField(Publicacion, on_delete=models.CASCADE, related_name='revision_departamento')
+    metodo = models.CharField(max_length=8, choices=Metodo.choices)
+    estado = models.CharField(max_length=16, choices=Estado.choices)
+    departamento = models.CharField(max_length=30, blank=True, default='')
+    lugar = models.CharField(max_length=80, blank=True, default='')
+    evidencia = models.CharField(max_length=240, blank=True, default='')
+    modelo = models.CharField(max_length=80, blank=True, default='')
+    historial = models.JSONField(default=list, blank=True)
+    fecha_revision = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Revisión territorial de publicación #{self.publicacion_id}: {self.get_estado_display()}'
+
+
 class Categoria(models.Model):
     id_categoria = models.AutoField(primary_key=True)
     nombre_categoria = models.CharField(max_length=100)
@@ -158,6 +199,8 @@ class Tema(models.Model):
 
 
 class PublicacionTema(models.Model):
+    # Las tablas históricas usan AutoField; declararlo evita cambios de tipo espurios.
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_publicacion_api = models.ForeignKey(
         Publicacion, on_delete=models.CASCADE, db_column='id_publicacion_api'
     )
@@ -171,6 +214,7 @@ class PublicacionTema(models.Model):
 
 
 class TemaTrend(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_temas = models.ForeignKey(
         Tema, on_delete=models.CASCADE, db_column='id_temas'
     )
@@ -209,6 +253,7 @@ class Sentimiento(models.Model):
 
 
 class VotoPublicacion(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_user = models.ForeignKey(
         User, on_delete=models.CASCADE, db_column='id_user'
     )
@@ -240,6 +285,7 @@ class Auditoria(models.Model):
 
 
 class UserAuditoria(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_user = models.ForeignKey(
         User, on_delete=models.CASCADE, db_column='id_user'
     )
@@ -253,9 +299,15 @@ class UserAuditoria(models.Model):
 
 
 class Comentario(models.Model):
+    class Estado(models.TextChoices):
+        PENDIENTE = 'pendiente', 'Pendiente de revisión'
+        PUBLICADO = 'publicado', 'Publicado'
+        RECHAZADO = 'rechazado', 'Rechazado'
+
     publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='comentarios')
     autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='comentarios_noticias')
     texto = models.TextField(max_length=2000)
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_edicion = models.DateTimeField(null=True, blank=True)
 

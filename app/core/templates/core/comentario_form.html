@@ -14,7 +14,7 @@
       {{ form.texto.label_tag }}
       {{ form.texto }}
       {% if form.texto.errors %}<div role="alert" class="news-comments__errors">{{ form.texto.errors }}</div>{% endif %}
-      <div class="news-comments__submit"><small>Máximo 2000 caracteres.</small><button class="btn btn--primary" type="submit">{% if comentario %}Guardar cambios{% else %}Publicar comentario{% endif %}</button><a class="btn btn--ghost" href="{% url 'noticia' publicacion.pk %}?pagina_comentarios={{ pagina_comentarios }}#comentarios">Cancelar</a></div>
+      <div class="news-comments__submit"><small>Máximo 2000 caracteres.</small><button class="btn btn--primary" type="submit">{% if form.errors %}Volver a intentar{% elif comentario %}Guardar cambios{% else %}Publicar comentario{% endif %}</button><a class="btn btn--ghost" href="{% url 'noticia' publicacion.pk %}?pagina_comentarios={{ pagina_comentarios }}#comentarios">Cancelar</a></div>
     </form>
   </section>
 </div>

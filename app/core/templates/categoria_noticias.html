@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ categoria }} · Categorías · TrendWatch Litoral{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=8">
+<link rel="stylesheet" href="{% static 'css/category-news.css' %}?v=1">
+{% endblock %}
+
+{% block content %}
+<div class="wrap category-news">
+  <a class="btn btn--ghost" href="{% url 'categorias' %}#categorias">← Volver a Categorías</a>
+  <header class="category-news__head">
+    <p>Categoría</p>
+    <h1>{{ categoria }}</h1>
+    <p>{{ pagina.paginator.count }} noticia{{ pagina.paginator.count|pluralize }} asociada{{ pagina.paginator.count|pluralize }} a esta categoría.</p>
+  </header>
+  <div class="category-news__grid">
+    {% for publicacion in pagina %}
+    <a class="news-card" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}">
+      <div class="news-card__media">
+        {% if publicacion.imagen_publica_url %}
+          <img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
+        {% else %}
+          <span class="news-card__fallback">Imagen no disponible</span>
+        {% endif %}
+      </div>
+      <div class="news-card__body">
+        <span class="news-card__source">{{ publicacion.fuente }}</span>
+        <h2>{{ publicacion.titulo }}</h2>
+        <span class="news-card__link">Leer noticia →</span>
+      </div>
+    </a>
+    {% empty %}
+      <p class="category-news__empty">Todavía no hay noticias confirmadas en esta categoría.</p>
+    {% endfor %}
+  </div>
+  {% if pagina.has_other_pages %}
+  <nav class="category-news__pagination" aria-label="Páginas de {{ categoria }}">
+    {% if pagina.has_previous %}<a class="btn btn--ghost" href="?pagina={{ pagina.previous_page_number }}">← Anteriores</a>{% endif %}
+    <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+    {% if pagina.has_next %}<a class="btn btn--ghost" href="?pagina={{ pagina.next_page_number }}">Siguientes →</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
