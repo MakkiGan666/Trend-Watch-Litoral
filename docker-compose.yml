@@ -36,6 +36,22 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  ingesta:
+    build: .
+    env_file:
+      - .env
+    command: python manage.py ingestar_recientes
+    restart: unless-stopped
+    # Mostrar el avance de cada RSS sin esperar al fin del ciclo.
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_HOST: db
+      DB_PORT: 5432
+    volumes:
+      - ./app:/app
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   postgres_data:

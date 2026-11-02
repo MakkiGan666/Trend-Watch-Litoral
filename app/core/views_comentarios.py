@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -12,8 +13,13 @@ from .models import Comentario, Publicacion
 
 
 def contexto_comentarios(request, publicacion):
-    pagina = Paginator(publicacion.comentarios.select_related('autor'), 10).get_page(
-        request.GET.get('pagina_comentarios')
+    # `select_related('sentimiento')` evita una consulta extra por comentario al
+    # pintar la etiqueta de análisis automático en la plantilla.
+    visibles = Q(estado=Comentario.Estado.PUBLICADO)
+    if request.user.is_authenticated:
+        visibles |= Q(autor=request.user)
+    pagina = Paginator(publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento'), 10).get_page(
+        request.GET.get('pagina_comentarios'),
     )
     return {
         'comentarios_pagina': pagina,
@@ -44,10 +50,10 @@ def crear_comentario(request, pk):
         comentario.publicacion = publicacion
         comentario.autor = request.user
         comentario.save()
-        messages.success(request, 'Comentario publicado.')
+        messages.success(request, 'Comentario enviado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(pk, comentario_id=comentario.pk))
     return render(request, 'core/comentario_form.html', {
-        'form': form, 'publicacion': publicacion, 'titulo': 'Publicar comentario',
+        'form': form, 'publicacion': publicacion, 'titulo': 'Revisá tu comentario',
         'pagina_comentarios': 1,
     }, status=400)
 
@@ -64,12 +70,14 @@ def editar_comentario(request, pk):
     if request.method == 'POST' and form.is_valid():
         comentario = form.save(commit=False)
         comentario.fecha_edicion = timezone.now()
-        comentario.save(update_fields=['texto', 'fecha_edicion'])
-        messages.success(request, 'Comentario actualizado.')
+        comentario.estado = Comentario.Estado.PENDIENTE
+        comentario.save(update_fields=['texto', 'fecha_edicion', 'estado'])
+        messages.success(request, 'Comentario editado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(comentario.publicacion_id, _pagina(request), comentario.pk))
     return render(request, 'core/comentario_form.html', {
         'form': form, 'comentario': comentario, 'publicacion': comentario.publicacion,
-        'titulo': 'Editar comentario', 'pagina_comentarios': _pagina(request),
+        'titulo': 'Revisá tu comentario' if form.errors else 'Editar comentario',
+        'pagina_comentarios': _pagina(request),
     }, status=400 if request.method == 'POST' else 200)
 
 

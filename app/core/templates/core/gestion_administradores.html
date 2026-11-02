@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Gestión de administradores · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/publication-form.css' %}?v=3">{% endblock %}
+{% block content %}
+<div class="wrap publication-editor">
+  <a class="btn btn--ghost publication-editor__back" href="{% url 'publicaciones' %}">← Volver a Publicaciones</a>
+  <section class="publication-editor__card glass glass--sheen" aria-labelledby="administradores-title">
+    <header class="publication-editor__head">
+      <h1 id="administradores-title">Gestión de administradores</h1>
+      <p>Crear administrador</p>
+      <p>La nueva cuenta tendrá los permisos del rol Administrador y podrá crear otros administradores.</p>
+    </header>
+    {% for message in messages %}<p role="status">{{ message }}</p>{% endfor %}
+    <form method="post" class="publication-editor__form">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="publication-editor__errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in form %}
+      <div class="publication-editor__field">
+        <label for="{{ field.id_for_label }}">{{ field.label }} <span aria-hidden="true">*</span></label>
+        {% if field.field.widget.input_type == 'password' %}
+        <div class="publication-editor__password">
+          {{ field }}
+          {% include "partials/_password_toggle.html" with input_id=field.id_for_label %}
+        </div>
+        {% else %}
+        {{ field }}
+        {% endif %}
+        {% if field.help_text %}<div class="publication-editor__hint">{{ field.help_text }}</div>{% endif %}
+        {% if field.errors %}<div class="publication-editor__errors" role="alert">{{ field.errors }}</div>{% endif %}
+      </div>
+      {% endfor %}
+      <div class="publication-editor__actions">
+        <button type="submit" class="btn btn--primary">Crear administrador</button>
+        <a class="btn btn--ghost" href="{% url 'publicaciones' %}">Cancelar</a>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

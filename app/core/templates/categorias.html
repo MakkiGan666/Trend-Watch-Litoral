@@ -9,8 +9,9 @@
 {% block extra_head %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="{% static 'css/categories-map.css' %}?v=1">
-<link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=2">
-<link rel="stylesheet" href="{% static 'css/categories-layout.css' %}?v=9">
+<link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/categories-layout.css' %}?v=10">
+<link rel="stylesheet" href="{% static 'css/trends-cards.css' %}?v=1">
 {% endblock %}
 
 {% block categories_nav %}
@@ -18,8 +19,7 @@
         <div class="categories-dropdown" id="categories-dropdown">
           <button class="categories-dropdown__toggle" type="button" aria-expanded="true" aria-controls="categories-nav-menu">Categorías <svg class="categories-dropdown__arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
           <div class="categories-dropdown__panel" id="categories-nav-menu">
-            <a href="#localidades">Localidades</a>
-            <a href="#grafico">Análisis</a>
+            <a href="#localidades">Municipios</a>
             <a href="#resultados">Tendencias</a>
           </div>
         </div>
@@ -44,40 +44,21 @@
       <section id="categorias" aria-labelledby="h-cat">
         <h2 id="h-cat" class="sr-only">Categorías disponibles</h2>
         <div class="cat-grid">
-          <a class="cat glass glass--sheen reveal" href="/#news-heading-salud">
+          {% for categoria in categorias_disponibles %}
+          <a class="cat glass glass--sheen reveal" href="{% url 'publicaciones_categoria' categoria.slug %}">
             <div class="cat__top">
               <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linecap="round"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg></span>
             </div>
-            <h3>Salud</h3>
-            <p>Hospitales, campañas y prevención</p>
+            <h3>{{ categoria.nombre }}</h3>
+            <p>Ver todas las noticias de {{ categoria.nombre }}</p>
           </a>
-          <a class="cat glass glass--sheen reveal" href="/#news-heading-policiales">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/></svg></span>
-            </div>
-            <h3>Policiales</h3>
-            <p>Policiales y prevención</p>
-          </a>
-          <a class="cat glass glass--sheen reveal" href="/#news-heading-turismo">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21c4-3.5 6-7 6-10a6 6 0 10-12 0c0 3 2 6.5 6 10z"/><circle cx="12" cy="11" r="2.2"/></svg></span>
-            </div>
-            <h3>Turismo</h3>
-            <p>Cataratas, temporada y servicios</p>
-          </a>
-          <a class="cat glass glass--sheen reveal" href="/#news-heading-festividades">
-            <div class="cat__top">
-              <span class="cat__icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#3FD0B4" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20V6l8-3 8 3v14"/><path d="M4 20h16M9 20v-5h6v5"/></svg></span>
-            </div>
-            <h3>Festividades</h3>
-            <p>Festividades y patrimonio</p>
-          </a>
+          {% endfor %}
         </div>
       </section>
 
       <section id="localidades" aria-labelledby="h-localidades">
-        <h2 id="h-localidades">Localidades</h2>
-        <p class="sub" style="margin-bottom:16px">Consultá las noticias asociadas a los 17 departamentos de Misiones.</p>
+        <h2 id="h-localidades">Municipios</h2>
+        <p class="sub" style="margin-bottom:16px">Elegí uno de los 17 departamentos para consultar noticias de sus municipios.</p>
         <div class="locality-grid">
           <a class="locality-card reveal" href="{% url 'localidad' 'capital' %}" aria-label="Ver noticias de Capital">
             <img class="locality-card__photo" src="{% static 'mockup/Capital_fondo.png' %}" alt="" loading="lazy" width="400" height="250">
@@ -186,11 +167,12 @@
 
       <section id="resultados" class="chart-card glass glass--sheen reveal" aria-labelledby="h-tendencias">
         <h2 id="h-tendencias">Tendencias</h2>
-        <p class="sub">Todavía no hay tendencias verificadas disponibles para mostrar en esta sección.</p>
-      </section>
-      <section id="grafico" class="chart-card glass glass--sheen reveal" aria-labelledby="h-analisis">
-        <h2 id="h-analisis">Análisis</h2>
-        <p class="sub">Todavía no hay una serie temporal real disponible para graficar.</p>
+        <p class="sub">{% if tendencias.0.estimada %}Selección regional mientras se registran lecturas.{% else %}Noticias más leídas por usuarios registrados en los últimos siete días.{% endif %}</p>
+        <ol class="category-trends trend-card-list">
+          {% for tendencia in tendencias %}
+          {% include "partials/_tendencia_card.html" with numero=forloop.counter destacada=forloop.first %}
+          {% empty %}<li class="trend-card-list__empty">Todavía no hay noticias regionales identificadas.</li>{% endfor %}
+        </ol>
       </section>
 
       <section class="categories-map-section" id="mapa-misiones" aria-labelledby="map-title">
@@ -205,10 +187,10 @@
             <h3 id="map-selection-title">Elegí un punto del mapa</h3>
             <p id="map-status" role="status">Cargando mapa…</p>
             <a class="btn btn--ghost" id="map-news-link" hidden>Ver noticias del departamento →</a>
-            <p class="categories-map-note">También podés acceder desde las tarjetas de Localidades.</p>
+            <p class="categories-map-note">También podés acceder desde las tarjetas de Municipios.</p>
           </aside>
         </div>
-        <noscript><p>Activá JavaScript para explorar el mapa. Las tarjetas de Localidades permiten consultar las noticias.</p></noscript>
+        <noscript><p>Activá JavaScript para explorar el mapa. Las tarjetas de Municipios permiten consultar las noticias.</p></noscript>
       </section>
 
     </div>

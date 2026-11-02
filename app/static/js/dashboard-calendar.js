@@ -9,6 +9,8 @@
   const panel = wrapper.querySelector('#dashboard-calendar');
   const heading = panel.querySelector('[data-calendar-month]');
   const days = panel.querySelector('[data-calendar-days]');
+  const monthSelect = panel.querySelector('[data-calendar-month-select]');
+  const yearInput = panel.querySelector('[data-calendar-year-input]');
   const minimum = new Date(2026, 0, 1, 12);
   const clamp = date => date < minimum ? new Date(minimum) : date;
   const monthFormat = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
@@ -21,6 +23,7 @@
   function sync() { value.textContent = input.value ? shortFormat.format(parse(input.value)) : 'Todas las fechas'; }
   function close(returnFocus = false) {
     panel.hidden = true;
+    wrapper.classList.remove('is-open');
     trigger.setAttribute('aria-expanded', 'false');
     form.classList.remove('is-calendar-open');
     if (returnFocus) trigger.focus();
@@ -34,6 +37,8 @@
   }
   function draw(focusDay = false) {
     heading.textContent = monthFormat.format(month);
+    monthSelect.value = String(month.getMonth());
+    yearInput.value = String(month.getFullYear());
     const previous = panel.querySelector('[data-calendar-prev]');
     const atMinimum = month.getFullYear() === 2026 && month.getMonth() === 0;
     // Pasar el foco antes de desactivar la flecha evita que el popup se cierre.
@@ -70,6 +75,7 @@
     focused = clamp(input.value ? parse(input.value) : new Date());
     month = new Date(focused.getFullYear(), focused.getMonth(), 1, 12);
     panel.hidden = false;
+    wrapper.classList.add('is-open');
     form.classList.add('is-calendar-open');
     trigger.setAttribute('aria-expanded', 'true');
     draw(true);
@@ -77,13 +83,35 @@
   function moveMonth(delta, focusDay = false) {
     const nextMonth = new Date(month.getFullYear(), month.getMonth() + delta, 1, 12);
     if (nextMonth < minimum) return;
+    // En dispositivos táctiles el clic no siempre enfoca la flecha. Mantener
+    // el foco dentro del panel al reemplazar los días del mes anterior.
+    if (!focusDay) {
+      panel.querySelector(delta < 0 ? '[data-calendar-prev]' : '[data-calendar-next]')
+        .focus({ preventScroll: true });
+    }
     month = nextMonth;
     focused = new Date(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()), 12);
     draw(focusDay);
   }
+  function jumpToMonth() {
+    const year = Number(yearInput.value);
+    const selectedMonth = Number(monthSelect.value);
+    if (!Number.isInteger(year) || year < 2026 || year > 9999 || !Number.isInteger(selectedMonth)) {
+      draw();
+      return;
+    }
+    month = new Date(year, selectedMonth, 1, 12);
+    focused = new Date(year, selectedMonth, Math.min(focused.getDate(), new Date(year, selectedMonth + 1, 0).getDate()), 12);
+    draw();
+  }
   trigger.addEventListener('click', () => panel.hidden ? open() : close());
   panel.querySelector('[data-calendar-prev]').addEventListener('click', () => moveMonth(-1));
   panel.querySelector('[data-calendar-next]').addEventListener('click', () => moveMonth(1));
+  monthSelect.addEventListener('change', jumpToMonth);
+  yearInput.addEventListener('change', jumpToMonth);
+  yearInput.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); jumpToMonth(); }
+  });
   panel.querySelector('[data-calendar-today]').addEventListener('click', () => choose(new Date()));
   panel.querySelector('[data-calendar-clear]').addEventListener('click', () => choose(null));
   days.addEventListener('keydown', event => {
@@ -101,13 +129,9 @@
     }
   });
   wrapper.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) { event.preventDefault(); close(true); } });
-  document.addEventListener('click', event => { if (!wrapper.contains(event.target)) close(); });
-  wrapper.addEventListener('focusout', () => {
-    // Esperar a que termine el cambio de mes y el navegador asigne el nuevo foco.
-    setTimeout(() => {
-      if (!panel.hidden && !wrapper.contains(document.activeElement)) close();
-    }, 0);
-  });
+  // No cerrar por clic o foco fuera del panel: al reconstruir los días del mes,
+  // algunos navegadores informan transitoriamente que el foco salió del calendario.
+  // El botón principal, Escape y la elección de una fecha sí lo cierran.
   form.addEventListener('reset', () => { close(); setTimeout(sync, 0); });
   input.addEventListener('change', sync);
   sync();

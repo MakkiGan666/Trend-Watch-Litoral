@@ -1,6 +1,6 @@
 # Dashboard y Publicaciones
 
-`/publicaciones/` conserva el CRUD y los filtros de gestión, protegido por el conjunto de permisos existente. `/dashboard/` pasa a ser un panel analítico exclusivo de `is_superuser`, con control en servidor; no alcanza con ser staff o pertenecer al grupo Administrador.
+`/publicaciones/` conserva el CRUD y los filtros de gestión para el rol Administrador. `/dashboard/` queda reservado a superusuarios, con control en servidor. La gestión de administradores y su alcance se describen en [gestion-administradores.md](gestion-administradores.md).
 
 El Dashboard consulta todas las publicaciones coincidentes, sin límite de 100, mediante filtros GET por fechas inclusivas, categoría asociada, fuente y departamento. Usa fecha de publicación o, si falta, captura, interpretadas en Argentina. Las relaciones múltiples no duplican publicaciones. Categorías y departamentos pueden sumar más que el total porque una publicación puede tener varias asociaciones.
 
@@ -14,8 +14,8 @@ No requiere migraciones ni dependencias nuevas. Pruebas: `python manage.py test 
 
 ## Inicio y navegación
 
-La navbar del superusuario sigue el orden Inicio / Publicaciones / Categorías / Dashboard. Administradores sin condición de superusuario conservan Publicaciones, pero no acceden al Dashboard. Los visitantes y lectores comunes no reciben accesos administrativos.
+La navbar muestra Inicio / Publicaciones / Categorías / Dashboard / Administradores según el usuario. Dashboard sólo aparece para superusuarios; el alta controlada de administradores está disponible para el rol autorizado. Los visitantes y lectores comunes no reciben accesos administrativos.
 
-Inicio muestra exclusivamente a superusuarios tres indicadores antes de Salud: publicaciones, con análisis y pendientes. Usa la misma función de conteo que Dashboard, sobre toda la base y sin disparar IA. Si hay inconsistencias se informa su cantidad para que los tres números no se interpreten como una partición completa. El backend no calcula ni envía esos indicadores a otras cuentas. Tendencias y Cotizaciones permanecen en el lateral.
+Inicio muestra sólo a superusuarios tres indicadores antes de las noticias regionales: publicaciones, con análisis y pendientes. Usa la misma función de conteo que Dashboard, sobre toda la base y sin disparar IA. Si hay inconsistencias se informa su cantidad para que los tres números no se interpreten como una partición completa. El backend no calcula ni envía esos indicadores a otras cuentas. Tendencias y Cotizaciones permanecen en el lateral.
 
 Pruebas adicionales: `core.test_navegacion_admin` y `core.test_indicadores_inicio`.

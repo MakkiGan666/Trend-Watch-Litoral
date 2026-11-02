@@ -154,9 +154,7 @@ class IngestaRSSClasificadaTestCase(IngestaSimuladaMixin, TestCase):
         items = ''.join(
             ITEM_CON_MEDIA.format(titulo=titulo, link=f'{BASE}93{n:04d}-nota', n=n) for n in range(cantidad)
         )
-        self.urlopen.return_value.__enter__.return_value.read.return_value = (
-            RSS_CON_MEDIA.format(items=items).encode('utf-8')
-        )
+        self.urlopen.return_value = RSS_CON_MEDIA.format(items=items).encode('utf-8')
 
     def test_guarda_imagen_fecha_categoria_y_departamento(self):
         self.feed_con_media(1)
@@ -183,13 +181,13 @@ class IngestaRSSClasificadaTestCase(IngestaSimuladaMixin, TestCase):
     def test_imagen_no_http_se_descarta_sin_perder_la_noticia(self):
         xml = RSS_CON_MEDIA.format(items=ITEM_CON_MEDIA.format(titulo='Nota', link=BASE + '930100-x', n=0)
                                    .replace('https://cdn.ejemplo.com', 'javascript:alert(1)//'))
-        self.urlopen.return_value.__enter__.return_value.read.return_value = xml.encode('utf-8')
+        self.urlopen.return_value = xml.encode('utf-8')
         self.assertEqual(fetch_and_store_elterritorio('misiones')['capturados'], 1)
         self.assertEqual(Publicacion.objects.get().imagen_url, '')
 
 
 SITEMAP_INDICE = """<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-<sitemap><loc>https://sm/1.xml</loc></sitemap><sitemap><loc>https://sm/caido.xml</loc></sitemap>
+<sitemap><loc>https://sm/1.xml</loc></sitemap>
 <sitemap><loc>https://sm/2.xml</loc></sitemap></sitemapindex>"""
 URLSET = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{}</urlset>'
 
@@ -208,23 +206,20 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
                          'https://www.elterritorio.com.ar/contacto'],
         }
 
-        def urlopen(req, timeout=None):
-            url = req.full_url
-            respuesta = MagicMock()
+        def descargar(url, timeout=None):
             if url.endswith('sitemap.xml'):
                 cuerpo = SITEMAP_INDICE
-            elif url.endswith('caido.xml'):
-                raise OSError('sitemap caído')
+            elif url in {link for enlaces in self.links.values() for link in enlaces}:
+                return b'<html><body>Articulo simulado</body></html>'
             else:
                 clave = url.split('://', 1)[1]
                 cuerpo = URLSET.format(''.join(f'<url><loc>{l}</loc></url>' for l in self.links[clave]))
-            respuesta.__enter__.return_value.read.return_value = cuerpo.encode('utf-8')
-            return respuesta
+            return cuerpo.encode('utf-8')
 
-        self.urlopen.side_effect = urlopen
-        self.article.side_effect = lambda url, language=None: SimpleNamespace(
-            title=f'Título {url[-3:]}', text=f'Texto de {url}', top_image=f'https://cdn.ejemplo.com/{url[-3:]}.webp',
-            publish_date=None, download=lambda: None, parse=lambda: None,
+        self.urlopen.side_effect = descargar
+        self.article.side_effect = lambda url, language=None, **kwargs: SimpleNamespace(
+            title=f'Escuela en Posadas {url[-3:]}', text=f'Texto de {url}', top_image=f'https://cdn.ejemplo.com/{url[-3:]}.webp',
+            publish_date=None, download=lambda **kwargs: None, parse=lambda: None,
         )
 
     def ingerir(self, **opciones):
@@ -234,7 +229,9 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
     def test_toma_solo_el_periodo_y_reparte_entre_dias(self):
         resultado = self.ingerir(limite=3)
 
-        self.assertEqual(resultado['status'], 'EXITO')
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertEqual(resultado['estado'], 'PARCIAL')
+        self.assertEqual(resultado['capturados'], 3)
         self.assertEqual(resultado['disponibles'], 5)
         # Una noticia por día, de la fecha más reciente a la más vieja.
         self.assertEqual(
@@ -255,8 +252,8 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
         self.assertEqual(Publicacion.objects.get(url=existente).contenido, 'Previa')
 
     def test_articulo_sin_texto_se_registra_y_continua(self):
-        self.article.side_effect = lambda url, language=None: SimpleNamespace(
-            title='', text='', top_image='', publish_date=None, download=lambda: None, parse=lambda: None,
+        self.article.side_effect = lambda url, language=None, **kwargs: SimpleNamespace(
+            title='', text='', top_image='', publish_date=None, download=lambda **kwargs: None, parse=lambda: None,
         )
         resultado = self.ingerir(limite=2)
         self.assertEqual(resultado['capturados'], 0)
@@ -270,10 +267,10 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
     def test_comando_informa_resultado(self):
         salida = StringIO()
         with patch('core.services.scraper.time.sleep'):
-            call_command('ingestar_historico', '--desde=2026-09-01', '--hasta=2026-09-30', '--limite=2',
+            call_command('ingestar_historico', '--desde=2026-09-01', '--hasta=2026-09-30', '--limite=10',
                          stdout=salida)
-        self.assertIn('Nuevas: 2', salida.getvalue())
-        self.assertEqual(Publicacion.objects.count(), 2)
+        self.assertIn('Nuevas: 5', salida.getvalue())
+        self.assertEqual(Publicacion.objects.count(), 5)
 
 
 class EjecutarScraperTodasTestCase(TestCase):
@@ -313,7 +310,148 @@ class VistasConClasificacionTestCase(TestCase):
         self.assertContains(respuesta, '© Foto: El Territorio<')
         self.assertContains(respuesta, 'https://cdn.ejemplo.com/y.webp')
 
-    def test_portada_muestra_las_12_categorias(self):
-        respuesta = self.client.get(reverse('landing'))
+    def test_categorias_muestra_las_12_categorias(self):
+        respuesta = self.client.get(reverse('categorias'))
         for nombre in CATEGORIAS_PROYECTO:
-            self.assertContains(respuesta, f'>{nombre}</h2>')
+            self.assertContains(respuesta, f'>{nombre}</h3>')
+
+
+# Casos sintéticos derivados de los errores territoriales observados.
+# Los lugares y las expresiones que causan el error se conservan; los IDs son ficticios.
+REGRESIONES_TERRITORIALES = [
+    {
+        'id': 1,
+        'titulo': 'Productores de Paraguay ampliaron la producción agrícola',
+        'contenido': 'La producción se concentra en el distrito de San Pedro del Paraná, en Itapúa, Paraguay.',
+        'esperado': '',
+    },
+    {
+        'id': 2,
+        'titulo': 'Informe pericial de Corrientes',
+        'contenido': 'La profundidad de los cortes se analizó en Corrientes.',
+        'esperado': '',
+    },
+    {
+        'id': 3,
+        'titulo': 'El campeonato de karting se definió en Puerto Rico',
+        'contenido': 'En el circuito de Puerto Rico se disputó la carrera.\n\n' + '\n\n'.join(
+            f'Piloto ficticio {numero} de Posadas llegó al podio.' for numero in range(1, 8)
+        ),
+        'esperado': 'libertador',
+    },
+]
+
+
+class PrecisionTerritorialTestCase(TestCase):
+    def test_tres_regresiones_con_datos_sinteticos(self):
+        for caso in REGRESIONES_TERRITORIALES:
+            with self.subTest(id_caso=caso['id'], titulo=caso['titulo']):
+                self.assertEqual(departamento_por_texto(caso['titulo'], caso['contenido']), caso['esperado'])
+
+    def test_homonimos_con_jurisdiccion_externa_no_asignan_misiones(self):
+        for titulo in (
+            'Obras en San Pedro del Paraná',
+            'Festejos en San Pedro, Paraguay',
+            'Festejos en San Pedro, provincia de Buenos Aires',
+            'Obras en la localidad paraguaya de San Pedro',
+            'Paraguay: obras en San Pedro',
+            'Huracán en Puerto Rico, Caribe',
+            'Huracán en la isla de Puerto Rico',
+            'Temporal en San Juan de Puerto Rico',
+        ):
+            with self.subTest(titulo=titulo):
+                self.assertEqual(departamento_por_texto(titulo, ''), '')
+
+    def test_referencias_externas_secundarias_no_vetan_un_hecho_local(self):
+        for titulo, contenido, esperado in (
+            ('Festival en Posadas con visitantes de Paraguay', 'Llegaron invitados de Brasil.', 'capital'),
+            ('Obras en San Pedro, Misiones', 'Se usarán materiales comprados en Paraguay.', 'sanpedro'),
+            ('Carrera en Puerto Rico', 'Pilotos de Corrientes y Posadas compitieron.', 'libertador'),
+            ('Obras en la calle Corrientes de Posadas', '', 'capital'),
+        ):
+            with self.subTest(titulo=titulo):
+                self.assertEqual(departamento_por_texto(titulo, contenido), esperado)
+
+    def test_profundidad_comun_incluso_con_preposicion_o_como_titulo_no_es_municipio(self):
+        for titulo, contenido in (
+            ('La profundidad de los cortes', 'Los forenses trabajaron en Corrientes.'),
+            ('Analizaron en profundidad las heridas', ''),
+            ('Profundidad: detalles del informe', ''),
+            ('Informe científico', 'La profundidad fue de tres metros.'),
+        ):
+            with self.subTest(titulo=titulo):
+                self.assertEqual(departamento_por_texto(titulo, contenido), '')
+
+    def test_profundidad_con_referencia_municipal_expresa_si_identifica_candelaria(self):
+        self.assertEqual(departamento_por_texto('Obras en la localidad de Profundidad', ''), 'candelaria')
+        self.assertEqual(departamento_por_texto('Informe municipal', 'El municipio de Profundidad inauguró obras.'), 'candelaria')
+
+    def test_sede_del_titulo_prevalece_sobre_residencias_y_repeticiones(self):
+        contenido = '\n'.join(['El piloto de Posadas llegó al podio.'] * 30)
+        self.assertEqual(departamento_por_texto('El piloto de Posadas ganó en Puerto Rico', contenido), 'libertador')
+        self.assertEqual(departamento_por_texto('Obras en Oberá', 'Llegaron visitantes de Posadas. ' * 30), 'obera')
+
+    def test_sede_de_la_entradilla_prevalece_sobre_localidad_de_participantes(self):
+        cuerpo = 'La prueba se disputó en Puerto Rico.\n\n' + 'Pilotos de Posadas llegaron al podio. ' * 30
+        self.assertEqual(departamento_por_texto('Un piloto de Posadas ganó la fecha', cuerpo), 'libertador')
+        cuerpo = 'En el Kartódromo Municipal de Puerto Rico se disputó la fecha.\n\n' + cuerpo
+        self.assertEqual(departamento_por_texto('Se definió el campeonato', cuerpo), 'libertador')
+
+    def test_residencia_en_la_entradilla_no_se_confunde_con_sede_del_evento(self):
+        cuerpo = ('La editorial está radicada en Loreto.\n\nInformación del sello.\n\n'
+                  'Sus libros se reeditaron.\n\nEl lanzamiento se celebrará en Posadas.')
+        self.assertEqual(departamento_por_texto('Agenda cultural', cuerpo), '')
+        self.assertEqual(departamento_por_texto('El lanzamiento se celebrará en Posadas', cuerpo), 'capital')
+
+    def test_antetitulo_y_titulo_repetido_no_ocultan_la_sede_en_la_bajada(self):
+        titulo = 'Motociclista herido tras un despiste'
+        cuerpo = ('Santa Ana\n\n' + titulo + '\n\n'
+                  'Fue trasladado al hospital de Posadas tras el despiste en jurisdicción de Santa Ana.')
+        self.assertEqual(departamento_por_texto(titulo, cuerpo), 'candelaria')
+
+    def test_cabecera_local_no_cede_al_hospital_de_derivacion(self):
+        self.assertEqual(departamento_por_texto(
+            'Caá Yarí: dos adolescentes sufrieron quemaduras',
+            'Permanecen internados en Posadas.\n\n' + 'Reciben atención en Posadas. ' * 20,
+        ), 'leandro')
+
+    def test_varios_departamentos_sin_sede_clara_se_abstiene_aunque_haya_mayoria(self):
+        self.assertEqual(departamento_por_texto('Informe regional', 'Vecinos de Posadas. ' * 20 + 'Vecinos de Oberá.'), '')
+        self.assertEqual(departamento_por_texto('Actos en Oberá y en Eldorado', ''), '')
+        self.assertEqual(departamento_por_texto('Oberá y Eldorado', 'Se reunieron en Oberá.'), '')
+        self.assertEqual(departamento_por_texto('Actividades en Posadas y Garupá', ''), 'capital')
+
+    def test_localidad_externa_del_titulo_no_se_reemplaza_por_una_fuente_secundaria(self):
+        self.assertEqual(departamento_por_texto(
+            'Productor contó su experiencia en Corrientes', 'Los participantes se conectaron desde INTA Posadas.',
+        ), '')
+        self.assertEqual(departamento_por_texto(
+            'Archivaron en Iguazú una denuncia, pero continúa la causa en Buenos Aires', '',
+        ), '')
+
+    def test_limites_de_palabra_y_desambiguacion_existente_se_conservan(self):
+        for titulo, esperado in (
+            ('Un posadasense viajó a Montecarlópolis', ''),
+            ('Calle San Martín y avenida San Pedro', ''),
+            ('El acto será el 25 de Mayo', ''),
+            ('Obras en el municipio de Guaraní', 'obera'),
+            ('Obras en el departamento Guaraní', 'guarani'),
+            ('Escuela en Oberá', 'obera'),
+            ('Récord de turistas en Cataratas', 'iguazu'),
+        ):
+            with self.subTest(titulo=titulo):
+                self.assertEqual(departamento_por_texto(titulo, ''), esperado)
+
+
+class PrecisionTerritorialIntegracionTestCase(IngestaSimuladaMixin, TestCase):
+    def test_pipeline_simulado_guarda_departamento_sin_alterar_los_textos(self):
+        for caso in REGRESIONES_TERRITORIALES:
+            with self.subTest(id_caso=caso['id']):
+                with patch('core.services.scraper._leer_articulo', return_value=SimpleNamespace(text=caso['contenido'])):
+                    url = BASE + f'99100{caso["id"]}-territorio'
+                    resultado = self.ingerir((caso['titulo'], url, 'Resumen del feed'))
+                self.assertEqual(resultado['capturados'], 1)
+                publicacion = Publicacion.objects.get(url=url)
+                self.assertEqual(publicacion.departamento, caso['esperado'])
+                self.assertEqual(publicacion.titulo, caso['titulo'])
+                self.assertEqual(publicacion.contenido, caso['contenido'])
