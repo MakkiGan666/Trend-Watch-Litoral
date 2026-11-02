@@ -1,4 +1,4 @@
-<form class="news-search-form" action="{% url 'buscar_noticias' %}" method="get" role="search">
+<form class="news-search-form" data-suggestions-url="{% url 'sugerencias_publicaciones' %}" action="{% url 'buscar_noticias' %}" method="get" role="search">
   <label for="{{ search_prefix }}-q">Buscar noticias</label>
   <div class="news-search-form__controls">
     <input type="search" id="{{ search_prefix }}-q" name="q" value="{{ search_query }}" placeholder="Título o contenido…" aria-describedby="{{ search_prefix }}-hint{% if error %} search-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
