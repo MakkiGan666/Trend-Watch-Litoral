@@ -91,9 +91,35 @@ _MAX_NOTICIAS_POR_LLAMADA = 20
 _LARGO_CONTENIDO_IA = 700
 _MAX_RESPUESTA_IA = 256 * 1024
 _NOMBRES_FECHA = {'9 de julio', '25 de mayo', 'dos de mayo'}
+# Jurisdicciones externas explícitas: se aplican a la mención, no como veto
+# global (una noticia misionera puede mencionar visitantes de otro país).
+_JURISDICCIONES_EXTERNAS = (
+    r'buenos aires|catamarca|chaco|chubut|cordoba|corrientes|entre rios|formosa|'
+    r'jujuy|la pampa|la rioja|mendoza|neuquen|rio negro|salta|san juan|san luis|'
+    r'santa cruz|santa fe|santiago del estero|tierra del fuego|tucuman|'
+    r'paraguay|brasil|uruguay|bolivia|chile|peru|ecuador|colombia|venezuela|'
+    r'el salvador|mexico|espana|estados unidos|estadounidense|caribe'
+)
 _FUERA_DE_MISIONES = re.compile(
-    r'\s+(?:(?:de|en)(?: la provincia de)?\s+)?'
-    r'(?:buenos aires|corrientes|cordoba|chaco|santa fe|entre rios|el salvador|estados unidos|estadounidense|caribe)(?![a-z0-9])'
+    r'\s+(?:(?:de|en)\s+)?(?:(?:la provincia|el departamento|el pais|provincia|departamento) de\s+)?'
+    r'(?:' + _JURISDICCIONES_EXTERNAS + r')(?![a-z0-9])'
+)
+_LUGAR_EXTERNO_EN_TITULO = re.compile(
+    r'(?<![a-z0-9])en\s+(?:(?:la provincia|el departamento|el pais) de\s+)?'
+    r'(?:' + _JURISDICCIONES_EXTERNAS + r')(?![a-z0-9])'
+)
+_CONTEXTO_EXTERNO = re.compile(
+    r'(?:localidad|ciudad|municipio|distrito|departamento|isla)\s+'
+    r'(?:paraguay[ao]|brasilen[ao]|correntin[ao]|bonaerense|cariben[ao])\s+(?:de\s+)?$'
+)
+_REFERENCIA_DE_RESIDENCIA = re.compile(
+    r'(?:radicad[ao]s?|oriund[ao]s?|domiciliad[ao]s?|residentes?|nacid[ao]s?)\s+(?:en|de)\s+$'
+)
+_LUGAR_DEL_HECHO = re.compile(
+    r'(?<![a-z0-9])(?:en\s+(?:(?:el|la|los|las)\s+)?'
+    r'(?:(?:municipio|localidad|ciudad|departamento|jurisdiccion)(?: de)?\s+)?'
+    r'|en (?:el|la) (?:kartodromo|autodromo|estadio|circuito|polideportivo)'
+    r'(?: [a-z0-9]+){0,6} de\s+)$'
 )
 
 
@@ -140,42 +166,88 @@ def categoria_por_reglas(titulo, contenido, seccion=None):
     return categoria_con_confianza(titulo, contenido, seccion)[0]
 
 
-def departamento_por_texto(titulo, contenido):
-    """Busca municipios y departamentos del catálogo en el texto de la noticia.
-
-    Devuelve el slug del departamento más mencionado, o '' si no hay menciones
-    o hay empate entre departamentos distintos.
-    """
-    texto = _texto_normalizado(titulo, titulo, contenido)  # el título cuenta doble
-    menciones = {}
+def _menciones_territoriales(texto):
+    """Candidatos válidos y ubicaciones locativas, sin contar repeticiones."""
+    texto = _texto_normalizado(texto)
+    candidatos, lugares = set(), set()
     for departamento in DEPARTAMENTOS:
+        slug = departamento['slug']
         nombres = {normalizar_nombre(m) for m in departamento['municipios']}
         nombres.add(normalizar_nombre(departamento['nombre']))
-        nombres.update(normalizar_nombre(a) for a in ALIAS_DEPARTAMENTO.get(departamento['slug'], []))
-        total = 0
-        for nombre in nombres:
+        nombres.update(normalizar_nombre(a) for a in ALIAS_DEPARTAMENTO.get(slug, []))
+        cubiertos = []
+        # Una expresión completa no debe aportar también su nombre abreviado.
+        for nombre in sorted(nombres, key=lambda n: (-len(n), n)):
             if nombre == 'guarani':
-                patron = (r'departamento(?: de)?\s+guarani' if departamento['slug'] == 'guarani'
-                          else r'(?:en|localidad de|municipio de|ciudad de|vecinos de)\s+guarani')
+                prefijo = (r'departamento(?: de)?\s+' if slug == 'guarani'
+                           else r'(?:en|localidad de|municipio de|ciudad de|vecinos de)\s+')
             elif nombre == 'capital':
-                patron = r'departamento(?: de)?\s+capital'
-            elif nombre in _NOMBRES_FECHA:
-                patron = r'(?:localidad de|municipio de|ciudad de)\s+' + re.escape(nombre)
+                prefijo = r'departamento(?: de)?\s+'
+            elif nombre in _NOMBRES_FECHA or nombre == 'profundidad':
+                # "en profundidad" también es una expresión común: no alcanza.
+                prefijo = r'(?:localidad|municipio|ciudad)(?: misioner[ao])? de\s+'
             elif nombre in _MUNICIPIOS_AMBIGUOS:
-                patron = _PREFIJOS_LOCALIDAD + re.escape(nombre)
+                prefijo = _PREFIJOS_LOCALIDAD
             else:
-                patron = re.escape(nombre)
-            for coincidencia in re.finditer(r'(?<![a-z0-9])' + patron + r'(?![a-z0-9])', texto):
-                # Un homónimo con jurisdicción externa explícita no prueba ubicación misionera.
-                if not _FUERA_DE_MISIONES.match(texto, coincidencia.end()):
-                    total += 1
-        if total:
-            menciones[departamento['slug']] = total
-    if not menciones:
+                prefijo = ''
+            patron = r'(?<![a-z0-9])' + prefijo + r'(?P<lugar>' + re.escape(nombre) + r')(?![a-z0-9])'
+            for coincidencia in re.finditer(patron, texto):
+                inicio, fin = coincidencia.span('lugar')
+                if any(a <= inicio and fin <= b for a, b in cubiertos):
+                    continue
+                antes = texto[:inicio]
+                despues = texto[fin:]
+                if (_FUERA_DE_MISIONES.match(despues)
+                        or _CONTEXTO_EXTERNO.search(antes)
+                        or (nombre == 'puerto rico' and re.search(
+                            r'(?:isla|estado libre asociado|san juan) de\s+$', antes))
+                        or (nombre == 'san pedro' and re.match(r'\s+del parana(?![a-z0-9])', despues))):
+                    continue
+                cubiertos.append((inicio, fin))
+                candidatos.add(slug)
+                if _LUGAR_DEL_HECHO.search(antes) and not _REFERENCIA_DE_RESIDENCIA.search(antes):
+                    lugares.add(slug)
+    return candidatos, lugares
+
+
+def departamento_por_texto(titulo, contenido):
+    """Prioriza ubicaciones claras del título/entradilla; se abstiene si compiten.
+
+    Las menciones repetidas en resultados, domicilios o listas de participantes
+    no deben convertir otro departamento en sede del hecho.
+    """
+    candidatos_titulo, lugares_titulo = _menciones_territoriales(titulo)
+    cabecera = (titulo or '').partition(':')
+    fuera_en_cabecera = cabecera[1] and re.fullmatch(_JURISDICCIONES_EXTERNAS, normalizar_nombre(cabecera[0]))
+    externo_titulo = fuera_en_cabecera or _LUGAR_EXTERNO_EN_TITULO.search(_texto_normalizado(titulo))
+    if externo_titulo:
         return ''
-    maximo = max(menciones.values())
-    ganadores = [slug for slug, total in menciones.items() if total == maximo]
-    return ganadores[0] if len(ganadores) == 1 else ''
+    if cabecera[1]:
+        # Una cabecera como «Caá Yarí: ...» tiene prioridad, pero no inventar
+        # un prefijo geográfico para habilitar nombres ambiguos o palabras comunes.
+        ubicacion_cabecera, _ = _menciones_territoriales(cabecera[0])
+        if len(ubicacion_cabecera) == 1 and candidatos_titulo <= ubicacion_cabecera:
+            return next(iter(ubicacion_cabecera))
+    if lugares_titulo:
+        return next(iter(lugares_titulo)) if len(lugares_titulo) == 1 else ''
+    if len(candidatos_titulo) > 1:
+        return ''
+    # Los extractores pueden incluir un antetítulo y repetir el título antes
+    # de la bajada. Leer hasta tres párrafos evita confundirlos con la noticia.
+    parrafos = [p.strip() for p in re.split(r'\n\s*\n', contenido or '') if p.strip()]
+    entradilla = '\n\n'.join(parrafos[:3])
+    if len(parrafos) == 1:
+        entradilla = re.split(r'(?<=[.!?])\s+', entradilla, maxsplit=1)[0]
+    _, lugares_entradilla = _menciones_territoriales(entradilla)
+    if lugares_entradilla:
+        if _LUGAR_EXTERNO_EN_TITULO.search(_texto_normalizado(entradilla)):
+            return ''
+        return next(iter(lugares_entradilla)) if len(lugares_entradilla) == 1 else ''
+    if len(candidatos_titulo) == 1:
+        return next(iter(candidatos_titulo))
+    candidatos_cuerpo, _ = _menciones_territoriales(contenido)
+    candidatos = candidatos_titulo | candidatos_cuerpo
+    return next(iter(candidatos)) if len(candidatos) == 1 else ''
 
 
 def _prompt_clasificacion():

@@ -1034,11 +1034,13 @@ class RolesPermisosTestCase(TestCase):
     def test_update_payloads_validos_conservan_hash_y_no_ejecutan_servicios(self):
         self.autenticar('Administrador')
         ruta = f'/api/publicaciones/{self.publicacion.pk}/actualizar/'
-        for metodo, payload in (
-            ('put', {'titulo': ' Título PUT ', 'contenido': ' Contenido PUT '}),
-            ('patch', {'titulo': 'Título PATCH'}),
-            ('patch', {'contenido': 'Contenido PATCH'}),
-            ('patch', {'titulo': 'Ambos', 'contenido': 'Ambos campos'}),
+        for metodo, payload, derivados in (
+            ('put', {'titulo': ' Título PUT ', 'contenido': ' Contenido PUT '},
+             {'titulo_busqueda': ' titulo put ', 'contenido_busqueda': ' contenido put '}),
+            ('patch', {'titulo': 'Título PATCH'}, {'titulo_busqueda': 'titulo patch'}),
+            ('patch', {'contenido': 'Contenido PATCH'}, {'contenido_busqueda': 'contenido patch'}),
+            ('patch', {'titulo': 'Ambos', 'contenido': 'Ambos campos'},
+             {'titulo_busqueda': 'ambos', 'contenido_busqueda': 'ambos campos'}),
         ):
             with self.subTest(metodo=metodo, payload=payload):
                 antes = Publicacion.objects.values().get(pk=self.publicacion.pk)
@@ -1049,7 +1051,9 @@ class RolesPermisosTestCase(TestCase):
                     'mensaje': f'Publicación {self.publicacion.pk} actualizada.',
                 })
                 despues = Publicacion.objects.values().get(pk=self.publicacion.pk)
-                self.assertEqual(despues, {**antes, **payload})
+                # La BD recalcula los GeneratedField. Conservar originales,
+                # campos no editados y comprobar también los derivados nuevos.
+                self.assertEqual(despues, {**antes, **payload, **derivados})
                 self.assertEqual(despues['hash_origen'], 'roles-prueba')
                 for mock in self.mocks.values():
                     mock.assert_not_called()
@@ -2971,3 +2975,376 @@ class AdminPublicacionTemaTrendTestCase(TestCase):
             self.assertEqual(respuesta.context['cl'].result_count, 1)
         respuesta = self.client.get('/admin/core/tematrend/', {'q': 'inexistente'})
         self.assertEqual(respuesta.context['cl'].result_count, 0)
+
+
+class ModeracionPermisosH1Tests(TestCase):
+    def setUp(self):
+        from core.models import Comentario
+        self.staff = get_user_model().objects.create_user('moderador', is_staff=True)
+        self.noticia = Publicacion.objects.create(hash_origen='h1', titulo='Noticia', contenido='Texto')
+        self.comentario = Comentario.objects.create(publicacion=self.noticia, autor=self.staff, texto='Comentario')
+
+    def test_post_manipulado_solo_lectura_y_sin_permisos_no_modera(self):
+        for lectura in (False, True):
+            self.staff.user_permissions.clear()
+            if lectura:
+                self.staff.user_permissions.add(Permission.objects.get(codename='view_comentario'))
+            self.client.force_login(self.staff)
+            for accion in ('aprobar', 'rechazar'):
+                with self.subTest(lectura=lectura, accion=accion):
+                    respuesta = self.client.post('/admin/core/comentario/', {
+                        'action': accion, '_selected_action': [self.comentario.pk], 'index': '0',
+                    })
+                    self.assertIn(respuesta.status_code, (200, 302, 403))
+                    self.comentario.refresh_from_db()
+                    self.assertEqual(self.comentario.estado, 'pendiente')
+
+    def test_cambio_administrador_y_superusuario_pueden_moderar(self):
+        from core.models import Comentario
+        for tipo in ('cambio', 'administrador', 'superusuario'):
+            self.staff.user_permissions.clear()
+            if tipo == 'cambio':
+                self.staff.user_permissions.add(Permission.objects.get(codename='change_comentario'))
+            if tipo == 'administrador':
+                call_command('configurar_roles', verbosity=0)
+                self.staff.groups.add(Group.objects.get(name='Administrador'))
+            self.staff.is_superuser = tipo == 'superusuario'
+            self.staff.save()
+            self.client.force_login(self.staff)
+            for accion, estado in (('aprobar', Comentario.Estado.PUBLICADO), ('rechazar', Comentario.Estado.RECHAZADO)):
+                with self.subTest(tipo=tipo, accion=accion):
+                    respuesta = self.client.post('/admin/core/comentario/', {
+                        'action': accion, '_selected_action': [self.comentario.pk], 'index': '0',
+                    })
+                    self.assertEqual(respuesta.status_code, 302)
+                    self.comentario.refresh_from_db()
+                    self.assertEqual(self.comentario.estado, estado)
+
+    def test_invocacion_directa_de_accion_exige_cambio(self):
+        from django.contrib import admin
+        from django.core.exceptions import PermissionDenied
+        from django.test import RequestFactory
+        from core.models import Comentario
+        request = RequestFactory().post('/admin/core/comentario/')
+        request.user = self.staff
+        for accion in ('aprobar', 'rechazar'):
+            with self.assertRaises(PermissionDenied):
+                getattr(admin.site._registry[Comentario], accion)(request, Comentario.objects.all())
+
+
+class TendenciasH2Tests(TransactionTestCase):
+    def setUp(self):
+        from core.models import Categoria, Tema, PublicacionTema
+        categoria = Categoria.objects.create(nombre_categoria='Educación')
+        self.tema = Tema.objects.create(descripcion='Tema', id_categoria=categoria)
+        self.noticia = Publicacion.objects.create(hash_origen='h2', titulo='Noticia', contenido='Texto')
+        PublicacionTema.objects.create(id_publicacion_api=self.noticia, id_temas=self.tema)
+        self.usuarios = [get_user_model().objects.create_user(f'lector-h2-{i}') for i in range(3)]
+
+    def test_clave_unica_y_rollback_de_lectura_si_falla_asociacion(self):
+        from django.db import transaction
+        from core.models import ClicPublicacion, Trend
+        from core.services.relevancia import registrar_clic
+        with patch('core.services.relevancia.TemaTrend.objects.get_or_create', side_effect=RuntimeError('fallo')):
+            with self.assertRaises(RuntimeError):
+                registrar_clic(self.noticia, self.usuarios[0])
+        self.assertFalse(ClicPublicacion.objects.exists())
+        self.assertFalse(Trend.objects.exists())
+        registrar_clic(self.noticia, self.usuarios[0])
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Trend.objects.create(clave='lecturas_7_dias', relevancia='Lecturas', intervalos_periodo='7 días')
+
+    def test_migracion_conserva_duplicados_y_union_de_relaciones(self):
+        import importlib
+        from django.apps import apps
+        from django.db import connection
+        from core.models import Trend, TemaTrend, ClicPublicacion
+        from core.services.relevancia import registrar_clic
+        primero = Trend.objects.create(relevancia='Lecturas', intervalos_periodo='7 días')
+        segundo = Trend.objects.create(relevancia='Lecturas', intervalos_periodo='7 días')
+        relacion = TemaTrend.objects.create(id_temas=self.tema, id_trends=segundo)
+        migracion = importlib.import_module('core.migrations.0018_trend_clave')
+        with connection.schema_editor() as editor:
+            migracion.identificar_lecturas(apps, editor)
+            migracion.identificar_lecturas(apps, editor)
+        self.assertEqual(Trend.objects.count(), 2)
+        self.assertTrue(TemaTrend.objects.filter(pk=relacion.pk).exists())
+        self.assertTrue(TemaTrend.objects.filter(id_trends=primero, id_temas=self.tema).exists())
+        self.client.force_login(self.usuarios[0])
+        from django.urls import reverse
+        self.assertEqual(self.client.get(reverse('noticia', args=[self.noticia.pk])).status_code, 200)
+        self.assertEqual(ClicPublicacion.objects.count(), 1)
+        self.assertEqual(Trend.objects.get(clave='lecturas_7_dias').pk, primero.pk)
+
+    def test_primeras_lecturas_concurrentes_postgresql(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from django.db import connection, close_old_connections
+        from core.models import Trend, TemaTrend, ClicPublicacion
+        from core.services.relevancia import registrar_clic
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere conexiones PostgreSQL independientes')
+        barrera = Barrier(2)
+        def leer(pk):
+            close_old_connections()
+            try:
+                return registrar_clic(Publicacion.objects.get(pk=self.noticia.pk), get_user_model().objects.get(pk=pk))
+            finally:
+                connections.close_all()
+
+        # get_or_create usa QuerySet.create: sincroniza justo antes de ambos INSERT.
+        from django.db.models import QuerySet
+        crear_queryset = QuerySet.create
+        def insertar(queryset, **kwargs):
+            if queryset.model is Trend:
+                barrera.wait(timeout=15)
+            return crear_queryset(queryset, **kwargs)
+        with patch.object(QuerySet, 'create', insertar), ThreadPoolExecutor(max_workers=2) as pool:
+            resultados = list(pool.map(leer, [u.pk for u in self.usuarios[:2]]))
+        self.assertEqual(resultados, [True, True])
+        self.assertEqual(Trend.objects.filter(clave='lecturas_7_dias').count(), 1)
+        self.assertEqual(TemaTrend.objects.count(), 1)
+        self.assertTrue(registrar_clic(self.noticia, self.usuarios[2]))
+        self.assertEqual(ClicPublicacion.objects.count(), 3)
+
+
+class ContenidoTerritorialH3Tests(TransactionTestCase):
+    def setUp(self):
+        self.noticia = Publicacion.objects.create(
+            hash_origen='h3-contenido', titulo='Llegaron equipamientos',
+            contenido='Wanda recibió nuevos equipos para el centro cultural.',
+        )
+
+    def _editar_en_otra_conexion(self, **cambios):
+        from concurrent.futures import ThreadPoolExecutor
+        from django.db import close_old_connections, connection
+        def editar():
+            close_old_connections()
+            try:
+                if connection.vendor == 'postgresql':
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET lock_timeout = '2s'")
+                return Publicacion.objects.filter(pk=self.noticia.pk).update(**cambios)
+            finally:
+                connections.close_all()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            self.assertEqual(pool.submit(editar).result(timeout=10), 1)
+
+    def _analizar_con_edicion(self, cambios, revisar=False):
+        from types import SimpleNamespace
+        from django.db import connection
+        from core.test_departamentos_ia import cliente_simulado, respuesta
+        cliente, generar = cliente_simulado(respuesta(self.noticia))
+        original = (self.noticia.titulo, self.noticia.contenido)
+        def responder(**kwargs):
+            # La llamada externa no debe mantener transacción ni bloquear la edición.
+            self.assertFalse(connection.in_atomic_block)
+            entrada = json.loads(kwargs['contents'])[0]
+            self.assertEqual(entrada['titulo'], original[0])
+            self.assertIn(original[1], entrada['texto'])
+            self._editar_en_otra_conexion(**cambios)
+            return SimpleNamespace(text=respuesta(self.noticia))
+        generar.side_effect = responder
+        salida = StringIO()
+        opciones = ['--aplicar', '--pausa-ia=0'] + (['--revisar'] if revisar else [])
+        with patch('core.management.commands.revisar_departamentos.cliente_ia', return_value=cliente):
+            call_command('revisar_departamentos', *opciones, stdout=salida)
+        self.assertEqual(generar.call_count, 1)
+        self.noticia.refresh_from_db()
+        for campo, valor in cambios.items():
+            self.assertEqual(getattr(self.noticia, campo), valor)
+        self.assertEqual(self.noticia.departamento, '')
+        self.assertIn('Omitidas por cambios concurrentes: 1', salida.getvalue())
+
+    def test_ia_descarta_resultado_si_cambia_solo_titulo(self):
+        self._analizar_con_edicion({'titulo': 'Corrección editorial del hecho central'})
+        from core.models import RevisionDepartamento
+        self.assertFalse(RevisionDepartamento.objects.exists())
+
+    def test_ia_descarta_resultado_aunque_la_cita_siga_en_contenido_nuevo(self):
+        self._analizar_con_edicion({'contenido': self.noticia.contenido + ' Corrección: el hecho central fue en Córdoba.'})
+        from core.models import RevisionDepartamento
+        self.assertFalse(RevisionDepartamento.objects.exists())
+
+    def test_revisar_con_texto_modificado_preserva_revision_e_historial(self):
+        from core.models import RevisionDepartamento
+        revision = RevisionDepartamento.objects.create(
+            publicacion=self.noticia, metodo='ia', estado='sin_evidencia', modelo='anterior',
+            historial=[{'estado': 'provincial', 'modelo': 'historico'}],
+        )
+        anterior = RevisionDepartamento.objects.filter(pk=revision.pk).values().get()
+        self._analizar_con_edicion({'contenido': 'El hecho ocurrió en Córdoba.'}, revisar=True)
+        self.assertEqual(RevisionDepartamento.objects.filter(pk=revision.pk).values().get(), anterior)
+
+    def test_edicion_ajena_al_texto_se_conserva_y_permite_guardar(self):
+        from types import SimpleNamespace
+        from core.models import RevisionDepartamento
+        from core.test_departamentos_ia import cliente_simulado, respuesta
+        cliente, generar = cliente_simulado(respuesta(self.noticia))
+        def responder(**kwargs):
+            self._editar_en_otra_conexion(fuente='Fuente corregida')
+            return SimpleNamespace(text=respuesta(self.noticia))
+        generar.side_effect = responder
+        with patch('core.management.commands.revisar_departamentos.cliente_ia', return_value=cliente):
+            call_command('revisar_departamentos', '--aplicar', '--pausa-ia=0', stdout=StringIO())
+        self.noticia.refresh_from_db()
+        self.assertEqual((self.noticia.fuente, self.noticia.departamento), ('Fuente corregida', 'iguazu'))
+        self.assertEqual(RevisionDepartamento.objects.get(publicacion=self.noticia).modelo, 'modelo-de-prueba')
+
+    def test_reglas_no_aplican_decision_si_el_texto_cambio_antes_de_guardar(self):
+        from core.models import RevisionDepartamento
+        from core.services.clasificacion import departamento_por_texto
+        Publicacion.objects.filter(pk=self.noticia.pk).update(titulo='Obras en Posadas')
+        def resolver(titulo, contenido):
+            slug = departamento_por_texto(titulo, contenido)
+            self.assertEqual(slug, 'capital')
+            self._editar_en_otra_conexion(titulo='Obras en Córdoba', contenido='Texto corregido')
+            return slug
+        salida = StringIO()
+        with patch('core.management.commands.revisar_departamentos.departamento_por_texto', side_effect=resolver):
+            call_command('revisar_departamentos', '--aplicar', '--sin-ia', stdout=salida)
+        self.noticia.refresh_from_db()
+        self.assertEqual((self.noticia.titulo, self.noticia.contenido, self.noticia.departamento),
+                         ('Obras en Córdoba', 'Texto corregido', ''))
+        self.assertFalse(RevisionDepartamento.objects.exists())
+        self.assertIn('Omitidas por cambios concurrentes: 1', salida.getvalue())
+
+
+class AuditoriaModeracionH4Tests(TestCase):
+    def setUp(self):
+        from core.models import Comentario
+        self.actor = get_user_model().objects.create_user('moderador-h4', is_staff=True)
+        self.actor.user_permissions.add(Permission.objects.get(codename='change_comentario'))
+        self.noticia = Publicacion.objects.create(hash_origen='h4', titulo='Noticia', contenido='Texto')
+        self.comentarios = [Comentario.objects.create(
+            publicacion=self.noticia, autor=self.actor, texto=f'Texto privado {i}',
+        ) for i in range(4)]
+        self.client.force_login(self.actor)
+
+    def test_aprobar_y_rechazar_registran_actor_objeto_y_transicion_efectiva(self):
+        from django.contrib.admin.models import CHANGE, LogEntry
+        from django.contrib.contenttypes.models import ContentType
+        from core.models import Comentario
+        tipo = ContentType.objects.get_for_model(Comentario)
+        for accion, destino in (('aprobar', 'publicado'), ('rechazar', 'rechazado')):
+            with self.subTest(accion=accion):
+                Comentario.objects.update(estado='pendiente')
+                Comentario.objects.filter(pk=self.comentarios[2].pk).update(estado=destino)
+                cantidad_anterior = LogEntry.objects.count()
+                respuesta = self.client.post('/admin/core/comentario/', {
+                    'action': accion, '_selected_action': [c.pk for c in self.comentarios[:3]], 'index': '0',
+                })
+                self.assertEqual(respuesta.status_code, 302)
+                self.assertEqual(LogEntry.objects.count(), cantidad_anterior + 2)
+                eventos = list(LogEntry.objects.order_by('pk')[cantidad_anterior:])
+                self.assertEqual({e.object_id for e in eventos}, {str(c.pk) for c in self.comentarios[:2]})
+                for evento in eventos:
+                    self.assertEqual((evento.user_id, evento.content_type_id, evento.action_flag),
+                                     (self.actor.pk, tipo.pk, CHANGE))
+                    self.assertEqual(evento.change_message, f'Moderación de comentario: estado pendiente → {destino}.')
+                    self.assertNotIn('Texto privado', evento.object_repr + evento.change_message)
+                for comentario in self.comentarios[:3]:
+                    comentario.refresh_from_db()
+                    self.assertEqual(comentario.estado, destino)
+                self.comentarios[3].refresh_from_db()
+                self.assertEqual(self.comentarios[3].estado, 'pendiente')
+                self.client.post('/admin/core/comentario/', {
+                    'action': accion, '_selected_action': [c.pk for c in self.comentarios[:3]], 'index': '0',
+                })
+                self.assertEqual(LogEntry.objects.count(), cantidad_anterior + 2)
+
+    def test_error_de_auditoria_revierte_todo_el_lote_y_sus_eventos(self):
+        from django.contrib import admin
+        from django.contrib.admin.models import LogEntry
+        from django.test import RequestFactory
+        from core.models import Comentario
+        model_admin = admin.site._registry[Comentario]
+        registrar = model_admin.log_change
+        request = RequestFactory().post('/admin/core/comentario/')
+        request.user = self.actor
+        llamadas = []
+        def fallar_en_segundo(*args):
+            llamadas.append(args[1].pk)
+            if len(llamadas) == 2:
+                raise IntegrityError('Auditoría no disponible')
+            return registrar(*args)
+        with patch.object(model_admin, 'log_change', side_effect=fallar_en_segundo):
+            with self.assertRaises(IntegrityError):
+                model_admin.aprobar(request, Comentario.objects.all())
+        self.assertEqual(len(llamadas), 2)
+        self.assertEqual(set(Comentario.objects.values_list('estado', flat=True)), {'pendiente'})
+        self.assertFalse(LogEntry.objects.exists())
+
+    def test_solo_lectura_no_produce_cambios_ni_eventos(self):
+        from django.contrib.admin.models import LogEntry
+        from core.models import Comentario
+        self.actor.user_permissions.clear()
+        self.actor.user_permissions.add(Permission.objects.get(codename='view_comentario'))
+        for accion in ('aprobar', 'rechazar'):
+            self.client.post('/admin/core/comentario/', {
+                'action': accion, '_selected_action': [c.pk for c in self.comentarios], 'index': '0',
+            })
+        self.assertEqual(set(Comentario.objects.values_list('estado', flat=True)), {'pendiente'})
+        self.assertFalse(LogEntry.objects.exists())
+
+
+class ModeracionConcurrenteH4Tests(TransactionTestCase):
+    def setUp(self):
+        from core.models import Comentario
+        self.actores = [get_user_model().objects.create_user(f'actor-h4-{i}', is_staff=True) for i in range(2)]
+        permiso = Permission.objects.get(codename='change_comentario')
+        for actor in self.actores:
+            actor.user_permissions.add(permiso)
+        noticia = Publicacion.objects.create(hash_origen='h4-concurrencia', titulo='Noticia', contenido='Texto')
+        self.comentario = Comentario.objects.create(publicacion=noticia, autor=self.actores[0], texto='Comentario')
+
+    def _moderar_concurrentemente(self, acciones):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from django.contrib import admin
+        from django.db import close_old_connections, connection
+        from django.test import RequestFactory
+        from core.models import Comentario
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere conexiones PostgreSQL independientes')
+        barrera = Barrier(2)
+        def moderar(datos):
+            actor_pk, accion = datos
+            close_old_connections()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '5s'")
+                request = RequestFactory().post('/admin/core/comentario/')
+                request.user = get_user_model().objects.get(pk=actor_pk)
+                barrera.wait(timeout=10)
+                getattr(admin.site._registry[Comentario], accion)(
+                    request, Comentario.objects.filter(pk=self.comentario.pk),
+                )
+            finally:
+                connections.close_all()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(moderar, [(actor.pk, accion) for actor, accion in zip(self.actores, acciones)]))
+        self.comentario.refresh_from_db()
+
+    def test_dos_aprobaciones_simultaneas_generan_un_solo_evento(self):
+        from django.contrib.admin.models import LogEntry
+        self._moderar_concurrentemente(('aprobar', 'aprobar'))
+        evento = LogEntry.objects.get()
+        self.assertIn(evento.user_id, [actor.pk for actor in self.actores])
+        self.assertEqual(evento.object_id, str(self.comentario.pk))
+        self.assertEqual(evento.change_message, 'Moderación de comentario: estado pendiente → publicado.')
+        self.assertEqual(self.comentario.estado, 'publicado')
+
+    def test_acciones_opuestas_auditan_una_secuencia_consistente(self):
+        from django.contrib.admin.models import LogEntry
+        self._moderar_concurrentemente(('aprobar', 'rechazar'))
+        eventos = list(LogEntry.objects.order_by('pk'))
+        self.assertEqual(len(eventos), 2)
+        destinos = {self.actores[0].pk: 'publicado', self.actores[1].pk: 'rechazado'}
+        anterior = 'pendiente'
+        for evento in eventos:
+            destino = destinos[evento.user_id]
+            self.assertEqual(evento.object_id, str(self.comentario.pk))
+            self.assertEqual(evento.change_message, f'Moderación de comentario: estado {anterior} → {destino}.')
+            anterior = destino
+        self.assertEqual(self.comentario.estado, anterior)

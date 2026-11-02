@@ -204,13 +204,31 @@ class ComentarioAdmin(admin.ModelAdmin):
     search_fields = ('texto', 'autor__username', 'publicacion__titulo')
     actions = ('aprobar', 'rechazar')
 
-    @admin.action(description='Aprobar comentarios seleccionados')
-    def aprobar(self, request, queryset):
-        queryset.update(estado=Comentario.Estado.PUBLICADO)
+    def _moderar(self, request, queryset, estado):
+        if not self.has_change_permission(request):
+            raise PermissionDenied('No tenés permiso para moderar comentarios.')
+        with transaction.atomic():
+            # Orden estable para lotes superpuestos. Leer el estado después de
+            # bloquear evita auditar transiciones ficticias entre moderadores.
+            comentarios = queryset.select_related(None).select_for_update().order_by('pk')
+            for comentario in comentarios:
+                anterior = comentario.estado
+                if anterior == estado:
+                    continue
+                Comentario.objects.filter(pk=comentario.pk).update(estado=estado)
+                comentario.estado = estado
+                self.log_change(
+                    request, comentario,
+                    f'Moderación de comentario: estado {anterior} → {estado}.',
+                )
 
-    @admin.action(description='Rechazar comentarios seleccionados')
+    @admin.action(description='Aprobar comentarios seleccionados', permissions=['change'])
+    def aprobar(self, request, queryset):
+        self._moderar(request, queryset, Comentario.Estado.PUBLICADO)
+
+    @admin.action(description='Rechazar comentarios seleccionados', permissions=['change'])
     def rechazar(self, request, queryset):
-        queryset.update(estado=Comentario.Estado.RECHAZADO)
+        self._moderar(request, queryset, Comentario.Estado.RECHAZADO)
 
 
 class IdentidadUsuarioMixin:

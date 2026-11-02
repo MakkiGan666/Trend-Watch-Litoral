@@ -1,6 +1,7 @@
 """Selección regional y tendencias con señales verificables, sin IA."""
 from datetime import timedelta
 
+from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -91,6 +92,7 @@ def tendencias_destacadas(limite=5):
             for noticia in noticias_destacadas(limite)]
 
 
+@transaction.atomic
 def registrar_clic(publicacion, usuario):
     """Cuenta lectores únicos recientes y relaciona sus temas con Trends."""
     if not usuario.is_authenticated or usuario.is_superuser:
@@ -106,7 +108,10 @@ def registrar_clic(publicacion, usuario):
     if nuevo:
         temas = list(publicacion.temas.all())
         if temas:
-            trend, _ = Trend.objects.get_or_create(relevancia='Lecturas', intervalos_periodo='7 días')
+            trend, _ = Trend.objects.get_or_create(
+                clave='lecturas_7_dias',
+                defaults={'relevancia': 'Lecturas', 'intervalos_periodo': '7 días'},
+            )
             for tema in temas:
                 TemaTrend.objects.get_or_create(id_temas=tema, id_trends=trend)
     return nuevo

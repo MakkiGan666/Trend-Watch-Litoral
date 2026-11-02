@@ -163,4 +163,5 @@ class MigracionTextoBusquedaTests(TransactionTestCase):
                 columnas = {c.name for c in connection.introspection.get_table_description(cursor, 'Publicacion')}
             self.assertTrue(DERIVADOS.isdisjoint(columnas))
         finally:
-            MigrationExecutor(connection).migrate([self.nueva])
+            restaurar = MigrationExecutor(connection)
+            restaurar.migrate(restaurar.loader.graph.leaf_nodes())

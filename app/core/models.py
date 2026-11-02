@@ -167,6 +167,8 @@ class Categoria(models.Model):
 
 
 class Trend(models.Model):
+    # Identidad de tendencias automáticas; los registros históricos se conservan.
+    clave = models.CharField(max_length=50, null=True, blank=True, unique=True, editable=False)
     id_trends = models.AutoField(primary_key=True)
     relevancia = models.CharField(max_length=50)
     intervalos_periodo = models.CharField(max_length=100)
