@@ -1,3 +1,4 @@
+{% load roles %}
 <!DOCTYPE html>
 <html lang="es">
     <head>
@@ -9,8 +10,9 @@
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
         <link rel="icon" type="image/png" href="/static/img/favicon.png?v=2">
-        <link rel="stylesheet" href="/static/css/trendwatch.css?v=16">
-        <link rel="stylesheet" href="/static/css/landing-news.css?v=8">
+        <link rel="stylesheet" href="/static/css/trendwatch.css?v=17">
+        <link rel="stylesheet" href="/static/css/landing-news.css?v=9">
+        <link rel="stylesheet" href="/static/css/trends-cards.css?v=1">
         <link rel="stylesheet" href="/static/css/exchange-rates.css?v=1">
         <link rel="stylesheet" href="/static/css/auth-flow.css?v=7">
         <link rel="stylesheet" href="/static/css/notification-prompt.css?v=2">
@@ -42,11 +44,12 @@
                     {% include "partials/_mark.html" %}
                     TrendWatch <em>Litoral</em>
                 </a>
-                <div class="nav__links">
+                <div class="nav__links" id="public-nav-links">
                     <a href="/" aria-current="page">Inicio</a>
                     {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
                     <a href="/categorias/">Categorías</a>
                     {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
+                    {% include "partials/_administradores_nav.html" %}
                 </div>
                 <div class="nav__act">
                     {% include "partials/_account_actions.html" %}
@@ -58,43 +61,27 @@
         </div>
         <main id="main">
             <div class="inicio-page">
-                <h1 class="sr-only" id="inicio-title">Noticias por categoría y tendencias de Misiones</h1>
+                <h1 class="sr-only" id="inicio-title">Noticias destacadas de Misiones por categoría</h1>
                 <div class="wrap news-layout">
-                    <div class="news-feed" data-news-feed="{% url 'listar_publicaciones' %}" aria-busy="false">
+                    <div class="news-feed">
                         {% if request.user.is_superuser %}{% include "partials/_inicio_indicadores.html" %}{% endif %}
-                        {% include "partials/_news_category.html" with category_key="salud" category_label="Salud" %}
-                        {% include "partials/_news_category.html" with category_key="policiales" category_label="Policiales" %}
-                        {% include "partials/_news_category.html" with category_key="turismo" category_label="Turismo" %}
-                        {% include "partials/_news_category.html" with category_key="economia" category_label="Economía" %}
-                        {% include "partials/_news_category.html" with category_key="politica" category_label="Política" %}
-                        {% include "partials/_news_category.html" with category_key="educacion" category_label="Educación" %}
-                        {% include "partials/_news_category.html" with category_key="tecnologia" category_label="Tecnología" %}
-                        {% include "partials/_news_category.html" with category_key="sociedad" category_label="Sociedad" %}
-                        {% include "partials/_news_category.html" with category_key="cultura" category_label="Cultura" %}
-                        {% include "partials/_news_category.html" with category_key="ambiente" category_label="Ambiente" %}
-                        {% include "partials/_news_category.html" with category_key="deportes" category_label="Deportes" %}
-                        {% include "partials/_news_category.html" with category_key="festividades" category_label="Festividades" %}
-                        <div class="news-feed__status">
-                            <p data-news-status role="status" aria-live="polite">Noticias de El Territorio</p>
-                            <button class="btn btn--ghost news-feed__retry" type="button" data-news-retry hidden>Reintentar</button>
-                        </div>
-                        <noscript><p class="news-feed__status">Activá JavaScript para consultar las noticias.</p></noscript>
+                        <div class="regional-news__head"><div><p>Selección regional</p><h2 id="regional-news-title">Noticias de Misiones por categoría</h2></div><a href="{% url 'categorias' %}">Explorar categorías →</a></div>
+                        {% for grupo in categorias_inicio %}
+                            {% include "partials/_inicio_categoria.html" with grupo=grupo %}
+                        {% endfor %}
                     </div>
                     <div class="news-sidebar">
                     <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">
                         <p class="news-trends__eyebrow">Conversación regional</p>
                         <h2 id="news-trends-title">Tendencias</h2>
-                        <p class="news-trends__description">Temas registrados en TrendWatch Litoral.</p>
-                        <ul class="news-trends__list">
-                            {% for tendencia in featured_trends %}
-                            <li class="news-trends__item">
-                                <strong>{{ tendencia.id_temas.descripcion }}</strong>
-                                <p>{{ tendencia.id_temas.id_categoria.nombre_categoria }} · {{ tendencia.publication_count }} publicación{{ tendencia.publication_count|pluralize:"es" }}</p>
-                            </li>
+                        <p class="news-trends__description">{% if tendencias_inicio.0.estimada %}Selección regional mientras se registran lecturas.{% else %}Más leídas por usuarios registrados en los últimos siete días.{% endif %}</p>
+                        <ol class="news-trends__list trend-card-list">
+                            {% for tendencia in tendencias_inicio %}
+                            {% include "partials/_tendencia_card.html" with numero=forloop.counter destacada=forloop.first %}
                             {% empty %}
-                            <li class="news-trends__item"><p>Todavía no hay tendencias registradas para mostrar.</p></li>
+                            <li class="trend-card-list__empty">Todavía no hay noticias regionales para mostrar.</li>
                             {% endfor %}
-                        </ul>
+                        </ol>
                         <a class="news-trends__more" href="/categorias/#resultados">Ver sección de tendencias →</a>
                     </aside>
                     {% include "partials/_exchange_rates.html" %}
@@ -123,7 +110,7 @@
                         <a href="/categorias/">Categorías</a>
                         {% if perms.core.change_publicacion %}<a href="{% url 'publicaciones' %}">Publicaciones</a>{% endif %}
                         {% if request.user.is_superuser %}<a href="{% url 'dashboard' %}">Dashboard</a>{% endif %}
-                        <a href="/categorias/#localidades">Localidades</a>
+                        <a href="/categorias/#localidades">Municipios</a>
                     </div>
                     <div>
                         <h4>Cuenta</h4>
@@ -140,7 +127,7 @@
             </div>
         </footer>
         <script src="/static/js/trendwatch.js?v=8" defer></script>
-        <script src="/static/js/landing-news.js?v=9" defer></script>
+        <script src="/static/js/home-category-carousel.js?v=1" defer></script>
         <script src="/static/js/exchange-rates.js?v=1" defer></script>
         <script src="/static/js/auth-flow.js?v=4" defer></script>
         <script src="/static/js/notification-prompt.js?v=2" defer></script>

@@ -93,6 +93,7 @@ WSGI_APPLICATION = 'mi_proyecto.wsgi.application'
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', '').strip() or 'gemini-3.8-flash'
 
 # Con DB_HOST (Docker Compose o una base local) se usa PostgreSQL.
 # Sin DB_HOST se usa SQLite en app/db.sqlite3, sólo para desarrollo y pruebas locales.

@@ -1,6 +1,46 @@
 from django import forms
+from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import UserCreationForm
+from .services.identidad import errores_identidad
 from django.core.validators import URLValidator
+from datetime import date
+import unicodedata
+
+from .localidades import DEPARTAMENTOS
 from .models import Publicacion, Categoria, Comentario
+
+
+class FiltrosPublicaciones(forms.Form):
+    q = forms.CharField(required=False, max_length=150)
+    fecha = forms.DateField(required=False)
+    fuente = forms.ChoiceField(required=False)
+    localidad = forms.ChoiceField(required=False, choices=[
+        ('', 'Todas las localidades'),
+        *((departamento['slug'], departamento['nombre']) for departamento in DEPARTAMENTOS),
+        ('__missing', 'Sin departamento identificado'),
+    ])
+    categoria = forms.ChoiceField(required=False)
+
+    def __init__(self, *args, fuentes=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['fuente'].choices = [('', 'Todas las fuentes'), *((nombre, nombre) for nombre in fuentes)]
+        self.fields['categoria'].choices = [
+            ('', 'Todas las categorías'),
+            *((str(pk), nombre) for pk, nombre in Categoria.objects.order_by('nombre_categoria', 'pk').values_list('pk', 'nombre_categoria')),
+            ('__missing', 'Sin categoría asignada'),
+        ]
+
+    def clean_q(self):
+        consulta = ' '.join(unicodedata.normalize('NFC', self.cleaned_data['q']).split())
+        if any(unicodedata.category(caracter).startswith('C') for caracter in consulta) or len(consulta.split()) > 10:
+            raise forms.ValidationError('La búsqueda admite hasta 10 términos y no puede contener caracteres de control.')
+        return consulta
+
+    def clean_fecha(self):
+        fecha = self.cleaned_data['fecha']
+        if fecha and fecha < date(2026, 1, 1):
+            raise forms.ValidationError('La fecha debe ser de 2026 en adelante.')
+        return fecha
 
 class PublicacionForm(forms.ModelForm):
     imagen_archivo = forms.ImageField(
@@ -52,6 +92,14 @@ class PublicacionForm(forms.ModelForm):
 
 
 class ComentarioForm(forms.ModelForm):
+    def clean_texto(self):
+        from .services.moderacion_comentarios import contiene_lenguaje_inapropiado
+
+        texto = self.cleaned_data['texto'].strip()
+        if contiene_lenguaje_inapropiado(texto):
+            raise forms.ValidationError('Revisá el lenguaje del comentario antes de publicarlo.')
+        return texto
+
     class Meta:
         model = Comentario
         fields = ['texto']
@@ -62,3 +110,25 @@ class ComentarioForm(forms.ModelForm):
                 'placeholder': 'Compartí tu opinión sobre esta noticia…',
             }),
         }
+
+
+class AdministradorCreationForm(UserCreationForm):
+    email = forms.EmailField(label='Correo electrónico', max_length=254)
+
+    class Meta:
+        model = get_user_model()
+        fields = ('username', 'email')
+
+    def clean_username(self):
+        username = super().clean_username()
+        if self._meta.model.objects.filter(username__iexact=username).exists():
+            raise forms.ValidationError('Ese nombre de usuario ya está en uso.')
+        return username
+
+    def clean(self):
+        data = super().clean()
+        for campo, mensaje in errores_identidad(
+            username=data.get('username'), email=data.get('email'),
+        ).items():
+            self.add_error(campo, mensaje)
+        return data

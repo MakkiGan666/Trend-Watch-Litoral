@@ -639,7 +639,8 @@ body.app{padding:0}
 @keyframes inicio-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
 @media (max-width:1000px){.inicio-hero__grid{gap:34px}}
 @media (max-width:760px){.inicio-hero{padding:52px 0 48px;min-height:0}.inicio-hero__grid{grid-template-columns:1fr;gap:28px}.inicio-hero h1{font-size:clamp(46px,11vw,70px)}.inicio-hero__lede{font-size:16px}.inicio-hero__visual{min-height:300px}.inicio-topic-link{width:min(190px,47%);min-height:86px;padding:12px}.inicio-topic-link--1{top:0;left:0}.inicio-topic-link--2{top:0;right:0}.inicio-topic-link--3{bottom:0;left:0}.inicio-topic-link--4{right:0;bottom:0}.inicio-trends-empty{width:min(320px,92%)}}
-@media (max-width:660px){.public-nav-toggle{display:grid}.nav-holder .nav__links{position:absolute;top:calc(100% + 8px);left:12px;right:12px;display:none;flex-direction:column;gap:3px;padding:10px;border-radius:22px;background:var(--glass-deep);border:1px solid var(--edge);backdrop-filter:blur(var(--blur));box-shadow:var(--shadow)}.nav-holder .nav__links.is-open{display:flex}.nav-holder .nav__links a{width:100%}.nav-holder .nav__act{display:none}.inicio-hero__actions .btn{flex:1}}
+@media (max-width:1279px){.public-nav-toggle{display:grid}.nav-holder .nav__links{position:absolute;top:calc(100% + 8px);left:12px;right:12px;display:none;flex-direction:column;gap:3px;padding:10px;border-radius:22px;background:rgba(12,48,43,.98);border:1px solid var(--edge);backdrop-filter:blur(var(--blur));box-shadow:var(--shadow)}.nav-holder .nav__links.is-open{display:flex}.nav-holder .nav__links a{width:100%}.nav-holder .nav__links{max-height:calc(100dvh - 110px);overflow-y:auto}.nav-holder .nav__act{display:flex;margin-left:auto}}
+@media (max-width:660px){.inicio-hero__actions .btn{flex:1}}
 @media (prefers-reduced-motion:reduce){.inicio-topic-link{transition:none}}
 
 
@@ -665,3 +666,12 @@ body.app{padding:0}
 .litoral-brand{display:inline-flex;align-items:center;gap:12px}
 .shell.is-collapsed .sidebar__top{flex-direction:column;gap:10px}
 .nav .account-actions>.account-user{cursor:pointer}
+
+/* Espacio para las cinco secciones sin superponer marca y enlaces. */
+@media (min-width:1280px){
+  .nav:has(.nav__links>a:nth-child(5)){gap:12px}
+  .nav:has(.nav__links>a:nth-child(5)) .brand{flex-shrink:0;font-size:17px;gap:9px}
+  .nav:has(.nav__links>a:nth-child(5)) .brand__mark{width:54px;height:54px}
+  .nav:has(.nav__links>a:nth-child(5)) .nav__links{margin-left:0}
+  .nav:has(.nav__links>a:nth-child(5)) .account-user{max-width:160px}
+}

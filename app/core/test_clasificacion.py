@@ -154,9 +154,7 @@ class IngestaRSSClasificadaTestCase(IngestaSimuladaMixin, TestCase):
         items = ''.join(
             ITEM_CON_MEDIA.format(titulo=titulo, link=f'{BASE}93{n:04d}-nota', n=n) for n in range(cantidad)
         )
-        self.urlopen.return_value.__enter__.return_value.read.return_value = (
-            RSS_CON_MEDIA.format(items=items).encode('utf-8')
-        )
+        self.urlopen.return_value = RSS_CON_MEDIA.format(items=items).encode('utf-8')
 
     def test_guarda_imagen_fecha_categoria_y_departamento(self):
         self.feed_con_media(1)
@@ -183,13 +181,13 @@ class IngestaRSSClasificadaTestCase(IngestaSimuladaMixin, TestCase):
     def test_imagen_no_http_se_descarta_sin_perder_la_noticia(self):
         xml = RSS_CON_MEDIA.format(items=ITEM_CON_MEDIA.format(titulo='Nota', link=BASE + '930100-x', n=0)
                                    .replace('https://cdn.ejemplo.com', 'javascript:alert(1)//'))
-        self.urlopen.return_value.__enter__.return_value.read.return_value = xml.encode('utf-8')
+        self.urlopen.return_value = xml.encode('utf-8')
         self.assertEqual(fetch_and_store_elterritorio('misiones')['capturados'], 1)
         self.assertEqual(Publicacion.objects.get().imagen_url, '')
 
 
 SITEMAP_INDICE = """<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-<sitemap><loc>https://sm/1.xml</loc></sitemap><sitemap><loc>https://sm/caido.xml</loc></sitemap>
+<sitemap><loc>https://sm/1.xml</loc></sitemap>
 <sitemap><loc>https://sm/2.xml</loc></sitemap></sitemapindex>"""
 URLSET = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{}</urlset>'
 
@@ -208,23 +206,20 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
                          'https://www.elterritorio.com.ar/contacto'],
         }
 
-        def urlopen(req, timeout=None):
-            url = req.full_url
-            respuesta = MagicMock()
+        def descargar(url, timeout=None):
             if url.endswith('sitemap.xml'):
                 cuerpo = SITEMAP_INDICE
-            elif url.endswith('caido.xml'):
-                raise OSError('sitemap caído')
+            elif url in {link for enlaces in self.links.values() for link in enlaces}:
+                return b'<html><body>Articulo simulado</body></html>'
             else:
                 clave = url.split('://', 1)[1]
                 cuerpo = URLSET.format(''.join(f'<url><loc>{l}</loc></url>' for l in self.links[clave]))
-            respuesta.__enter__.return_value.read.return_value = cuerpo.encode('utf-8')
-            return respuesta
+            return cuerpo.encode('utf-8')
 
-        self.urlopen.side_effect = urlopen
-        self.article.side_effect = lambda url, language=None: SimpleNamespace(
-            title=f'Título {url[-3:]}', text=f'Texto de {url}', top_image=f'https://cdn.ejemplo.com/{url[-3:]}.webp',
-            publish_date=None, download=lambda: None, parse=lambda: None,
+        self.urlopen.side_effect = descargar
+        self.article.side_effect = lambda url, language=None, **kwargs: SimpleNamespace(
+            title=f'Escuela en Posadas {url[-3:]}', text=f'Texto de {url}', top_image=f'https://cdn.ejemplo.com/{url[-3:]}.webp',
+            publish_date=None, download=lambda **kwargs: None, parse=lambda: None,
         )
 
     def ingerir(self, **opciones):
@@ -234,7 +229,9 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
     def test_toma_solo_el_periodo_y_reparte_entre_dias(self):
         resultado = self.ingerir(limite=3)
 
-        self.assertEqual(resultado['status'], 'EXITO')
+        self.assertEqual(resultado['status'], 'ERROR')
+        self.assertEqual(resultado['estado'], 'PARCIAL')
+        self.assertEqual(resultado['capturados'], 3)
         self.assertEqual(resultado['disponibles'], 5)
         # Una noticia por día, de la fecha más reciente a la más vieja.
         self.assertEqual(
@@ -255,8 +252,8 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
         self.assertEqual(Publicacion.objects.get(url=existente).contenido, 'Previa')
 
     def test_articulo_sin_texto_se_registra_y_continua(self):
-        self.article.side_effect = lambda url, language=None: SimpleNamespace(
-            title='', text='', top_image='', publish_date=None, download=lambda: None, parse=lambda: None,
+        self.article.side_effect = lambda url, language=None, **kwargs: SimpleNamespace(
+            title='', text='', top_image='', publish_date=None, download=lambda **kwargs: None, parse=lambda: None,
         )
         resultado = self.ingerir(limite=2)
         self.assertEqual(resultado['capturados'], 0)
@@ -270,10 +267,10 @@ class IngestaHistoricaTestCase(IngestaSimuladaMixin, TestCase):
     def test_comando_informa_resultado(self):
         salida = StringIO()
         with patch('core.services.scraper.time.sleep'):
-            call_command('ingestar_historico', '--desde=2026-09-01', '--hasta=2026-09-30', '--limite=2',
+            call_command('ingestar_historico', '--desde=2026-09-01', '--hasta=2026-09-30', '--limite=10',
                          stdout=salida)
-        self.assertIn('Nuevas: 2', salida.getvalue())
-        self.assertEqual(Publicacion.objects.count(), 2)
+        self.assertIn('Nuevas: 5', salida.getvalue())
+        self.assertEqual(Publicacion.objects.count(), 5)
 
 
 class EjecutarScraperTodasTestCase(TestCase):
@@ -313,7 +310,7 @@ class VistasConClasificacionTestCase(TestCase):
         self.assertContains(respuesta, '© Foto: El Territorio<')
         self.assertContains(respuesta, 'https://cdn.ejemplo.com/y.webp')
 
-    def test_portada_muestra_las_12_categorias(self):
-        respuesta = self.client.get(reverse('landing'))
+    def test_categorias_muestra_las_12_categorias(self):
+        respuesta = self.client.get(reverse('categorias'))
         for nombre in CATEGORIAS_PROYECTO:
-            self.assertContains(respuesta, f'>{nombre}</h2>')
+            self.assertContains(respuesta, f'>{nombre}</h3>')

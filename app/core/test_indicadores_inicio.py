@@ -32,6 +32,6 @@ class IndicadoresInicioTests(TestCase):
         self.assertEqual(inicio.context['indicadores_inicio'], dashboard.context['resumen'])
         self.assertEqual(inicio.context['indicadores_inicio']['pendientes'], 1)
         html = inicio.content.decode()
-        self.assertLess(html.index('id="inicio-indicadores"'), html.index('id="news-heading-salud"'))
+        self.assertLess(html.index('id="inicio-indicadores"'), html.index('id="regional-news-title"'))
         self.assertIn('news-trends-title', html)
         self.assertIn('exchange-rates', html)

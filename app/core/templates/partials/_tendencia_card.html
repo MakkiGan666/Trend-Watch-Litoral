@@ -1,0 +1,22 @@
+<li class="trend-card{% if destacada %} trend-card--lead{% endif %}">
+  <a class="trend-card__link" href="{% url 'noticia' tendencia.publicacion.pk %}" aria-label="Leer tendencia {{ numero }}: {{ tendencia.publicacion.titulo }}">
+    <span class="trend-card__media">
+      {% if tendencia.publicacion.imagen_publica_url %}
+        <img src="{{ tendencia.publicacion.imagen_publica_url }}" alt="" loading="lazy">
+      {% else %}
+        <span class="trend-card__fallback" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="26" height="22" rx="4"/><circle cx="11" cy="12" r="2"/><path d="m5 24 8-8 5 5 4-4 6 6"/></svg>
+        </span>
+      {% endif %}
+      <span class="trend-card__rank" aria-hidden="true">{{ numero }}</span>
+    </span>
+    <span class="trend-card__body">
+      <span class="trend-card__source">{{ tendencia.publicacion.fuente }}</span>
+      <span class="trend-card__title">{{ tendencia.publicacion.titulo }}</span>
+      <span class="trend-card__meta">
+        <span>{% if tendencia.estimada %}Selección regional{% else %}{{ tendencia.clics }} lector{{ tendencia.clics|pluralize:'es' }}{% endif %}</span>
+        <span aria-hidden="true">↗</span>
+      </span>
+    </span>
+  </a>
+</li>

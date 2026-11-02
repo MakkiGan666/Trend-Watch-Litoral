@@ -1,0 +1,14 @@
+{% comment %}Badge discreto con el sentimiento automático del comentario.
+   No muestra nada si todavía no se procesó o si el análisis falló; la
+   plataforma declara así que la predicción es tentativa y no censura
+   contenido en función de ella.{% endcomment %}
+{% with sent=comentario.sentimiento_vigente %}
+  {% if sent and sent.etiqueta %}
+    <span class="comment-sentiment comment-sentiment--{{ sent.etiqueta }}"
+          title="Predicción automática ({{ sent.get_metodo_display }} · {{ sent.modelo }}). Confianza {{ sent.confianza|floatformat:2 }}. No refleja una verdad objetiva.">
+      <span class="comment-sentiment__dot" aria-hidden="true"></span>
+      <span class="comment-sentiment__label">{{ sent.etiqueta|capfirst }}</span>
+      <span class="comment-sentiment__note">· análisis automático</span>
+    </span>
+  {% endif %}
+{% endwith %}

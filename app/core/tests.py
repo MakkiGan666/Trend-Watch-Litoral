@@ -1595,7 +1595,10 @@ class RolesPermisosTestCase(TestCase):
             for modelo in (User, Group):
                 model_admin = admin.site._registry[modelo]
                 for accion in ('view', 'add', 'change', 'delete'):
-                    self.assertEqual(getattr(model_admin, f'has_{accion}_permission')(request), rol == 'Administrador')
+                    self.assertEqual(
+                        getattr(model_admin, f'has_{accion}_permission')(request),
+                        rol == 'Administrador' and accion == 'view',
+                    )
 
     def test_asignacion_por_comando_actualiza_flags_y_permisos(self):
         usuario = self.usuarios['Sin rol']
