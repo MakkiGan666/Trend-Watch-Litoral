@@ -1,4 +1,6 @@
 """Revisa en lotes noticias sin departamento, con simulación por defecto."""
+import hashlib
+import json
 import time
 
 from django.core.management.base import BaseCommand, CommandError
@@ -7,6 +9,13 @@ from django.db import transaction
 from core.models import Publicacion, RevisionDepartamento
 from core.services.clasificacion import departamento_por_texto
 from core.services.clasificacion_departamentos import MAX_LOTE_IA, cliente_ia, consultar_ia
+
+
+def _huella_contenido(publicacion):
+    # No normalizar ni truncar: cualquier edición del texto analizado invalida
+    # la decisión, aunque la cita aún aparezca en la versión nueva.
+    datos = json.dumps([publicacion.titulo, publicacion.contenido], ensure_ascii=False)
+    return hashlib.sha256(datos.encode('utf-8')).hexdigest()
 
 
 class Command(BaseCommand):
@@ -24,9 +33,11 @@ class Command(BaseCommand):
         parser.add_argument('--pausa-ia', type=float, default=1.0, help='Segundos entre llamadas a Gemini (0 a 30).')
 
     @staticmethod
-    def _guardar(publicacion, decision, metodo, modelo, revisar):
+    def _guardar(publicacion, decision, metodo, modelo, revisar, *, contenido_hash):
         with transaction.atomic():
             actual = Publicacion.objects.select_for_update().get(pk=publicacion.pk)
+            if _huella_contenido(actual) != contenido_hash:
+                return False
             anterior = RevisionDepartamento.objects.filter(publicacion=actual).first()
             if actual.departamento or (not revisar and anterior is not None):
                 return False
@@ -74,6 +85,9 @@ class Command(BaseCommand):
         lote = list(pendientes.only('id_publicacion_api', 'titulo', 'contenido', 'departamento')[:limite + 1])
         hay_mas = len(lote) > limite
         seleccionadas = lote[:limite]
+        # Capturar la identidad antes de reglas/IA, sin mantener una transacción
+        # ni bloqueos durante llamadas externas.
+        huellas = {publicacion.pk: _huella_contenido(publicacion) for publicacion in seleccionadas}
         cursor = seleccionadas[-1].pk if seleccionadas else cursor_inicial
         reglas, requieren_ia = [], []
         for publicacion in seleccionadas:
@@ -100,7 +114,10 @@ class Command(BaseCommand):
         for publicacion, decision in reglas:
             guardada = False
             if options['aplicar']:
-                guardada = self._guardar(publicacion, decision, RevisionDepartamento.Metodo.REGLAS, '', options['revisar'])
+                guardada = self._guardar(
+                    publicacion, decision, RevisionDepartamento.Metodo.REGLAS, '', options['revisar'],
+                    contenido_hash=huellas[publicacion.pk],
+                )
                 escritas += guardada
                 omitidas += not guardada
             self.stdout.write(f'#{publicacion.pk}: reglas → {decision["departamento"]}'
@@ -133,8 +150,10 @@ class Command(BaseCommand):
                         abstenciones += 1
                     guardada = False
                     if options['aplicar']:
-                        guardada = self._guardar(publicacion, decision, RevisionDepartamento.Metodo.IA,
-                                                cliente.model_name, options['revisar'])
+                        guardada = self._guardar(
+                            publicacion, decision, RevisionDepartamento.Metodo.IA,
+                            cliente.model_name, options['revisar'], contenido_hash=huellas[publicacion.pk],
+                        )
                         escritas += guardada
                         omitidas += not guardada
                     detalle = (f' | {decision["lugar"]}: {decision["evidencia"]}'
