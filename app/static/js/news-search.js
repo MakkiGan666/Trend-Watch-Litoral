@@ -150,6 +150,7 @@
     render(data) {
       this.panel.replaceChildren();
       this.options = [];
+      if (!data || typeof data !== 'object') data = {};
       for (const [label, items, type] of [
         ['Sugerencias de búsqueda', Array.isArray(data.terminos) ? data.terminos.slice(0, 5) : [], 'termino'],
         ['Noticias relacionadas', Array.isArray(data.noticias) ? data.noticias.slice(0, 4) : [], 'noticia']
@@ -164,9 +165,15 @@
         heading.textContent = label;
         group.append(heading);
         for (const item of items) {
-          if (typeof (type === 'termino' ? item.consulta : item.url) !== 'string') continue;
+          if (!item || typeof item !== 'object') continue;
+          const text = type === 'termino' ? item.texto : item.titulo;
+          const target = type === 'termino' ? item.consulta : item.url;
+          if (typeof text !== 'string' || !text.trim() ||
+              typeof target !== 'string' || !target.trim()) continue;
           if (type === 'noticia') {
-            const url = new URL(item.url, root.location.origin);
+            let url;
+            try { url = new URL(target, root.location.origin); }
+            catch (_) { continue; }
             if (url.origin !== root.location.origin || !/^\/noticia\/[1-9]\d*\/$/.test(url.pathname)) continue;
           }
           const index = this.options.length;
@@ -175,11 +182,11 @@
           option.dataset.index = String(index);
           option.setAttribute('role', 'option');
           option.setAttribute('aria-selected', 'false');
-          option.textContent = type === 'termino' ? item.texto : item.titulo;
+          option.textContent = text;
           group.append(option);
           this.options.push({ element: option, item, type });
         }
-        this.panel.append(group);
+        if (group.childElementCount > 1) this.panel.append(group);
       }
       this.active = -1;
       this.panel.hidden = this.options.length === 0;

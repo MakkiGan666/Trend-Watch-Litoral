@@ -32,8 +32,11 @@ funciones nativas; SQLite tiene un adaptador por conexión. Las respuestas lleva
 - Enter sin opción seleccionada conserva el envío GET normal. Escape cierra las
   sugerencias; en la barra, un segundo Escape cierra el buscador y restaura el foco.
 - El toque selecciona al soltar; arrastrar o cancelar un gesto no selecciona.
-- Los textos se insertan como texto, nunca como HTML. Solo se aceptan enlaces de
-  noticias del mismo origen con la ruta de detalle esperada.
+- Las etiquetas y los destinos deben ser cadenas no vacías tras quitar espacios.
+  Las entradas ausentes o de tipo incorrecto se omiten sin crear opciones o grupos
+  vacíos. Los textos se insertan con `textContent`, nunca como HTML. Solo se aceptan
+  enlaces de noticias del mismo origen con la ruta de detalle esperada; una URL
+  malformada se omite sin descartar las otras entradas válidas.
 - Cada formulario mantiene su estado independiente. La composición IME no genera
   consultas incompletas.
 - Ante errores o resultados vacíos se cierra el panel y permanece el formulario.
@@ -63,3 +66,48 @@ del repositorio.
 
 La salida está acotada, pero la tokenización consulta títulos del conjunto elegible;
 para un archivo grande conviene medir latencia y carga antes de ampliar el despliegue.
+
+
+## Alcance operativo y crecimiento
+
+La auditoría focalizada de PR #37 midió el servicio real en PostgreSQL 17 con
+publicaciones sintéticas y caché caliente. Medianas de tres muestras para `mi`:
+
+| Publicaciones | Mediana del servicio |
+| ---: | ---: |
+| 140 | 11 ms |
+| 1.000 | 33 ms |
+| 10.000 | 187 ms |
+| 50.000 | 1.073 ms |
+
+Con 50.000 publicaciones, cuatro llamadas concurrentes tardaron entre 2,63 y
+3,06 segundos. Un prefijo sin coincidencias también superó un segundo. Son tiempos
+locales del servicio, sin HTTP, no percentiles ni garantías de producción.
+
+**Alcance recomendado de esta entrega: el corpus actual de 140 publicaciones y
+revisión local/controlada.** No se certifica capacidad para exposición pública con
+tráfico no acotado ni para crecimiento a decenas de miles de noticias. Este alcance
+es una restricción operativa documentada: el código no aplica un tope de registros
+ni una cuota de solicitudes. Antes de ampliar el corpus o el tráfico hay que medir
+latencia y carga concurrente representativas y acordar el presupuesto de respuesta.
+Las cifras con 1.000 noticias son orientativas, no una ampliación ya validada del
+alcance real.
+
+`LIMIT 5` limita la salida, pero la consulta de términos tokeniza todos los títulos
+elegibles antes de agrupar. El debounce y AbortController del navegador no garantizan
+cancelación del SQL. No hay una mitigación nueva de esta carga en esta corrección.
+
+Se evaluó un prefiltro de subcadena en `titulo_busqueda` antes de tokenizar. No se
+incorporó: plegar el título entero y plegar cada palabra no son intercambiables en
+todos los casos Unicode. Por ejemplo, la normalización V1 de SQLite transforma
+`ΟΣ'Α` en `οσ'α`, pero la palabra `ΟΣ` se pliega como `ος`: el prefijo `ος` puede
+coincidir por palabra aunque falte en el título plegado. Un prefiltro genérico
+cambiaría resultados; una variante solo para determinadas configuraciones de
+PostgreSQL exigiría una justificación específica de colación. Además, no mejoraría
+el peor caso de un prefijo frecuente presente en todos los títulos. No se alteró el
+SQL ni su semántica, frecuencia, ranking o frescura.
+
+Para crecer, evaluar una proyección de términos o reutilización de resultados con
+invalidación correcta y protección de carga, con autorización y pruebas aparte.
+No anteponer un límite arbitrario al corpus ni usar un caché obsoleto como sustituto:
+eso cambiaría el contrato. Esta entrega no agrega tablas, índices o migraciones.
