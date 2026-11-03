@@ -7,7 +7,7 @@
 
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v=10">
-<link rel="stylesheet" href="{% static 'css/dashboard-calendar.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/dashboard-calendar.css' %}?v=5">
 {% endblock %}
 
 {% block content %}
@@ -42,24 +42,7 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M7 3v4M17 3v4M7 14h2m6 0h2M7 17h2m6 0h2"/></svg>
                 <span id="dashboard-date-value">Todas las fechas</span>
             </button>
-            <div class="dashboard-calendar" id="dashboard-calendar" role="dialog" aria-modal="false" aria-label="Elegir fecha de captura" hidden>
-                <div class="dashboard-calendar__head">
-                    <button type="button" class="icon-btn" data-calendar-prev aria-label="Mes anterior">‹</button>
-                    <strong id="dashboard-calendar-month" data-calendar-month aria-live="polite"></strong>
-                    <button type="button" class="icon-btn" data-calendar-next aria-label="Mes siguiente">›</button>
-                </div>
-                <div class="dashboard-calendar__jump">
-                    <select data-calendar-month-select aria-label="Elegir mes del calendario">
-                        <option value="0">Enero</option><option value="1">Febrero</option><option value="2">Marzo</option><option value="3">Abril</option>
-                        <option value="4">Mayo</option><option value="5">Junio</option><option value="6">Julio</option><option value="7">Agosto</option>
-                        <option value="8">Septiembre</option><option value="9">Octubre</option><option value="10">Noviembre</option><option value="11">Diciembre</option>
-                    </select>
-                    <input data-calendar-year-input type="number" min="2026" max="9999" step="1" aria-label="Elegir año del calendario">
-                </div>
-                <div class="dashboard-calendar__week" aria-hidden="true"><span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span></div>
-                <div class="dashboard-calendar__days" data-calendar-days role="group" aria-labelledby="dashboard-calendar-month"></div>
-                <div class="dashboard-calendar__foot"><button type="button" data-calendar-today>Hoy</button><button type="button" data-calendar-clear>Quitar fecha</button></div>
-            </div>
+            {% include "partials/_dashboard_calendar.html" with calendar_id="dashboard-calendar" minimum_year=2026 %}
         </div>
         <div><label for="dashboard-source">Fuente</label><select class="select" id="dashboard-source" name="fuente"><option value="">Todas las fuentes</option>{% for fuente in fuentes_dashboard %}<option value="{{ fuente }}" {% if filtros.fuente.value == fuente %}selected{% endif %}>{{ fuente }}</option>{% endfor %}</select></div>
         <div><label for="dashboard-location">Localidad / departamento</label><select class="select" id="dashboard-location" name="localidad"><option value="">Todas las localidades</option>{% for departamento in departamentos %}<option value="{{ departamento.slug }}" {% if filtros.localidad.value == departamento.slug %}selected{% endif %}>{{ departamento.nombre }}</option>{% endfor %}<option value="__missing" {% if filtros.localidad.value == '__missing' %}selected{% endif %}>Sin departamento identificado</option></select></div>
@@ -142,5 +125,5 @@
 {% block extra_js %}
 <script src="{% static 'js/dashboard.js' %}?v=9" defer></script>
 <script src="{% static 'js/dashboard-location-select.js' %}?v=3" defer></script>
-<script src="{% static 'js/dashboard-calendar.js' %}?v=7" defer></script>
+<script src="{% static 'js/dashboard-calendar.js' %}?v=9" defer></script>
 {% endblock %}
