@@ -3,13 +3,28 @@
 {% load static %}
 {% block title %}Dashboard · TrendWatch Litoral{% endblock %}
 {% block body_class %}analytics-page{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/analytics.css' %}?v=1">{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/analytics.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/dashboard-calendar.css' %}?v=5">
+{% endblock %}
 {% block content %}
 <div class="wrap analytics">
   <header class="page-head"><p class="analytics-eyebrow">Panel de superusuarios</p><h1>Dashboard</h1><p>Indicadores reales del conjunto completo de publicaciones, sin el límite del panel de gestión.</p></header>
   <form method="get" class="analytics-filters glass glass--sheen">
     {{ filtros.non_field_errors }}
-    {% for field in filtros %}<div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}
+    {% for field in filtros %}
+    {% if field.name == 'desde' or field.name == 'hasta' %}
+    <div class="dashboard-date" data-dashboard-calendar>
+      <label id="{{ field.id_for_label }}-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      <button class="select dashboard-date__trigger" id="{{ field.id_for_label }}-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="{{ field.id_for_label }}-calendar" aria-labelledby="{{ field.id_for_label }}-label {{ field.id_for_label }}-value" hidden>
+        <span id="{{ field.id_for_label }}-value">Sin límite</span>
+      </button>
+      {% with calendar_id=field.id_for_label|add:'-calendar' %}{% include 'partials/_dashboard_calendar.html' with calendar_label=field.label %}{% endwith %}
+      {{ field.errors }}
+    </div>
+    {% else %}<div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endif %}
+    {% endfor %}
     <div class="analytics-filter-actions"><button class="btn btn--ghost" type="submit">Aplicar filtros</button><a href="{% url 'dashboard' %}">Limpiar</a></div>
   </form>
   <section class="analytics-kpis" aria-label="Indicadores de las publicaciones filtradas">
@@ -36,3 +51,5 @@
   {% else %}<section class="analytics-chart glass"><h2>Sin publicaciones para estos filtros</h2><p>Probá otro período o limpiá los filtros. No se generan datos de ejemplo.</p></section>{% endif %}
 </div>
 {% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/dashboard-calendar.js' %}?v=9" defer></script>{% endblock %}

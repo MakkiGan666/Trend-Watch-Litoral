@@ -19,6 +19,18 @@ class DashboardAnaliticoTests(TestCase):
     def noticia(self, clave, **extra):
         return Publicacion.objects.create(hash_origen=clave, titulo=clave, contenido='Texto', fecha_captura=datetime(2026, 10, 20, 12, tzinfo=timezone.utc), **extra)
 
+    def test_fechas_conservan_respaldo_nativo_y_valores_iso(self):
+        self.client.force_login(self.root)
+        response = self.client.get(reverse('dashboard'), {
+            'desde': '2024-02-29', 'hasta': '2026-10-31',
+        })
+        self.assertContains(response, 'type="date" name="desde" value="2024-02-29"')
+        self.assertContains(response, 'type="date" name="hasta" value="2026-10-31"')
+        self.assertContains(response, 'id="id_desde-calendar"', count=1)
+        self.assertContains(response, 'id="id_hasta-calendar"', count=1)
+        self.assertContains(response, 'aria-label="Elegir fecha: Desde"')
+        self.assertContains(response, 'aria-label="Elegir fecha: Hasta"')
+
     def test_solo_superusuarios_y_solo_consulta(self):
         self.assertEqual(self.client.get(reverse('dashboard')).status_code, 302)
         for usuario in (self.lector, self.admin):

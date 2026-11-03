@@ -17,6 +17,7 @@
 .dashboard-calendar__jump input{width:74px}
 .dashboard-calendar__jump :is(select,input):focus-visible{outline:2px solid var(--aqua);outline-offset:2px}
 .dashboard-calendar__week,.dashboard-calendar__days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;text-align:center}
+.dashboard-calendar__days{grid-template-rows:repeat(6,minmax(0,1fr))}
 .dashboard-calendar__week{font-size:11px;color:var(--sage);margin-bottom:8px}
 .dashboard-calendar__week span{padding:5px 0}
 .dashboard-calendar__days button{width:100%;aspect-ratio:1;display:grid;place-items:center;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--mist);font:inherit;font-size:12px;cursor:pointer}
@@ -29,3 +30,22 @@
 @media(hover:hover){.dashboard-calendar__days button:hover,.dashboard-calendar__foot button:hover{background:var(--aqua-soft);border-color:var(--aqua-line);box-shadow:inset 0 0 12px rgba(63,208,180,.1)}}
 @media(max-width:420px){.dashboard-calendar{width:280px}}
 .dashboard-calendar button:disabled{opacity:.25;cursor:not-allowed;pointer-events:none;box-shadow:none;background:transparent;border-color:transparent}
+
+/* El Dashboard analítico mejora los inputs nativos sin cambiar Publicaciones. */
+.analytics-filters.is-calendar-open{z-index:20}
+.analytics-filters [hidden]{display:none!important}
+.analytics-filters .dashboard-date__trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:44px;padding:11px;border:1px solid var(--edge);border-radius:12px;background:var(--ink-800);color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.analytics-filters .dashboard-date__trigger::after{content:"▦";color:var(--aqua)}
+.analytics-filters .dashboard-calendar{width:336px;max-width:calc(100vw - 24px);max-height:70dvh;overflow-y:auto;padding:12px}
+.analytics-filters .dashboard-calendar__head .icon-btn{width:40px;height:40px;flex-shrink:0}
+.analytics-filters .dashboard-calendar__jump select{width:auto;flex:1}
+.analytics-filters .dashboard-calendar__jump input{width:84px;flex:none}
+.analytics-filters .dashboard-calendar__jump :is(select,input){min-height:40px;color-scheme:dark}
+.analytics-filters .dashboard-calendar__days button{min-height:32px;font-size:14px}
+.analytics-filters .dashboard-calendar__days button[aria-current=date]{text-decoration:underline;text-underline-offset:4px;font-weight:600}
+.analytics-filters .dashboard-calendar__days button[aria-pressed=true]{background:var(--aqua);color:var(--ink-900)}
+.analytics-filters .dashboard-calendar__foot button{min-height:40px}
+/* Delimitar el glow global para conservar selección y foco legibles. */
+.analytics-filters .dashboard-calendar button:focus-visible{background:var(--aqua-soft)!important;color:var(--mist)!important;box-shadow:none!important;outline:2px solid var(--aqua);outline-offset:1px}
+@media(hover:hover){.analytics-filters .dashboard-calendar button:not(:disabled):hover{background:var(--aqua-soft)!important;color:var(--mist)!important;box-shadow:none!important}}
+.analytics-filters .dashboard-calendar button[aria-pressed=true]:is(:hover,:focus-visible){background:var(--aqua)!important;color:var(--ink-900)!important}
