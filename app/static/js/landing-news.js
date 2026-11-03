@@ -147,8 +147,9 @@
 
   async function load() {
     feed.setAttribute('aria-busy', 'true');
-    status.textContent = 'Cargando noticias de El Territorio…';
+    status.textContent = 'Cargando noticias de ' + (locationName || 'El Territorio') + '…';
     retry.hidden = true;
+    sections.forEach(section => { section.hidden = true; });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
@@ -172,10 +173,8 @@
         const empty = section.querySelector('.news-category__empty');
         track.replaceChildren(...items.map(publication => card(publication)));
         track.hidden = !items.length;
-        empty.hidden = Boolean(items.length);
-        empty.querySelector('p').textContent = locationName
-          ? 'Todavía no hay noticias de esta categoría asociadas a ' + locationName + '.'
-          : 'No hay noticias de esta categoría entre las publicaciones recibidas.';
+        empty.hidden = true;
+        section.hidden = !items.length;
         if (items.length) {
           if (!carousels.has(section)) carousels.set(section, carousel(section));
           else carousels.get(section)();
@@ -184,8 +183,9 @@
       const visibleTotal = new Set(Array.from(groups.values()).flat().map(publication => publication.id ?? publication)).size;
       status.textContent = visibleTotal
         ? (locationName || 'El Territorio') + ' · ' + visibleTotal + ' noticias de las categorías seleccionadas'
-        : (locationName ? 'Todavía no hay noticias de estas categorías asociadas a ' + locationName + '.' : 'No hay noticias de estas categorías entre las publicaciones recibidas.');
+        : (locationName ? 'Todavía no hay noticias clasificadas para ' + locationName + '.' : 'No hay noticias clasificadas entre las publicaciones recibidas.');
     } catch (_) {
+      sections.forEach(section => { section.hidden = true; });
       status.textContent = 'No pudimos cargar las noticias. Intentá nuevamente.';
       retry.hidden = false;
     } finally {

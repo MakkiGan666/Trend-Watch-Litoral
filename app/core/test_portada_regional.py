@@ -53,6 +53,13 @@ class CategoriasYPortadaTests(TestCase):
         self.assertTrue(all(len(grupo['publicaciones']) <= 15 for grupo in grupos))
         self.assertContains(pagina, 'Selección regional')
 
+    def test_inicio_muestra_etiquetas_en_noticias_y_tendencias(self):
+        etiqueta = self.local.etiquetas.select_related('etiqueta').first().etiqueta
+        pagina = self.client.get(reverse('landing'))
+        url = reverse('publicaciones_etiqueta', args=[etiqueta.slug])
+        self.assertContains(pagina, url, count=2)
+        self.assertContains(pagina, 'Etiquetas de Nueva escuela en Posadas', count=2)
+
     def test_inicio_limita_a_quince_por_categoria_y_elimina_duplicados(self):
         for i in range(20):
             noticia = Publicacion.objects.create(hash_origen=f'regional-extra-{i}', titulo=f'Noticia {i} en Posadas',

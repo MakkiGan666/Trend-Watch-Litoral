@@ -12,12 +12,15 @@
   const monthSelect = panel.querySelector('[data-calendar-month-select]');
   const yearInput = panel.querySelector('[data-calendar-year-input]');
   const minimum = new Date(2026, 0, 1, 12);
-  const clamp = date => date < minimum ? new Date(minimum) : date;
   const monthFormat = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
   const fullFormat = new Intl.DateTimeFormat('es-AR', { dateStyle: 'full' });
   const shortFormat = new Intl.DateTimeFormat('es-AR');
   const iso = date => date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
   const parse = text => { const [year, month, day] = text.split('-').map(Number); return new Date(year, month - 1, day, 12); };
+  const maximum = wrapper.dataset.calendarMaxDate ? parse(wrapper.dataset.calendarMaxDate) : null;
+  const maximumMonth = maximum ? new Date(maximum.getFullYear(), maximum.getMonth(), 1, 12) : null;
+  const clamp = date => date < minimum ? new Date(minimum) : maximum && date > maximum ? new Date(maximum) : date;
+  if (maximum) yearInput.max = String(maximum.getFullYear());
   let focused = clamp(new Date());
   let month = new Date(focused.getFullYear(), focused.getMonth(), 1, 12);
   function sync() { value.textContent = input.value ? shortFormat.format(parse(input.value)) : 'Todas las fechas'; }
@@ -29,7 +32,7 @@
     if (returnFocus) trigger.focus();
   }
   function choose(date) {
-    if (date && date < minimum) return;
+    if (date && (date < minimum || maximum && date > maximum)) return;
     input.value = date ? iso(date) : '';
     sync();
     close(true);
@@ -40,16 +43,23 @@
     monthSelect.value = String(month.getMonth());
     yearInput.value = String(month.getFullYear());
     const previous = panel.querySelector('[data-calendar-prev]');
+    const next = panel.querySelector('[data-calendar-next]');
     const atMinimum = month.getFullYear() === 2026 && month.getMonth() === 0;
+    const atMaximum = maximumMonth && month.getTime() >= maximumMonth.getTime();
     // Pasar el foco antes de desactivar la flecha evita que el popup se cierre.
     if (atMinimum && document.activeElement === previous) {
       panel.querySelector('[data-calendar-next]').focus({ preventScroll: true });
     }
     previous.disabled = atMinimum;
+    if (atMaximum && document.activeElement === next) previous.focus({ preventScroll: true });
+    next.disabled = Boolean(atMaximum);
+    for (const option of monthSelect.options) {
+      option.disabled = Boolean(maximum && month.getFullYear() === maximum.getFullYear() && Number(option.value) > maximum.getMonth());
+    }
     days.replaceChildren();
     const offset = (month.getDay() + 6) % 7;
     const count = Math.ceil((offset + new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()) / 7) * 7;
-    const today = iso(new Date());
+    const today = iso(maximum || new Date());
     let activeButton;
     for (let index = 0; index < count; index++) {
       const date = new Date(month.getFullYear(), month.getMonth(), 1 - offset + index, 12);
@@ -58,7 +68,7 @@
       button.type = 'button';
       button.textContent = date.getDate();
       button.dataset.date = key;
-      button.disabled = date < minimum;
+      button.disabled = date < minimum || Boolean(maximum && date > maximum);
       button.setAttribute('aria-label', fullFormat.format(date));
       button.setAttribute('aria-pressed', String(input.value === key));
       button.tabIndex = key === iso(focused) ? 0 : -1;
@@ -82,7 +92,7 @@
   }
   function moveMonth(delta, focusDay = false) {
     const nextMonth = new Date(month.getFullYear(), month.getMonth() + delta, 1, 12);
-    if (nextMonth < minimum) return;
+    if (nextMonth < minimum || maximumMonth && nextMonth > maximumMonth) return;
     // En dispositivos táctiles el clic no siempre enfoca la flecha. Mantener
     // el foco dentro del panel al reemplazar los días del mes anterior.
     if (!focusDay) {
@@ -90,7 +100,7 @@
         .focus({ preventScroll: true });
     }
     month = nextMonth;
-    focused = new Date(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()), 12);
+    focused = clamp(new Date(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()), 12));
     draw(focusDay);
   }
   function jumpToMonth() {
@@ -100,8 +110,9 @@
       draw();
       return;
     }
-    month = new Date(year, selectedMonth, 1, 12);
-    focused = new Date(year, selectedMonth, Math.min(focused.getDate(), new Date(year, selectedMonth + 1, 0).getDate()), 12);
+    const requestedMonth = new Date(year, selectedMonth, 1, 12);
+    month = maximumMonth && requestedMonth > maximumMonth ? new Date(maximumMonth) : requestedMonth;
+    focused = clamp(new Date(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()), 12));
     draw();
   }
   trigger.addEventListener('click', () => panel.hidden ? open() : close());
@@ -112,7 +123,7 @@
   yearInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); jumpToMonth(); }
   });
-  panel.querySelector('[data-calendar-today]').addEventListener('click', () => choose(new Date()));
+  panel.querySelector('[data-calendar-today]').addEventListener('click', () => choose(maximum || new Date()));
   panel.querySelector('[data-calendar-clear]').addEventListener('click', () => choose(null));
   days.addEventListener('keydown', event => {
     const deltas = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };

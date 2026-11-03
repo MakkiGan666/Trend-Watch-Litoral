@@ -19,4 +19,9 @@
       </span>
     </span>
   </a>
+  {% with etiquetas=tendencia.publicacion.etiquetas.all %}{% if etiquetas %}
+  <nav class="news-keywords news-keywords--trend" aria-label="Etiquetas de {{ tendencia.publicacion.titulo }}">
+    {% for relacion in etiquetas|slice:':2' %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}
+  </nav>
+  {% endif %}{% endwith %}
 </li>

@@ -10,6 +10,7 @@ from django.utils.text import slugify
 from core.localidades import DEPARTAMENTOS
 from core.models import ClicPublicacion, Publicacion, TemaTrend, Trend
 from core.services.clasificacion import CATEGORIAS_PROYECTO
+from core.services.publicaciones_unicas import publicaciones_unicas
 
 
 SLUGS_MISIONES = [departamento['slug'] for departamento in DEPARTAMENTOS]
@@ -53,17 +54,7 @@ def _candidatas_destacadas(categoria=None):
 
 def _elegir_destacadas(candidatas, limite):
     ordenadas = sorted(candidatas, key=lambda noticia: (_puntaje(noticia), _fecha(noticia), noticia.pk), reverse=True)
-    elegidas = []
-    titulos = set()
-    for noticia in ordenadas:
-        clave = slugify(noticia.titulo)
-        if clave in titulos:
-            continue
-        titulos.add(clave)
-        elegidas.append(noticia)
-        if len(elegidas) == limite:
-            break
-    return elegidas
+    return publicaciones_unicas(ordenadas, limite)
 
 
 def noticias_destacadas(limite=15):
@@ -85,7 +76,8 @@ def tendencias_destacadas(limite=5):
     desde = timezone.now() - timedelta(days=7)
     mas_leidas = list(publicaciones_provinciales().annotate(
         clics_recientes=Count('clics', filter=Q(clics__ultima_visita__gte=desde)),
-    ).filter(clics_recientes__gt=0).order_by('-clics_recientes', '-fecha_publicacion', '-pk')[:limite])
+    ).filter(clics_recientes__gt=0).order_by('-clics_recientes', '-fecha_publicacion', '-pk')[:limite * 5])
+    mas_leidas = publicaciones_unicas(mas_leidas, limite)
     if mas_leidas:
         return [{'publicacion': noticia, 'clics': noticia.clics_recientes, 'estimada': False} for noticia in mas_leidas]
     return [{'publicacion': noticia, 'clics': 0, 'estimada': True}

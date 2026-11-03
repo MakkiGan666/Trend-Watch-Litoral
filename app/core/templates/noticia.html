@@ -3,14 +3,16 @@
 
 {% block title %}{{ publicacion.titulo|default:"Noticia" }} · TrendWatch Litoral{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=7">
+<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=10">
+<link rel="stylesheet" href="{% static 'css/news-keywords.css' %}?v=1">
 <link rel="stylesheet" href="{% static 'css/comments.css' %}?v=1">
-<link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
 <div class="wrap news-detail">
   <a class="btn btn--ghost news-detail__back" href="{% url 'landing' %}">← Volver a las noticias</a>
+  <div class="news-detail__layout">
   <article class="news-detail__article glass glass--sheen">
     <header>
       <div class="news-detail__tags">
@@ -19,8 +21,9 @@
         {% for localidad in localidades_noticia %}<span class="tag tag--soft">{{ localidad }}</span>{% empty %}<span class="tag tag--soft">Localidad sin identificar</span>{% endfor %}
       </div>
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
-      <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if publicacion.fecha_captura %} · Incorporada el <time datetime="{{ publicacion.fecha_captura|date:'c' }}">{{ publicacion.fecha_captura|date:"d/m/Y H:i" }}</time>{% endif %}</p>
-      {% if fecha_navegacion.fecha_efectiva %}<p class="news-detail__meta">{% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_navegacion.fecha_dia }}</time>{% if fecha_navegacion.fecha_precision == 'dia' %} · Hora no verificada{% endif %}</p>{% endif %}
+      {% if etiquetas_noticia %}<nav class="news-keywords" aria-label="Etiquetas de la noticia">{% for relacion in etiquetas_noticia %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}</nav>{% endif %}
+      {% if resumen %}<p class="news-detail__summary">{{ resumen }}</p>{% endif %}
+      <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if fecha_navegacion.fecha_efectiva %} · {% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_legible }}</time>{% endif %}</p>
     </header>
 
     {% if imagen_noticia %}
@@ -33,10 +36,13 @@
     {% endif %}
     <div class="news-detail__reading" data-news-reading>
       <div class="news-detail__content" id="news-full-content" data-news-content>
-        {% if contenido_noticia %}{{ contenido_noticia|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
-      </div>
-      <div class="news-detail__expand" data-news-expand hidden>
-        <button class="btn btn--ghost" type="button" data-news-read-more aria-expanded="false" aria-controls="news-full-content">Leer más</button>
+        {% if primer_parrafo %}{{ primer_parrafo|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
+        {% if resto %}
+        <div id="news-remaining-content" data-news-more>{{ resto|linebreaks }}</div>
+        <div class="news-detail__expand" data-news-expand hidden>
+          <button class="btn btn--ghost" type="button" data-news-read-more aria-expanded="false" aria-controls="news-remaining-content">Leer más</button>
+        </div>
+        {% endif %}
       </div>
     </div>
     <footer class="news-detail__source">
@@ -56,13 +62,16 @@
       </div>
     </footer>
   </article>
-  {% include "partials/_valoraciones.html" %}
+  <div class="news-detail__rating-rail">
+    {% include "partials/_valoraciones.html" %}
+  </div>
   {% include "partials/_comentarios.html" %}
+  </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/news-detail.js' %}?v=2" defer></script>
+<script src="{% static 'js/news-detail.js' %}?v=4" defer></script>
 {% endblock %}
 
 {% block footer %}

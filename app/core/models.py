@@ -1,4 +1,5 @@
 from .busqueda_texto_v1 import TextoComparableV1
+from .imagenes import es_portada_generica
 
 from django.db import models
 from django.utils import timezone
@@ -124,7 +125,9 @@ class Publicacion(models.Model):
 
     @property
     def imagen_publica_url(self):
-        return self.imagen_archivo.url if self.imagen_archivo else self.imagen_url
+        if self.imagen_archivo:
+            return self.imagen_archivo.url
+        return '' if es_portada_generica(self.imagen_url) else self.imagen_url
 
 
 class RevisionDepartamento(models.Model):
@@ -213,6 +216,27 @@ class PublicacionTema(models.Model):
     class Meta:
         db_table = 'Publicacion_Temas'
         unique_together = (('id_publicacion_api', 'id_temas'),)
+
+
+class Etiqueta(models.Model):
+    nombre = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=110, unique=True)
+
+    def __str__(self):
+        return self.nombre
+
+
+class PublicacionEtiqueta(models.Model):
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='etiquetas')
+    etiqueta = models.ForeignKey(Etiqueta, on_delete=models.CASCADE, related_name='publicaciones')
+    posicion = models.PositiveSmallIntegerField()
+
+    class Meta:
+        ordering = ['posicion', 'pk']
+        constraints = [
+            models.UniqueConstraint(fields=['publicacion', 'etiqueta'], name='etiqueta_unica_por_publicacion'),
+            models.UniqueConstraint(fields=['publicacion', 'posicion'], name='posicion_unica_por_publicacion'),
+        ]
 
 
 class TemaTrend(models.Model):

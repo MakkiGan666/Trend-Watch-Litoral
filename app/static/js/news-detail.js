@@ -2,36 +2,35 @@
   'use strict';
   const reading = document.querySelector('[data-news-reading]');
   if (!reading) return;
-  const content = reading.querySelector('[data-news-content]');
   const controls = reading.querySelector('[data-news-expand]');
   const button = reading.querySelector('[data-news-read-more]');
-  const article = reading.closest('.news-detail__article');
-  const image = article.querySelector('.news-detail__media img');
-  let expanded = false;
-  function refresh() {
-    // Respetar el ancho real de la foto, sin recortarla ni cambiar su proporción.
+  const more = reading.querySelector('[data-news-more]');
+  const image = reading.closest('.news-detail__article').querySelector('.news-detail__media img');
+  function syncReadingWidth() {
     const width = image && image.getBoundingClientRect().width;
     reading.style.setProperty('--news-reading-width', width > 0 ? width + 'px' : '100%');
-    const limit = parseFloat(getComputedStyle(reading).getPropertyValue('--news-preview-height')) || 340;
-    const long = content.scrollHeight > limit + 32;
-    controls.hidden = !long;
-    reading.classList.toggle('is-collapsed', long && !expanded);
-    button.textContent = expanded ? 'Leer menos' : 'Leer más';
-    button.setAttribute('aria-expanded', String(!long || expanded));
   }
-  button.addEventListener('click', () => {
-    expanded = !expanded;
-    refresh();
-    // Al contraer, mantener el botón a la vista sin saltar al inicio de la noticia.
-    if (!expanded) button.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-  });
   if (image) {
-    image.addEventListener('load', refresh);
-    if ('ResizeObserver' in window) new ResizeObserver(refresh).observe(image);
+    image.addEventListener('load', syncReadingWidth);
+    if ('ResizeObserver' in window) new ResizeObserver(syncReadingWidth).observe(image);
   }
-  window.addEventListener('resize', refresh);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(refresh);
-  refresh();
+  window.addEventListener('resize', syncReadingWidth);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(syncReadingWidth);
+  syncReadingWidth();
+  if (more && controls && button) {
+    let expanded = false;
+    more.hidden = true;
+    controls.hidden = false;
+    button.addEventListener('click', () => {
+      expanded = !expanded;
+      const previousScroll = window.scrollY;
+      more.hidden = !expanded;
+      button.textContent = expanded ? 'Leer menos' : 'Leer más';
+      button.setAttribute('aria-expanded', String(expanded));
+      if (expanded) window.scrollTo(0, previousScroll);
+      else button.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    });
+  }
 
   // Conservar el scroll al valorar o guardar: el servidor sigue siendo la fuente
   // de verdad y la respuesta actualiza únicamente el bloque correspondiente.

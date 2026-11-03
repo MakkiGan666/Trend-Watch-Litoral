@@ -5,8 +5,10 @@ from .services.identidad import errores_identidad
 from django.core.validators import URLValidator
 from datetime import date
 import unicodedata
+from django.utils import timezone
 
 from .localidades import DEPARTAMENTOS
+from .fechas import ZONA_LOCAL
 from .models import Publicacion, Categoria, Comentario
 
 
@@ -41,6 +43,23 @@ class FiltrosPublicaciones(forms.Form):
         if fecha and fecha < date(2026, 1, 1):
             raise forms.ValidationError('La fecha debe ser de 2026 en adelante.')
         return fecha
+
+
+class FiltrosCategoria(forms.Form):
+    fecha = forms.DateField(required=False)
+    orden = forms.ChoiceField(required=False, choices=[
+        ('recientes', 'Más nuevas primero'),
+        ('antiguas', 'Más viejas primero'),
+    ], initial='recientes')
+
+    def clean_fecha(self):
+        fecha = self.cleaned_data['fecha']
+        if fecha and fecha < date(2026, 1, 1):
+            raise forms.ValidationError('La fecha debe ser de 2026 en adelante.')
+        if fecha and fecha > timezone.localtime(timezone.now(), ZONA_LOCAL).date():
+            raise forms.ValidationError('La fecha no puede ser posterior a hoy.')
+        return fecha
+
 
 class PublicacionForm(forms.ModelForm):
     imagen_archivo = forms.ImageField(
