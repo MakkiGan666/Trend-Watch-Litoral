@@ -1,11 +1,17 @@
-<a class="news-card" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}">
+<article class="news-card news-card--keywords">
+  <a class="news-card__overlay" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}"></a>
   <div class="news-card__media">
     {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
-    {% else %}<span class="news-card__fallback">Imagen no disponible</span>{% endif %}
+    {% else %}{% include "partials/_news_image_fallback.html" %}{% endif %}
   </div>
   <div class="news-card__body">
     <span class="news-card__source">{{ publicacion.fuente }}</span>
     <h3>{{ publicacion.titulo }}</h3>
+    {% with etiquetas=publicacion.etiquetas.all %}{% if etiquetas %}
+    <nav class="news-keywords news-keywords--card" aria-label="Etiquetas de {{ publicacion.titulo }}">
+      {% for relacion in etiquetas|slice:':5' %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}
+    </nav>
+    {% endif %}{% endwith %}
     <span class="news-card__link">Leer noticia →</span>
   </div>
-</a>
+</article>

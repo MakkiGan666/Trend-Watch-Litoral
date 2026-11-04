@@ -29,6 +29,7 @@ urlpatterns = [
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),
     path('categorias/<slug:slug>/', views.publicaciones_categoria, name='publicaciones_categoria'),
+    path('etiquetas/<slug:slug>/', views.publicaciones_etiqueta, name='publicaciones_etiqueta'),
     path('noticia/<int:pk>/', views.noticia, name='noticia'),
     path('noticia/<int:pk>/comentarios/', views_comentarios.crear_comentario, name='crear_comentario'),
     path('noticia/<int:pk>/valoracion/', views_valoraciones.valorar_noticia, name='valorar_noticia'),
