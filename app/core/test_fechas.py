@@ -80,6 +80,8 @@ class FechasPublicacionTestCase(TestCase):
         self.assertEqual(dato['fecha_efectiva'], '2026-10-01')
         self.assertEqual(dato['fecha_precision'], 'dia')
         respuesta = self.client.get(reverse('noticia', args=[p.pk]))
+        self.assertContains(respuesta, 'Publicada el <time datetime="2026-10-01">01/10/2026</time>')
+        self.assertNotContains(respuesta, 'Incorporada el')
         self.assertContains(respuesta, 'Hora no verificada')
         self.assertContains(respuesta, 'datetime="2026-10-01"')
         p.refresh_from_db()
@@ -130,3 +132,39 @@ class FechasPublicacionTestCase(TestCase):
         self.assertEqual(p.departamento, '')
         self.assertEqual(p.fecha_publicacion, instante(1))
         self.assertEqual(datos_fecha(p)['fecha_efectiva'], '2026-10-01')
+
+
+class IndicacionPrecisionFechaTests(TestCase):
+    def comprobar(self, fuente, publicada, captura, precision, origen, aviso):
+        noticia = Publicacion.objects.create(hash_origen=self._testMethodName[:64], titulo='Noticia de prueba', contenido='Contenido de prueba.', fuente=fuente, fecha_publicacion=publicada, fecha_captura=captura)
+        antes = (noticia.fecha_publicacion, noticia.fecha_captura)
+        respuesta = self.client.get(reverse('noticia', args=[noticia.pk]))
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.context['fecha_navegacion']['fecha_precision'], precision)
+        self.assertEqual(respuesta.context['fecha_navegacion']['fecha_origen'], origen)
+        html = respuesta.content.decode()
+        self.assertEqual(html.count('Hora no verificada'), int(aviso))
+        self.assertEqual(html.count('class="news-detail__meta"'), 1)
+        self.assertEqual(html.count('Fuente: <strong>'), 1)
+        noticia.refresh_from_db()
+        self.assertEqual((noticia.fecha_publicacion, noticia.fecha_captura), antes)
+        return respuesta
+
+    def test_archivo_indica_dia_sin_inventar_hora(self):
+        respuesta = self.comprobar('El Territorio (Archivo)', instante(1), instante(20), 'dia', 'publicacion', True)
+        self.assertContains(respuesta, 'datetime="2026-10-01"')
+
+    def test_publicacion_verificada_no_muestra_aviso(self):
+        self.comprobar('Medio con hora', instante(1, 17), instante(20), 'instante', 'publicacion', False)
+
+    def test_captura_alternativa_no_se_degrada_por_fuente_archivo(self):
+        self.comprobar('El Territorio (Archivo)', None, instante(20), 'instante', 'captura', False)
+
+    def test_sin_ninguna_fecha_no_inventa_metadatos(self):
+        noticia = Publicacion.objects.create(hash_origen='sin-fechas-legacy', titulo='Noticia de prueba', contenido='Contenido de prueba.')
+        noticia.fecha_publicacion = noticia.fecha_captura = None
+        with patch('core.views.get_object_or_404', return_value=noticia):
+            respuesta = self.client.get(reverse('noticia', args=[noticia.pk]))
+        self.assertEqual(respuesta.context['fecha_navegacion'], {'fecha_efectiva': None, 'fecha_dia': None, 'fecha_precision': None, 'fecha_origen': None})
+        self.assertNotContains(respuesta, 'Hora no verificada')
+        self.assertNotContains(respuesta, '<time datetime=')

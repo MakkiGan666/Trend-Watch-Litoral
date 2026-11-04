@@ -20,7 +20,12 @@
       return date;
     }
     const minimum = makeDate(minimumYear, 0, 1);
-    const maximum = makeDate(9999, 11, 31);
+    const maximumText = wrapper.dataset.calendarMaxDate;
+    const maximum = maximumText
+      ? makeDate(...maximumText.split('-').map((value, index) => Number(value) - (index === 1 ? 1 : 0)))
+      : makeDate(9999, 11, 31);
+    const maximumMonth = makeDate(maximum.getFullYear(), maximum.getMonth(), 1);
+    yearInput.max = String(maximum.getFullYear());
     const clamp = date => new Date(Math.min(maximum, Math.max(minimum, date)));
     const monthFormat = new Intl.DateTimeFormat('es-AR', { month: 'long', year: 'numeric' });
     const fullFormat = new Intl.DateTimeFormat('es-AR', { dateStyle: 'full' });
@@ -51,7 +56,7 @@
       const previous = panel.querySelector('[data-calendar-prev]');
       const atMinimum = month.getFullYear() === minimumYear && month.getMonth() === 0;
       const next = panel.querySelector('[data-calendar-next]');
-      const atMaximum = month.getFullYear() === 9999 && month.getMonth() === 11;
+      const atMaximum = month.getTime() >= maximumMonth.getTime();
       if (atMaximum && document.activeElement === next) previous.focus({ preventScroll: true });
       next.disabled = atMaximum;
       // Pasar el foco antes de desactivar la flecha evita que el popup se cierre.
@@ -59,6 +64,9 @@
         panel.querySelector('[data-calendar-next]').focus({ preventScroll: true });
       }
       previous.disabled = atMinimum;
+      for (const option of monthSelect.options) {
+        option.disabled = month.getFullYear() === maximum.getFullYear() && Number(option.value) > maximum.getMonth();
+      }
       days.replaceChildren();
       const offset = (month.getDay() + 6) % 7;
       // Seis semanas completas mantienen estable la altura al cambiar de mes.
@@ -104,7 +112,7 @@
     }
     function moveMonth(delta, focusDay = false) {
       const nextMonth = makeDate(month.getFullYear(), month.getMonth() + delta, 1);
-      if (nextMonth < minimum || nextMonth > maximum) return;
+      if (nextMonth < minimum || nextMonth > maximumMonth) return;
       // En dispositivos táctiles el clic no siempre enfoca la flecha. Mantener
       // el foco dentro del panel al reemplazar los días del mes anterior.
       if (!focusDay) {
@@ -112,7 +120,7 @@
           .focus({ preventScroll: true });
       }
       month = nextMonth;
-      focused = makeDate(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), makeDate(month.getFullYear(), month.getMonth() + 1, 0).getDate()));
+      focused = clamp(makeDate(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), makeDate(month.getFullYear(), month.getMonth() + 1, 0).getDate())));
       draw(focusDay);
     }
     function jumpToMonth() {
@@ -122,8 +130,9 @@
         draw();
         return;
       }
-      month = makeDate(year, selectedMonth, 1);
-      focused = makeDate(year, selectedMonth, Math.min(focused.getDate(), makeDate(year, selectedMonth + 1, 0).getDate()));
+      const requestedMonth = makeDate(year, selectedMonth, 1);
+      month = requestedMonth > maximumMonth ? new Date(maximumMonth) : requestedMonth;
+      focused = clamp(makeDate(month.getFullYear(), month.getMonth(), Math.min(focused.getDate(), makeDate(month.getFullYear(), month.getMonth() + 1, 0).getDate())));
       draw();
     }
     trigger.addEventListener('click', () => panel.hidden ? open() : close());
@@ -134,7 +143,7 @@
     yearInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') { event.preventDefault(); jumpToMonth(); }
     });
-    panel.querySelector('[data-calendar-today]').addEventListener('click', () => choose(new Date()));
+    panel.querySelector('[data-calendar-today]').addEventListener('click', () => choose(clamp(new Date())));
     panel.querySelector('[data-calendar-clear]').addEventListener('click', () => choose(null));
     days.addEventListener('keydown', event => {
       const deltas = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };

@@ -1,22 +1,22 @@
 import hashlib
+from datetime import date
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Q
+from django.db.models import Q, prefetch_related_objects
 from django.db.models import Exists, OuterRef
 from django.db.models.functions import Coalesce, TruncDate
 from django.core.paginator import Paginator
 from .fechas import ZONA_LOCAL, datos_fecha
 from .categorias import datos_categorias
+from .lectura_noticia import preparar_lectura
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator
 import re
-from html import unescape
 from urllib.parse import urlsplit
-from django.utils.html import strip_tags
 from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
 from django.urls import reverse
@@ -38,9 +38,9 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, Tema, PublicacionTema, Categoria, PublicacionGuardada
+    Publicacion, Sentimiento, Locacion, Tema, PublicacionTema, Categoria, PublicacionGuardada, Etiqueta
 )
-from .forms import FiltrosPublicaciones, PublicacionForm
+from .forms import FiltrosPublicaciones, FiltrosCategoria, PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
@@ -48,6 +48,7 @@ from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
 from .services.indicadores import resumen_publicaciones
 from .services.relevancia import noticias_destacadas_por_categoria, tendencias_destacadas, registrar_clic
+from .services.publicaciones_unicas import ids_publicaciones_unicas
 from .services.autenticacion import autenticar_identificador
 from .services.identidad import con_identidad_serializada, errores_identidad
 
@@ -69,9 +70,17 @@ from .services.integridad_sentimiento import (
 
 
 def _contexto_inicio(request):
+    categorias_inicio = noticias_destacadas_por_categoria()
+    tendencias_inicio = tendencias_destacadas()
+    publicaciones_visibles = [
+        publicacion
+        for grupo in categorias_inicio
+        for publicacion in grupo['publicaciones']
+    ] + [tendencia['publicacion'] for tendencia in tendencias_inicio]
+    prefetch_related_objects(publicaciones_visibles, 'etiquetas__etiqueta')
     return {
-        'categorias_inicio': noticias_destacadas_por_categoria(),
-        'tendencias_inicio': tendencias_destacadas(),
+        'categorias_inicio': categorias_inicio,
+        'tendencias_inicio': tendencias_inicio,
         'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
     }
 
@@ -93,13 +102,52 @@ def publicaciones_categoria(request, slug):
     categoria = next((nombre for nombre in CATEGORIAS_PROYECTO if slugify(nombre) == slug), None)
     if categoria is None:
         raise Http404('Categoría no encontrada')
-    publicaciones = (Publicacion.objects.filter(
+    filtros = FiltrosCategoria(request.GET)
+    filtros_validos = filtros.is_valid()
+    publicaciones = Publicacion.objects.filter(
         temas__id_categoria__nombre_categoria=categoria,
-    ).distinct().order_by(*_orden_por_publicacion()))
-    pagina = Paginator(publicaciones, 24).get_page(request.GET.get('pagina'))
+    ) if filtros_validos else Publicacion.objects.none()
+    if filtros_validos:
+        if filtros.cleaned_data['fecha']:
+            publicaciones = publicaciones.annotate(
+                dia_visible=TruncDate(Coalesce('fecha_publicacion', 'fecha_captura'), tzinfo=ZONA_LOCAL)
+            ).filter(dia_visible=filtros.cleaned_data['fecha'])
+    orden = filtros.cleaned_data.get('orden') or 'recientes'
+    if orden == 'antiguas':
+        publicaciones = publicaciones.distinct().order_by(
+            Coalesce('fecha_publicacion', 'fecha_captura').asc(nulls_last=True), 'pk',
+        )
+    else:
+        publicaciones = publicaciones.distinct().order_by(*_orden_por_publicacion())
+    ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+    ))
+    pagina = Paginator(
+        publicaciones.filter(pk__in=ids_visibles).prefetch_related('etiquetas__etiqueta'), 24,
+    ).get_page(request.GET.get('pagina'))
+    parametros = request.GET.copy()
+    parametros.pop('pagina', None)
     return render(request, 'categoria_noticias.html', {
-        'categoria': categoria, 'pagina': pagina,
+        'categoria': categoria, 'pagina': pagina, 'filtros_categoria': filtros,
+        'fecha_seleccionada': filtros.cleaned_data.get('fecha') if filtros_validos else None,
+        'fecha_maxima': timezone.localtime(timezone.now(), ZONA_LOCAL).date(),
+        'orden_seleccionado': orden, 'filtros_query': parametros.urlencode(),
+        'filtros_aplicados': bool(filtros.cleaned_data.get('fecha') or orden == 'antiguas') if filtros_validos else bool(request.GET),
     })
+
+
+@require_safe
+def publicaciones_etiqueta(request, slug):
+    etiqueta = get_object_or_404(Etiqueta, slug=slug)
+    publicaciones = (Publicacion.objects.filter(etiquetas__etiqueta=etiqueta)
+                     .order_by(*_orden_por_publicacion()))
+    ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+    ))
+    pagina = Paginator(
+        publicaciones.filter(pk__in=ids_visibles).prefetch_related('etiquetas__etiqueta'), 24,
+    ).get_page(request.GET.get('pagina'))
+    return render(request, 'etiqueta_noticias.html', {'etiqueta': etiqueta, 'pagina': pagina})
 
 
 @require_safe
@@ -120,13 +168,15 @@ def credito_fuente(fuente):
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
-    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
+    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria', 'etiquetas__etiqueta'), pk=pk)
     registrar_clic(publicacion, request.user)
     categorias_noticia = _categorias_de_publicacion(publicacion)
     localidades_noticia = list(dict.fromkeys(
         Locacion.objects.filter(id_publicacion_api=publicacion)
         .exclude(location='').values_list('location', flat=True)
     ))
+    fecha_navegacion = datos_fecha(publicacion)
+    fecha_legible = date.fromisoformat(fecha_navegacion['fecha_dia']).strftime('%d/%m/%Y') if fecha_navegacion['fecha_dia'] else None
 
     def enlace_seguro(valor):
         try:
@@ -138,12 +188,14 @@ def noticia(request, pk):
 
     return render(request, 'noticia.html', {
         'publicacion': publicacion,
-        'fecha_navegacion': datos_fecha(publicacion),
+        'fecha_navegacion': fecha_navegacion,
+        'fecha_legible': fecha_legible,
         'categorias_noticia': categorias_noticia,
+        'etiquetas_noticia': publicacion.etiquetas.all(),
         'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
         'localidades_noticia': localidades_noticia,
-        'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
-        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
+        **preparar_lectura(publicacion.contenido),
+        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_publica_url),
         'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),

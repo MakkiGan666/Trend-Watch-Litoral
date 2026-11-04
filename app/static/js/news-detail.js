@@ -1,28 +1,25 @@
 (function () {
   'use strict';
   const reading = document.querySelector('[data-news-reading]');
-  if (!reading) return;
-  const content = reading.querySelector('[data-news-content]');
-  const controls = reading.querySelector('[data-news-expand]');
-  const button = reading.querySelector('[data-news-read-more]');
-  let expanded = false;
-  function refresh() {
-    const limit = parseFloat(getComputedStyle(reading).getPropertyValue('--news-preview-height')) || 340;
-    const long = content.scrollHeight > limit + 32;
-    controls.hidden = !long;
-    reading.classList.toggle('is-collapsed', long && !expanded);
-    button.textContent = expanded ? 'Leer menos' : 'Leer más';
-    button.setAttribute('aria-expanded', String(!long || expanded));
+  const controls = reading?.querySelector('[data-news-expand]');
+  const button = reading?.querySelector('[data-news-read-more]');
+  const more = reading?.querySelector('[data-news-more]');
+  if (more && controls && button) {
+    let expanded = false;
+    button.addEventListener('click', () => {
+      expanded = !expanded;
+      const previousScroll = window.scrollY;
+      more.hidden = !expanded;
+      button.textContent = expanded ? 'Leer menos' : 'Leer más';
+      button.setAttribute('aria-expanded', String(expanded));
+      if (expanded) window.scrollTo(0, previousScroll);
+      else button.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    });
+    // Plegar sólo después de registrar el control; si falla la inicialización,
+    // el contenido entregado por el servidor continúa visible.
+    more.hidden = true;
+    controls.hidden = false;
   }
-  button.addEventListener('click', () => {
-    expanded = !expanded;
-    refresh();
-    // Al contraer, mantener el botón a la vista sin saltar al inicio de la noticia.
-    if (!expanded) button.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-  });
-  window.addEventListener('resize', refresh);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(refresh);
-  refresh();
 
   // Conservar el scroll al valorar o guardar: el servidor sigue siendo la fuente
   // de verdad y la respuesta actualiza únicamente el bloque correspondiente.

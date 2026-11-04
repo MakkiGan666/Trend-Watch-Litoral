@@ -10,6 +10,7 @@ from email.utils import parsedate_to_datetime
 from django.db import DataError, IntegrityError, transaction
 from django.utils import timezone
 from core.models import Publicacion, RegistroDatos
+from core.imagenes import es_portada_generica
 from core.services.clasificacion import clasificar_lote, vincular_categoria_por_nombre
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ def _descargar(url, timeout=10):
 def _imagen_valida(url):
     """Sólo se guardan enlaces http(s) que entren en el campo; si no, la noticia queda sin foto."""
     url = (url or '').strip()
-    if not re.match(r'^https?://', url) or _excede_largo_maximo('imagen_url', url):
+    if not re.match(r'^https?://', url) or _excede_largo_maximo('imagen_url', url) or es_portada_generica(url):
         return ''
     return url
 
@@ -345,8 +346,8 @@ def fetch_and_store_elterritorio(category="misiones", limit=LIMITE_POR_DEFECTO, 
                 'titulo': titulo,
                 'contenido': contenido,
                 'url': link,
-                'imagen_url': _imagen_valida(
-                    _imagen_rss(item) or (getattr(article, 'top_image', '') if article else '')
+                'imagen_url': _imagen_valida(_imagen_rss(item)) or _imagen_valida(
+                    getattr(article, 'top_image', '') if article else ''
                 ),
                 'fecha_publicacion': _fecha_rss(item),
                 'seccion': category,
