@@ -150,6 +150,27 @@ class AliasURLPublicacion(models.Model):
         ]
 
 
+class ProcesamientoIAMultifuente(models.Model):
+    """Reserva durable de un único envío: un fallo incierto no habilita reenvío."""
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Todavía no enviado'
+        EN_PROCESO = 'EN_PROCESO', 'Intento adquirido'
+        COMPLETADO = 'COMPLETADO', 'Resultado guardado'
+        ERROR = 'ERROR', 'Respuesta o persistencia fallida; requiere revisión'
+        INCIERTO = 'INCIERTO', 'Envío de resultado desconocido; no reenviar'
+
+    publicacion = models.OneToOneField(Publicacion, primary_key=True, on_delete=models.CASCADE,
+                                      related_name='procesamiento_ia_multifuente')
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
+    huella_texto = models.CharField(max_length=64, blank=True, default='')
+    token_intento = models.UUIDField(null=True, blank=True)
+    codigo_error = models.CharField(max_length=40, blank=True, default='')
+    creado = models.DateTimeField(default=timezone.now)
+    iniciado = models.DateTimeField(null=True, blank=True)
+    enviado = models.DateTimeField(null=True, blank=True)
+    finalizado = models.DateTimeField(null=True, blank=True)
+
+
 class RevisionDepartamento(models.Model):
     """Decisión auditable para noticias que llegaron sin departamento."""
 

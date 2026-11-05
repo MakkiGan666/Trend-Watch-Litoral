@@ -15,7 +15,7 @@ from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.utils import timezone
 
-from core.models import AliasURLPublicacion, Publicacion, RegistroDatos
+from core.models import AliasURLPublicacion, ProcesamientoIAMultifuente, Publicacion, RegistroDatos
 from core.services import descarga_segura
 from core.services.clasificacion import clasificar_lote, vincular_categoria_por_nombre
 from core.services.etiquetas import sugerir_etiquetas
@@ -188,6 +188,8 @@ def _guardar(fuente, datos, aliases, seccion, registro):
                 _vincular_aliases(fuente, aliases, publicacion.pk)
                 if clasificacion.get('confirmada') is True:
                     vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
+                # Cola durable sólo para altas nuevas; comparte commit/rollback con H3.1.
+                ProcesamientoIAMultifuente.objects.create(publicacion=publicacion)
                 return publicacion.pk, True
         except DatabaseError as exc:
             codigo = getattr(exc.__cause__, 'sqlstate', None) or getattr(exc.__cause__, 'pgcode', None)
