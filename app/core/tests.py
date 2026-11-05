@@ -3660,3 +3660,179 @@ class ModeracionConcurrenteH4Tests(TransactionTestCase):
             self.assertEqual(evento.change_message, f'Moderación de comentario: estado {anterior} → {destino}.')
             anterior = destino
         self.assertEqual(self.comentario.estado, anterior)
+
+
+class TransporteMultifuenteTestCase(SimpleTestCase):
+    """Transporte real con DNS y conexiones simulados; prohíbe red accidental."""
+
+    def setUp(self):
+        import socket
+        from core.services import descarga_segura
+        from core.services.fuentes_rss import FUENTES_RSS
+        self.red = descarga_segura
+        self.fuentes = FUENTES_RSS
+        self.publica = (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))
+        for nombre in ('socket.socket.connect', 'socket.socket.connect_ex', 'socket.getaddrinfo'):
+            parche = patch(nombre, side_effect=AssertionError('Red real prohibida'))
+            parche.start()
+            self.addCleanup(parche.stop)
+
+    def respuesta(self, estado=200, destino=None, cuerpo=b'RSS'):
+        from unittest.mock import MagicMock
+        respuesta = MagicMock(status=estado)
+        respuesta.getheader.return_value = destino
+        respuesta.read1.side_effect = [cuerpo, b'']
+        return respuesta
+
+    def test_descarga_y_redirect_www_para_cada_fuente(self):
+        for fuente in self.fuentes:
+            with self.subTest(fuente=fuente.identificador), patch.object(
+                self.red.socket, 'getaddrinfo', return_value=[self.publica]
+            ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                destino = 'https://' + fuente.hosts_permitidos[1] + '/otra?x=1'
+                conexion.return_value.getresponse.side_effect = [
+                    self.respuesta(302, destino), self.respuesta()]
+                self.assertEqual(self.red.descargar(fuente.feed, fuente=fuente), b'RSS')
+                self.assertEqual(dns.call_count, 2)
+                self.assertEqual(conexion.call_args.args[:2], (fuente.hosts_permitidos[1], self.publica))
+                self.assertEqual(conexion.return_value.request.call_args.args, ('GET', '/otra?x=1'))
+                self.assertEqual(conexion.return_value.close.call_count, 2)
+
+    def test_destinos_maliciosos_y_otros_medios_sin_dns(self):
+        for fuente in self.fuentes:
+            host = fuente.hosts_permitidos[0]
+            urls = [otra.feed for otra in self.fuentes if otra != fuente]
+            urls += ['https://www.elterritorio.com.ar/', 'http://' + host,
+                     'https://' + host + '.evil.org/', 'https://' + host + '@evil.org/',
+                     'https://user@' + host, 'https://' + host + ':8443/',
+                     'https://' + host + ':abc/', 'https://' + host + '/#',
+                     'https://' + host + '/\nfoo', 'https://' + host + '\\@evil.org/',
+                     'https://127.0.0.1/', 'https://[::1]/', 'https://169.254.169.254/']
+            for url in urls:
+                with self.subTest(fuente=fuente.identificador, url=url), self.assertRaises(ValueError):
+                    self.red.descargar(url, fuente=fuente)
+
+    def test_redirect_no_cruza_medios_ni_degrada_https(self):
+        for fuente in self.fuentes:
+            for destino in ('https://elterritorio.com.ar/', 'http://' + fuente.hosts_permitidos[0],
+                            '//localhost/', 'https://169.254.169.254/'):
+                with self.subTest(fuente=fuente.identificador, destino=destino), patch.object(
+                    self.red.socket, 'getaddrinfo', return_value=[self.publica]
+                ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                    conexion.return_value.getresponse.return_value = self.respuesta(302, destino)
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(fuente.feed, fuente=fuente)
+                    self.assertEqual(dns.call_count, 1)
+                    conexion.return_value.close.assert_called_once()
+        # También entre dos medios del catálogo, en ambos sentidos.
+        for origen, destino in ((self.fuentes[0], self.fuentes[1]), (self.fuentes[1], self.fuentes[0])):
+            with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+                self.red, '_Conexion'
+            ) as conexion:
+                conexion.return_value.getresponse.return_value = self.respuesta(302, destino.feed)
+                with self.assertRaises(ValueError):
+                    self.red.descargar(origen.feed, fuente=origen)
+                self.assertEqual(conexion.call_count, 1)
+
+    def test_dns_publico_completo_y_revalidado_tras_redirect(self):
+        fuente = self.fuentes[0]
+        for ip in ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', 'fc00::1',
+                   '::ffff:127.0.0.1', '224.0.0.1', 'ff02::1', '2002:7f00:1::', '2001::1'):
+            privado = (*self.publica[:4], (ip, 443))
+            for respuestas_dns in ([[self.publica, privado]], [[self.publica], [privado]]):
+                with self.subTest(ip=ip, saltos=len(respuestas_dns)), patch.object(
+                    self.red.socket, 'getaddrinfo', side_effect=respuestas_dns
+                ), patch.object(self.red, '_Conexion') as conexion:
+                    conexion.return_value.getresponse.return_value = self.respuesta(302, '/otra')
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(fuente.feed, fuente=fuente)
+                    self.assertEqual(conexion.call_count, len(respuestas_dns) - 1)
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[]), self.assertRaises(ValueError):
+            self.red.descargar(fuente.feed, fuente=fuente)
+
+    def test_limites_de_fuente_y_timeout_compatibles(self):
+        from dataclasses import replace
+        fuente = replace(self.fuentes[0], max_bytes=3, max_redirecciones=0, timeout_segundos=2)
+        for respuesta in (self.respuesta(cuerpo=b'1234'), self.respuesta(302, '/otra')):
+            with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+                self.red, '_Conexion'
+            ) as conexion, patch.object(self.red.time, 'monotonic', return_value=100), patch.object(
+                self.red, 'FUENTES_RSS', (fuente,)
+            ):
+                conexion.return_value.getresponse.return_value = respuesta
+                with self.assertRaises(ValueError):
+                    self.red.descargar(fuente.feed, 8, fuente=fuente)
+                self.assertEqual(conexion.call_count, 1)
+                self.assertEqual(conexion.call_args.args[2], 2)
+                conexion.return_value.close.assert_called_once()
+        for timeout in (None, True, 0, -1, float('inf')):
+            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                self.red.descargar(self.fuentes[0].feed, timeout, fuente=self.fuentes[0])
+
+    def test_territorio_sigue_siendo_predeterminado(self):
+        url = 'https://www.elterritorio.com.ar/noticia'
+        self.assertEqual(self.red.validar_url(url).hostname, 'www.elterritorio.com.ar')
+        self.assertEqual(self.red.clave_identidad_url(url), url)
+        for fuente in self.fuentes:
+            with self.assertRaises(ValueError):
+                self.red.descargar(fuente.feed)
+        with self.assertRaises(ValueError):
+            self.red.descargar(url, fuente='misiones_online')
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta()
+            self.assertEqual(self.red.descargar(url, 5), b'RSS')
+
+
+    def test_politicas_manipuladas_rechazadas_antes_de_dns_y_conexion(self):
+        from dataclasses import replace
+        from core.services.fuentes_rss import FuenteRSS
+        fuente, otra = self.fuentes[:2]
+        alteraciones = (
+            {'hosts_permitidos': fuente.hosts_permitidos + otra.hosts_permitidos},
+            {'hosts_permitidos': fuente.hosts_permitidos + ('evil.org',)},
+            {'hosts_permitidos': fuente.hosts_permitidos[:1]},
+            {'max_bytes': fuente.max_bytes + 1},
+            {'max_bytes': fuente.max_bytes - 1},
+            {'max_redirecciones': fuente.max_redirecciones + 1},
+            {'max_redirecciones': 0},
+            {'timeout_segundos': fuente.timeout_segundos + 1},
+            {'timeout_segundos': 1},
+            {'limite_noticias': fuente.limite_noticias + 1},
+            {'habilitada': True},
+            {'identificador': 'fuente_desconocida'},
+            {'feed': 'https://' + fuente.hosts_permitidos[0] + '/otro'},
+            {'nombre': 'Nombre alterado'},
+            {'hosts_permitidos': otra.hosts_permitidos, 'feed': otra.feed},
+        )
+        class PoliticaSuplantada(FuenteRSS):
+            def validar_url(self, url):
+                raise AssertionError('No debe ejecutar validación redefinida')
+
+        # El constructor llama validar_url; para esta prueba aislamos ese paso.
+        with patch.object(PoliticaSuplantada, 'validar_url'):
+            suplantada = PoliticaSuplantada(**vars(fuente))
+        politicas = [replace(fuente, **cambios) for cambios in alteraciones] + [suplantada]
+        for politica in politicas:
+            with self.subTest(politica=politica), patch.object(
+                self.red.socket, 'getaddrinfo'
+            ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                # Simula el redirect entre medios que antes aceptaba la política ampliada.
+                conexion.return_value.getresponse.return_value = self.respuesta(302, otra.feed)
+                for url in (fuente.feed, otra.feed):
+                    with self.assertRaises(ValueError):
+                        self.red.validar_url(url, fuente=politica)
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(url, fuente=politica)
+                dns.assert_not_called()
+                conexion.assert_not_called()
+
+    def test_copia_canonica_conserva_compatibilidad(self):
+        from dataclasses import replace
+        fuente = replace(self.fuentes[0])
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta()
+            self.assertEqual(self.red.descargar(fuente.feed, fuente=fuente), b'RSS')
