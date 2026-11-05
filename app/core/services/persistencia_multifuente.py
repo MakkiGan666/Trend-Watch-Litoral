@@ -100,10 +100,23 @@ def _preparar(entrada):
     for campo in ('fuente', 'titulo', 'url', 'imagen_url'):
         if len(datos[campo]) > Publicacion._meta.get_field(campo).max_length:
             raise ValueError(f'{campo} demasiado largo.')
-    identidad_serializada = json.dumps(['rss:v1', fuente.identificador, identidad],
-                                      ensure_ascii=False, separators=(',', ':'))
-    datos['hash_origen'] = generar_hash(identidad_serializada)
+    datos['hash_origen'] = _hash_identidad(fuente, identidad)
     return fuente, datos, aliases, seccion
+
+
+def _hash_identidad(fuente, url):
+    serializada = json.dumps(['rss:v1', fuente.identificador, url],
+                            ensure_ascii=False, separators=(',', ':'))
+    return generar_hash(serializada)
+
+
+def buscar_publicacion_por_url(noticia):
+    """Preconsulta sin escrituras ni necesidad de HTML; no oculta conflictos históricos."""
+    if type(noticia) is not NoticiaRSS:
+        raise ValueError('Se requiere NoticiaRSS.')
+    fuente = _fuente(noticia)
+    url = normalizar_url(noticia.url, fuente)
+    return _existente(fuente, {'hash_origen': _hash_identidad(fuente, url)}, {url})
 
 
 class ConflictoIdentidad(ValueError):
@@ -170,6 +183,16 @@ def _clasificar_y_validar(datos, seccion):
     publicacion.full_clean(exclude=['titulo_busqueda', 'contenido_busqueda'],
                            validate_unique=False, validate_constraints=False)
     return publicacion, clasificacion
+
+
+def validar_entrada_persistencia(entrada):
+    """Reutiliza validación y reglas H3.1 sin guardar, emitir señales ni usar IA.
+
+    No consulta unicidad ni crea relaciones: la transacción de persistencia
+    sigue siendo la autoridad para resolver identidades y carreras.
+    """
+    _, datos, _, seccion = _preparar(entrada)
+    _clasificar_y_validar(datos, seccion)
 
 
 def _guardar(fuente, datos, aliases, seccion, registro):
