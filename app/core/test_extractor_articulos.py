@@ -1,0 +1,255 @@
+"""H2.3: fixtures HTML locales y red prohibida, sin ORM ni base de datos."""
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
+
+from django.test import SimpleTestCase
+
+from core.services import extractor_articulos as extractor
+from core.services import lector_rss
+from core.services.fuentes_rss import FUENTES_RSS
+
+
+class ExtractorArticulosTests(SimpleTestCase):
+    def setUp(self):
+        self.fuente = FUENTES_RSS[0]
+        self.noticia = lector_rss.NoticiaRSS(
+            self.fuente.nombre, self.fuente.identificador, 'Título RSS',
+            'https://misionesonline.net/nota', datetime(2026, 11, 1, tzinfo=timezone.utc),
+            'Resumen RSS: no es un artículo.', '', 'Locales')
+        for destino in ('socket.getaddrinfo', 'socket.socket.connect', 'socket.socket.connect_ex',
+                        'urllib.request.urlopen', 'feedparser.http.get'):
+            parche = patch(destino, side_effect=AssertionError('Red no autorizada'))
+            parche.start()
+            self.addCleanup(parche.stop)
+
+    def fixture(self, nombre):
+        return (Path(__file__).parent / 'fixtures' / 'articulos' / nombre).read_bytes()
+
+    def analizar(self, datos):
+        return extractor.analizar_articulo(datos, self.noticia, self.fuente)
+
+    def test_jsonld_graph_prioridad_y_metadatos(self):
+        articulo = self.analizar(self.fixture('jsonld.html'))
+        self.assertEqual(articulo.titulo, 'Título JSON-LD')
+        self.assertEqual(articulo.url_canonica, 'https://misionesonline.net/noticia?id=7')
+        self.assertEqual(articulo.fecha, datetime(2026, 11, 5, 14, 30, tzinfo=timezone.utc))
+        self.assertEqual(articulo.imagen_principal, 'https://misionesonline.net/imagenes/nota.jpg')
+        self.assertEqual(articulo.cuerpo.count('La comunidad presentó'), 1)
+        self.assertTrue(articulo.suficiente)
+        self.assertNotIn('Texto secundario', articulo.cuerpo)
+        self.assertEqual(articulo.fuente_id, self.fuente.identificador)
+
+    def test_semantica_excluye_ruido_y_repeticiones(self):
+        articulo = self.analizar(self.fixture('semantico.html'))
+        self.assertEqual(articulo.titulo, 'Nueva biblioteca local')
+        self.assertEqual(articulo.imagen_principal, 'https://misionesonline.net/fotos/biblioteca.jpg')
+        self.assertEqual(articulo.fecha, datetime(2026, 11, 4, 12, tzinfo=timezone.utc))
+        self.assertTrue(articulo.suficiente)
+        for ruido in ('Inicio', 'Comprá', 'También', 'relacionada', 'derechos'):
+            self.assertNotIn(ruido, articulo.cuerpo)
+        self.assertEqual(articulo.cuerpo.count('El equipo organizó'), 1)
+
+    def test_jsonld_array_y_contenedores_compartidos(self):
+        articulo = self.analizar(self.fixture('wordpress.html'))
+        self.assertEqual(articulo.titulo, 'Título de la nota')
+        self.assertIn('propuesta educativa', articulo.cuerpo)
+        self.assertNotIn('Contenido ajeno', articulo.cuerpo)
+        self.assertEqual(articulo.imagen_principal, 'https://misionesonline.net/fotos/docentes.jpg')
+        self.assertEqual(articulo.fecha, datetime(2026, 11, 5, 10, tzinfo=timezone.utc))
+
+    def test_fallback_rss_y_extraccion_insuficiente(self):
+        articulo = self.analizar(self.fixture('fallback.html'))
+        self.assertEqual((articulo.titulo, articulo.fecha, articulo.url_canonica),
+                         (self.noticia.titulo, self.noticia.fecha, self.noticia.url))
+        self.assertEqual(articulo.imagen_principal, '')
+        self.assertEqual(articulo.cuerpo, 'Información breve.')
+        self.assertFalse(articulo.suficiente)
+        for datos in (b'', b'<html><body><nav><p>Menu</p></nav></body></html>',
+                      b'<html><body><p>Texto general fuera de articulo</p></body></html>'):
+            articulo = self.analizar(datos)
+            self.assertEqual(articulo.cuerpo, '')
+            self.assertFalse(articulo.suficiente)
+            self.assertEqual(articulo.titulo, 'Título RSS')
+
+    def test_rechaza_identidad_editorial_de_otro_medio(self):
+        with self.assertRaises(ValueError):
+            self.analizar(self.fixture('ajeno.html'))
+        for etiqueta in ('<meta property="og:url" content="https://evil.org/nota">',
+                         '<link rel="canonical" href="https://127.0.0.1/nota">',
+                         '<script type="application/ld+json">{"@type":"NewsArticle","url":"https://primeraedicion.com.ar/nota","articleBody":"Texto ajeno"}</script>'):
+            with self.subTest(etiqueta=etiqueta), self.assertRaises(ValueError):
+                self.analizar(('<html><head>' + etiqueta + '</head><body><article><p>No aceptar</p></article></body></html>').encode())
+
+    def test_imagenes_invalidas_sin_descargas_y_fallback_valido(self):
+        for imagen in ('https://evil.org/foto', 'http://misionesonline.net/foto',
+                       'https://169.254.169.254/foto', 'https://[::1]/foto',
+                       'https://misionesonline.net.evil.org/foto', 'data:image/png;base64,YWJj',
+                       'javascript:alert(1)', 'https://user@misionesonline.net/foto',
+                       'https://misionesonline.net:8443/foto', 'https://misionesonline.net/foto#x'):
+            with self.subTest(imagen=imagen):
+                html = f'<html><head><meta property="og:image" content="{imagen}"></head><body><article><img src="/permitida.jpg"></article></body></html>'
+                self.assertEqual(self.analizar(html.encode()).imagen_principal, 'https://misionesonline.net/permitida.jpg')
+
+    def test_url_canonica_conservadora_e_ignora_base_y_recursos(self):
+        html = b'<html><head><base href="https://evil.org/"><link rel="canonical" href="/nota?id=1&amp;id=2&amp;utm_source=x&amp;vista=amp"><script src="https://evil.org/a.js"></script></head><body><article><img src="/foto.jpg"><iframe src="http://169.254.169.254/"></iframe></article></body></html>'
+        articulo = self.analizar(html)
+        self.assertEqual(articulo.url_canonica, 'https://misionesonline.net/nota?id=1&id=2&vista=amp')
+        self.assertEqual(articulo.imagen_principal, 'https://misionesonline.net/foto.jpg')
+
+    def test_datos_invalidos_no_reemplazan_fallback_rss(self):
+        for fecha in ('ayer', '2026-11-05', '2026-02-30T12:00:00Z', '2026-11-05T12:00:00+03:99'):
+            html = ('<html><head><meta property="article:published_time" content="' + fecha
+                    + '"><meta property="og:title" content="' + 'x' * 256 + '"></head></html>')
+            articulo = self.analizar(html.encode())
+            self.assertEqual(articulo.fecha, self.noticia.fecha)
+            self.assertEqual(articulo.titulo, self.noticia.titulo)
+        articulo = extractor.analizar_articulo(b'<html/>', replace(self.noticia, fecha=None), self.fuente)
+        self.assertIsNone(articulo.fecha)
+
+    def test_titulo_literal_sin_truncar_y_h1_como_fallback(self):
+        html = b'<html><article><h1>Uso de &lt;script&gt; en HTML</h1></article></html>'
+        self.assertEqual(self.analizar(html).titulo, 'Uso de <script> en HTML')
+        self.assertEqual(self.analizar(b'<html><article><h1>' + b'x' * 256 + b'</h1></article></html>').titulo, self.noticia.titulo)
+
+    def test_18_fuentes_una_descarga_por_articulo(self):
+        for fuente in FUENTES_RSS:
+            noticia = replace(self.noticia, fuente=fuente.nombre, fuente_id=fuente.identificador,
+                              url='https://' + fuente.hosts_permitidos[0] + '/nota')
+            with self.subTest(fuente=fuente.identificador), patch.object(
+                extractor.descarga_segura, 'descargar', return_value=b'<html><article><p>Texto breve.</p></article></html>'
+            ) as descargar:
+                articulo = extractor.extraer_articulo(noticia)
+                descargar.assert_called_once_with(noticia.url, fuente=fuente)
+                self.assertEqual(articulo.fuente_id, fuente.identificador)
+
+    def test_integracion_con_noticia_real_de_lector_h22(self):
+        datos = (Path(__file__).parent / 'fixtures' / 'rss' / 'wordpress.xml').read_bytes()
+        noticia, = lector_rss.analizar_rss(datos, self.fuente).noticias
+        with patch.object(extractor.descarga_segura, 'descargar', return_value=self.fixture('semantico.html')) as descargar:
+            articulo = extractor.extraer_articulo(noticia)
+            descargar.assert_called_once_with(noticia.url, fuente=self.fuente)
+            self.assertTrue(articulo.suficiente)
+
+    def test_politicas_y_noticias_manipuladas_rechazadas_antes_de_descargar(self):
+        casos = ((self.noticia, replace(self.fuente, max_bytes=self.fuente.max_bytes + 1)),
+                 (self.noticia, replace(self.fuente, hosts_permitidos=self.fuente.hosts_permitidos + ('evil.org',))),
+                 (replace(self.noticia, url='https://primeraedicion.com.ar/a'), self.fuente),
+                 (replace(self.noticia, fuente_id='otra'), self.fuente),
+                 (replace(self.noticia, fecha=datetime(2026, 11, 5)), self.fuente))
+        for noticia, fuente in casos:
+            with self.subTest(noticia=noticia), patch.object(extractor.descarga_segura, 'descargar') as descargar:
+                with self.assertRaises(ValueError):
+                    extractor.extraer_articulo(noticia, fuente)
+                descargar.assert_not_called()
+
+    def test_limites_y_html_malformado(self):
+        for datos in (b'x' * (self.fuente.max_bytes + 1), b'<div>' * 130,
+                      b'<br>' * 30001, b'<meta charset="utf-7">', b'\xff\xff', 'no bytes'):
+            with self.subTest(datos=str(datos)[:60]), self.assertRaises(ValueError):
+                self.analizar(datos)
+        articulo = self.analizar(b'<html><article><h1>Nota</h1><p>Un parrafo sin cerrar')
+        self.assertEqual(articulo.titulo, 'Nota')
+        self.assertEqual(articulo.cuerpo, 'Un parrafo sin cerrar')
+
+    def test_jsonld_invalido_o_ambiguo_no_inventa_articulo(self):
+        for contenido in ('{roto}', '42', 'null',
+                          '[{"@type":"Article","headline":"Uno"},{"@type":"NewsArticle","headline":"Dos"}]'):
+            html = '<html><head><script type="application/ld+json">' + contenido + '</script></head></html>'
+            articulo = self.analizar(html.encode())
+            self.assertEqual(articulo.titulo, self.noticia.titulo)
+            self.assertEqual(articulo.cuerpo, '')
+
+
+    def test_h1_en_cabecera_del_articulo_con_cuerpo_separado(self):
+        html = b'<html><body><nav><h1>Menu</h1></nav><article><header><h1>Titulo semantico</h1></header><div class="entry-content"><p>Texto de la noticia.</p></div></article></body></html>'
+        articulo = self.analizar(html)
+        self.assertEqual(articulo.titulo, 'Titulo semantico')
+        self.assertEqual(articulo.cuerpo, 'Texto de la noticia.')
+
+    def test_jsonld_fecha_imagen_y_titulo_invalidos_caen_a_og(self):
+        html = b'<html><head><script type="application/ld+json">{"@type":"NewsArticle","headline":42,"datePublished":"ayer","image":{"url":"https://evil.org/foto"}}</script><meta property="og:title" content="Titulo OG"><meta property="og:image" content="/foto.jpg"><meta property="article:published_time" content="2026-11-05T13:00:00Z"></head><body></body></html>'
+        articulo = self.analizar(html)
+        self.assertEqual(articulo.titulo, 'Titulo OG')
+        self.assertEqual(articulo.imagen_principal, 'https://misionesonline.net/foto.jpg')
+        self.assertEqual(articulo.fecha, datetime(2026, 11, 5, 13, tzinfo=timezone.utc))
+
+    def test_contenedores_especificos_sin_article_ni_main(self):
+        for selector in ('class="entry-content"', 'class="td-post-content"',
+                         'class="article-body"', 'itemprop="articleBody"'):
+            with self.subTest(selector=selector):
+                datos = ('<html><body><div ' + selector + '><p>Cuerpo válido de la noticia.</p></div></body></html>').encode()
+                self.assertEqual(self.analizar(datos).cuerpo, 'Cuerpo válido de la noticia.')
+        datos = b'<html><main><p>Ruido exterior.</p><div class="entry-content"><p>Cuerpo especifico.</p></div></main></html>'
+        self.assertEqual(self.analizar(datos).cuerpo, 'Cuerpo especifico.')
+
+    def test_canonica_invalida_no_oculta_identidad_jsonld_ajena(self):
+        import json
+        for canonica in ('javascript:alert(1)', '/nota', 'https://[invalida'):
+            for identidad in (
+                {'url': 'https://primeraedicion.com.ar/otra'},
+                {'mainEntityOfPage': {'@id': 'https://primeraedicion.com.ar/otra'}},
+                {'url': 'https://primeraedicion.com.ar/otra', 'mainEntityOfPage': {'@id': self.noticia.url}},
+            ):
+                articulo = {'@type': 'NewsArticle', **identidad}
+                html = ('<html><head><link rel="canonical" href="' + canonica
+                        + '"><script type="application/ld+json">' + json.dumps(articulo)
+                        + '</script></head><body><article><p>Texto ajeno.</p></article></body></html>')
+                with self.subTest(canonica=canonica, identidad=identidad), self.assertRaises(ValueError):
+                    self.analizar(html.encode())
+        for url in ('javascript:alert(1)', 'http://misionesonline.net/nota', 'data:text/plain,nota'):
+            html = ('<html><head><link rel="canonical" href="/nota">'
+                    '<script type="application/ld+json">'
+                    + json.dumps({'@type': 'Article', 'url': url}) + '</script></head></html>')
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.analizar(html.encode())
+
+    def test_jsonld_inerte_oculto_o_recomendado_no_suplanta_articulo(self):
+        import json
+        falso = json.dumps({'@type': 'NewsArticle', 'url': self.noticia.url,
+                            'headline': 'Recomendación oculta',
+                            'articleBody': 'Texto ajeno a la noticia principal. ' * 20})
+        for apertura, cierre in (
+            ('<template>', '</template>'), ('<div hidden>', '</div>'),
+            ('<div aria-hidden="true">', '</div>'),
+            ('<div style="display: none !important">', '</div>'),
+            ('<div style="visibility:hidden">', '</div>'),
+            ('<div class="related-posts">', '</div>'), ('<nav>', '</nav>'),
+            ('<aside>', '</aside>'), ('<div class="publicidad"><section>', '</section></div>'),
+        ):
+            html = ('<html><body>' + apertura + '<script type="application/ld+json">' + falso
+                    + '</script>' + cierre + '<article><h1>Artículo principal</h1>'
+                    '<p>Cuerpo principal real.</p></article></body></html>')
+            with self.subTest(apertura=apertura):
+                articulo = self.analizar(html.encode())
+                self.assertEqual(articulo.titulo, 'Artículo principal')
+                self.assertEqual(articulo.cuerpo, 'Cuerpo principal real.')
+                self.assertFalse(articulo.suficiente)
+        # El propio script también puede estar oculto, sin ancestros ocultos.
+        html = '<html><script hidden type="application/ld+json">' + falso + '</script></html>'
+        self.assertEqual(self.analizar(html.encode()).titulo, self.noticia.titulo)
+
+    def test_jsonld_insuficiente_recupera_html_suficiente(self):
+        texto = ('Los vecinos participaron de una reunión abierta para conocer los proyectos '
+                 'educativos de la ciudad y discutir sus próximas actividades comunitarias.')
+        for cuerpo_json in ('Breve.', '   ', 'x' * 130):
+            html = ('<html><head><script type="application/ld+json">'
+                    '{"@type":"NewsArticle","headline":"Título JSON","articleBody":"'
+                    + cuerpo_json + '"}</script></head><body><article><p>' + texto
+                    + '</p></article></body></html>')
+            articulo = self.analizar(html.encode())
+            self.assertEqual(articulo.cuerpo, texto)
+            self.assertEqual(articulo.titulo, 'Título JSON')
+            self.assertTrue(articulo.suficiente)
+        html = b'<html><head><script type="application/ld+json">{"@type":"Article","articleBody":"Breve."}</script></head><body><article><p>Otro texto breve.</p></article></body></html>'
+        self.assertFalse(self.analizar(html).suficiente)
+
+    def test_blockquote_con_parrafos_anidados_no_duplica_texto(self):
+        datos = b'<html><article><blockquote>Antes.<p>Primera frase citada.</p><p>Segunda frase citada.</p>Despues.</blockquote><p>Parrafo final.</p></article></html>'
+        cuerpo = self.analizar(datos).cuerpo
+        self.assertEqual(cuerpo, 'Antes. Primera frase citada. Segunda frase citada. Despues.\n\nParrafo final.')
+        for frase in ('Primera frase citada.', 'Segunda frase citada.'):
+            self.assertEqual(cuerpo.count(frase), 1)
+        datos = b'<html><article><blockquote>Cita directa.</blockquote><blockquote><blockquote><p>Cita anidada.</p></blockquote></blockquote></article></html>'
+        self.assertEqual(self.analizar(datos).cuerpo, 'Cita directa.\n\nCita anidada.')
