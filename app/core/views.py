@@ -120,7 +120,7 @@ def publicaciones_categoria(request, slug):
     else:
         publicaciones = publicaciones.distinct().order_by(*_orden_por_publicacion())
     ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
-        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura', 'fuente',
     ))
     pagina = Paginator(
         publicaciones.filter(pk__in=ids_visibles).prefetch_related('etiquetas__etiqueta'), 24,
@@ -142,7 +142,7 @@ def publicaciones_etiqueta(request, slug):
     publicaciones = (Publicacion.objects.filter(etiquetas__etiqueta=etiqueta)
                      .order_by(*_orden_por_publicacion()))
     ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
-        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura', 'fuente',
     ))
     pagina = Paginator(
         publicaciones.filter(pk__in=ids_visibles).prefetch_related('etiquetas__etiqueta'), 24,

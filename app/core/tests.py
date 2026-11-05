@@ -181,6 +181,155 @@ class CatalogoFuentesRSSTestCase(SimpleTestCase):
         self.assertEqual(resultado.returncode, 0, resultado.stdout + resultado.stderr)
 
 
+class ListadosMultifuenteTestCase(TestCase):
+    def test_similares_se_agrupan_solo_dentro_del_mismo_medio(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        variante = titulo + ' gratuita'
+        # La variante supera el umbral de similitud sin ser un título idéntico.
+        for segundo_titulo in (titulo, variante):
+            filas = [
+                (1, titulo, ahora, ahora, 'El Territorio (Misiones)'),
+                (2, segundo_titulo, ahora, ahora, '  EL  TERRITORIO (Archivo) '),
+                (3, segundo_titulo, ahora, ahora, 'Misiones Online'),
+                (4, titulo, ahora, ahora, 'Misiones Online'),
+            ]
+            for orden, esperado in ((filas, [1, 3]), (list(reversed(filas)), [4, 2])):
+                with self.subTest(titulo=segundo_titulo, esperado=esperado):
+                    self.assertEqual(ids_publicaciones_unicas(iter(orden)), esperado)
+                    objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp,
+                                               fecha_captura=fc, fuente=f)
+                               for pk, t, fp, fc, f in orden]
+                    for limite in (None, 0, -1, 1, 2, 10):
+                        visibles = publicaciones_unicas(iter(objetos), limite)
+                        self.assertEqual([p.pk for p in visibles],
+                                         esperado if limite is None or limite <= 0 else esperado[:limite])
+
+    def test_conserva_contrato_anterior_y_fuentes_desconocidas(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        filas = [(1, titulo, None, ahora), (2, titulo, None, ahora)]
+        self.assertEqual(ids_publicaciones_unicas(iter(filas)), [1])
+        objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp, fecha_captura=fc)
+                   for pk, t, fp, fc in filas]
+        self.assertEqual([p.pk for p in publicaciones_unicas(objetos)], [1])
+        filas = [(*filas[0], None), (*filas[1], ''),
+                 (3, titulo, None, ahora, 'Primera Edición')]
+        self.assertEqual(ids_publicaciones_unicas(filas), [1, 3])
+
+    def test_parentesis_no_fusionan_identidades_de_medios(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        fuentes = ('Radio (FM 100.1)', 'Radio (FM 98.5)', '(Medio A)', '(Medio B)',
+                   'Misiones Online', 'Misiones Online (Archivo)',
+                   'El Territorio', 'El Territorio (Desconocida)',
+                   'Otro El Territorio (Misiones)', 'El Territorio (Misiones) (Archivo)')
+        filas = [(pk, titulo, ahora, ahora, fuente) for pk, fuente in enumerate(fuentes, 1)]
+        esperado = list(range(1, len(fuentes) + 1))
+        self.assertEqual(ids_publicaciones_unicas(filas), esperado)
+        objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp,
+                                   fecha_captura=fc, fuente=f) for pk, t, fp, fc, f in filas]
+        self.assertEqual([p.pk for p in publicaciones_unicas(objetos)], esperado)
+
+    def test_solo_secciones_reconocidas_de_el_territorio_comparten_medio(self):
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        secciones = ('Misiones', 'Tecnologia', 'Policiales', 'Cultura', 'Actualidad',
+                     'Deportes', 'Agro', 'La-region', 'Pais-y-mundo', 'Archivo')
+        filas = [(1, titulo, ahora, ahora, 'El Territorio')]
+        filas.extend((pk, titulo, ahora, ahora, f'  EL  TERRITORIO ( {seccion.upper()} )  ')
+                     for pk, seccion in enumerate(secciones, 2))
+        self.assertEqual(ids_publicaciones_unicas(filas), [1])
+        # Un sufijo reconocido no se elimina de otros nombres de medios.
+        filas = [(1, titulo, ahora, ahora, 'Radio'),
+                 (2, titulo, ahora, ahora, 'Radio (Misiones)')]
+        self.assertEqual(ids_publicaciones_unicas(filas), [1, 2])
+
+    def test_admite_filas_iterables_de_cuatro_o_cinco_campos(self):
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        antiguas = [(1, titulo, None, ahora), (2, titulo, None, ahora)]
+        nuevas = [(3, titulo, ahora, ahora, 'El Territorio (Misiones)'),
+                  (4, titulo, ahora, ahora, 'El Territorio (Archivo)'),
+                  (5, titulo, ahora, ahora, 'Misiones Online')]
+        for filas, esperado in ((antiguas, [1]), (nuevas, [3, 5]),
+                                (antiguas + nuevas, [1, 3, 5])):
+            for construir in (iter, lambda fila: (campo for campo in fila)):
+                with self.subTest(campos=[len(f) for f in filas], construir=construir):
+                    self.assertEqual(ids_publicaciones_unicas(construir(f) for f in filas), esperado)
+        for fila in ((1, titulo, ahora), (1, titulo, ahora, ahora, 'Medio', 'extra')):
+            with self.subTest(fila=fila), self.assertRaises(ValueError):
+                ids_publicaciones_unicas([iter(fila)])
+
+    def crear_copias_de_dos_medios(self):
+        from core.models import Categoria
+        from core.services.clasificacion import vincular_categoria
+
+        categoria = Categoria.objects.create(nombre_categoria='Salud')
+        ahora = timezone.now()
+        publicaciones = []
+        for numero, fuente in enumerate(('El Territorio (Misiones)',
+                                         'El Territorio (Archivo)', 'Misiones Online')):
+            publicacion = Publicacion.objects.create(
+                hash_origen=f'h12-copia-{numero}', fuente=fuente,
+                titulo='Personas mayores desarrollan proyectos comunitarios para mejorar salud mental',
+                contenido='La salud mental de las personas mayores requiere atención.',
+                departamento='capital', fecha_publicacion=ahora,
+            )
+            vincular_categoria(publicacion, categoria)
+            publicaciones.append(publicacion)
+        return publicaciones
+
+    def test_categoria_y_etiqueta_conservan_dos_medios_y_paginacion(self):
+        from django.urls import reverse
+        publicaciones = self.crear_copias_de_dos_medios()
+        for url in (reverse('publicaciones_categoria', args=['salud']),
+                    reverse('publicaciones_etiqueta', args=['salud'])):
+            for orden in ('recientes', 'antiguas'):
+                with self.subTest(url=url, orden=orden):
+                    respuesta = self.client.get(url, {'orden': orden})
+                    self.assertEqual(respuesta.status_code, 200)
+                    pagina = respuesta.context['pagina']
+                    self.assertEqual(pagina.paginator.count, 2)
+                    self.assertEqual(sum(p.fuente.startswith('El Territorio') for p in pagina), 1)
+                    self.assertIn(publicaciones[2].pk, [p.pk for p in pagina])
+        self.assertEqual(Publicacion.objects.count(), 3)
+
+    def test_destacadas_conservan_dos_medios_y_limite(self):
+        from core.services.relevancia import noticias_destacadas, noticias_destacadas_por_categoria
+        self.crear_copias_de_dos_medios()
+        self.assertEqual(len(noticias_destacadas()), 2)
+        self.assertEqual(len(noticias_destacadas(limite=1)), 1)
+        salud = next(c for c in noticias_destacadas_por_categoria() if c['nombre'] == 'Salud')
+        self.assertEqual(len(salud['publicaciones']), 2)
+        self.assertEqual(len({p.fuente.split(' (')[0] for p in salud['publicaciones']}), 2)
+
+    def test_tendencias_conservan_dos_medios_y_prioridad(self):
+        from core.models import ClicPublicacion
+        from core.services.relevancia import tendencias_destacadas
+        publicaciones = self.crear_copias_de_dos_medios()
+        usuario = get_user_model().objects.create_user(username='lector_h12')
+        for publicacion in publicaciones:
+            ClicPublicacion.objects.create(usuario=usuario, publicacion=publicacion)
+        tendencias = tendencias_destacadas()
+        self.assertEqual([t['publicacion'].pk for t in tendencias],
+                         [publicaciones[2].pk, publicaciones[1].pk])
+        self.assertTrue(all(t['clics'] == 1 and not t['estimada'] for t in tendencias))
+
+
 class LoginIdentificadorTestCase(TestCase):
     def setUp(self):
         from rest_framework.test import APIClient
