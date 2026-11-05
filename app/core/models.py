@@ -138,6 +138,18 @@ class Publicacion(models.Model):
         return '' if es_portada_generica(self.imagen_url) else self.imagen_url
 
 
+class AliasURLPublicacion(models.Model):
+    """Identidades RSS/canónicas conocidas, separadas de los hashes históricos."""
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='aliases_urls')
+    fuente = models.CharField(max_length=100)  # Identificador canónico del catálogo H1.1.
+    url_normalizada = models.URLField(max_length=500)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['fuente', 'url_normalizada'], name='alias_url_unico_por_fuente'),
+        ]
+
+
 class RevisionDepartamento(models.Model):
     """Decisión auditable para noticias que llegaron sin departamento."""
 
