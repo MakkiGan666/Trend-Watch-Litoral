@@ -18,6 +18,169 @@ from core.scrapers.noticias import fetch_elterritorio_news
 from core.serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer
 
 
+class CatalogoFuentesRSSTestCase(SimpleTestCase):
+    def setUp(self):
+        from core.services.fuentes_rss import FUENTES_RSS
+        self.fuente = FUENTES_RSS[0]
+
+    def test_catalogo_de_18_fuentes_sin_el_territorio(self):
+        from core.services.fuentes_rss import FUENTES_RSS, obtener_fuentes, validar_catalogo
+        self.assertEqual(len(FUENTES_RSS), 18)
+        self.assertEqual(validar_catalogo(FUENTES_RSS), FUENTES_RSS)
+        self.assertFalse(any('elterritorio.com.ar' in f.hosts_permitidos for f in FUENTES_RSS))
+        self.assertEqual(obtener_fuentes(), ())
+        self.assertEqual(obtener_fuentes(solo_habilitadas=False), FUENTES_RSS)
+
+    def test_las_18_urls_auditadas(self):
+        from core.services.fuentes_rss import FUENTES_RSS
+        feeds = {f.identificador: f.feed for f in FUENTES_RSS}
+        self.assertEqual(feeds, {
+            'misiones_online': 'https://misionesonline.net/feed/',
+            'primera_edicion': 'https://www.primeraedicion.com.ar/feed/',
+            'noticias_de_la_calle': 'https://www.noticiasdelacalle.com.ar/rss/noticias',
+            'noticias_del_6': 'https://noticiasdel6.com/feed/',
+            'infober': 'https://infoberdigital.com/feed/',
+            'obera_online': 'https://oberaonline.com.ar/feed/',
+            'obera_inside': 'https://oberainside.com.ar/?feed=rss2',
+            'stop_en_linea': 'https://www.stopenlinea.com.ar/rss/noticias',
+            'e24n': 'https://e24n.com.ar/feed/',
+            'eldorado_noticias': 'https://eldoradonoticias.com.ar/feed/',
+            'norte_misionero': 'https://nortemisionero.com.ar/feed/',
+            'la_voz_de_cataratas': 'https://lavozdecataratas.com/feed/',
+            'iguazu_ahora': 'https://iguazuahora.com/feed/',
+            'radio_yguazu': 'https://radioiguazu.com/feed/',
+            'alem_news': 'https://www.alem.news/feed/',
+            'la_mision_digital': 'https://lamisiondigital.com/feed/',
+            'fracran_noticias': 'https://www.fracran.com.ar/feed.xml',
+            'noticias_de_irigoyen': 'https://noticiasdeirigoyen.com.ar/feed/',
+        })
+
+    def test_habilitacion_y_limites_independientes(self):
+        from dataclasses import FrozenInstanceError, replace
+        from core.services.fuentes_rss import obtener_fuentes
+        activa = replace(self.fuente, habilitada=True, limite_noticias=5,
+                         timeout_segundos=2.5, max_bytes=2048, max_redirecciones=0)
+        with patch('core.services.fuentes_rss.FUENTES_RSS', (activa, replace(self.fuente, identificador='otra'))):
+            self.assertEqual(obtener_fuentes(), (activa,))
+        self.assertFalse(self.fuente.habilitada)
+        self.assertEqual(self.fuente.limite_noticias, 30)
+        with self.assertRaises(FrozenInstanceError):
+            self.fuente.habilitada = True
+
+    def test_rechaza_configuracion_invalida_incluso_deshabilitada(self):
+        from dataclasses import replace
+        casos = {
+            'identificador': ('', 'Con espacios', '../medio', 1),
+            'nombre': ('', '  ', None),
+            'habilitada': (0, 1, 'false', None),
+            'hosts_permitidos': ((), ['misionesonline.net'], ('*.net',),
+                                 ('localhost',), ('127.0.0.1',), ('https://medio.net',),
+                                 ('Medio.net',), ('medio.net:443',), ('medio.net', 'medio.net')),
+            'limite_noticias': (0, -1, True, 1.5, '10'),
+            'max_bytes': (0, -1, False, 1.5, None),
+            'timeout_segundos': (0, -1, True, '10', float('inf'), float('nan')),
+            'max_redirecciones': (-1, True, 1.5, '4'),
+        }
+        for campo, valores in casos.items():
+            for valor in valores:
+                with self.subTest(campo=campo, valor=valor), self.assertRaises(ValueError):
+                    replace(self.fuente, **{campo: valor})
+
+    def test_urls_ajenas_o_ambiguas_rechazadas(self):
+        from dataclasses import replace
+        for url in (
+            'http://misionesonline.net/feed/', '//misionesonline.net/feed/',
+            'https://otro.net/feed/', 'https://misionesonline.net.otro.net/feed/',
+            'https://sub.misionesonline.net/feed/', 'https://127.0.0.1/feed/',
+            'https://usuario@misionesonline.net/feed/',
+            'https://misionesonline.net:80/feed/', 'https://misionesonline.net:abc/feed/',
+            'https://misionesonline.net/feed/#fragmento', 'https://misionesonline.net/feed/#',
+            'https://misionesonline.net/fee\nd/', 'https://misionesonline.net/fee\\d/',
+            '', None, 'https://[invalido/feed/',
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                replace(self.fuente, feed=url)
+
+    def test_hosts_exactos_www_y_https_por_defecto(self):
+        for url in ('https://misionesonline.net/feed/',
+                    'https://www.misionesonline.net/feed/',
+                    'https://misionesonline.net:443/feed/'):
+            self.assertIn(self.fuente.validar_url(url).hostname, self.fuente.hosts_permitidos)
+
+    def test_duplicados_y_tipos_invalidos(self):
+        from dataclasses import replace
+        from core.services.fuentes_rss import validar_catalogo
+        for otra in (self.fuente,
+                     replace(self.fuente, identificador='otra'),
+                     replace(self.fuente, identificador='otra', feed='https://misionesonline.net:443/feed/'),
+                     replace(self.fuente, feed='https://misionesonline.net/otro/'), None):
+            with self.subTest(otra=otra), self.assertRaises(ValueError):
+                validar_catalogo((self.fuente, otra))
+
+    def test_importacion_fria_y_consulta_sin_efectos_secundarios(self):
+        from pathlib import Path
+        import subprocess
+        import sys
+        import textwrap
+
+        # El proceso nuevo no hereda sys.modules ni los imports de setUp.
+        # El único proceso permitido es este intérprete de comprobación.
+        codigo = textwrap.dedent('''
+            import os
+            import sys
+
+            sys.path.insert(0, sys.argv[1])
+            assert not any(n == 'core' or n.startswith('core.') for n in sys.modules)
+
+            def bloquear_efectos(evento, argumentos):
+                if evento == 'open':
+                    modo, flags = argumentos[1:3]
+                    escritura = (
+                        isinstance(modo, str) and any(c in modo for c in 'wax+')
+                    ) or (
+                        isinstance(flags, int) and flags & (
+                            os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+                        )
+                    )
+                    if escritura:
+                        raise AssertionError('Escritura no permitida')
+                if evento.startswith(('socket.', 'subprocess.', 'os.exec', 'os.spawn')) or evento in (
+                    'os.system', 'os.fork', 'os.forkpty', 'os.posix_spawn',
+                    'os.remove', 'os.rename', 'os.mkdir', 'os.rmdir',
+                    'os.link', 'os.symlink', 'os.truncate', 'os.chmod', 'os.chown', 'os.utime',
+                ):
+                    raise AssertionError('Efecto no permitido: ' + evento)
+
+            sys.addaudithook(bloquear_efectos)
+            # Comprobar los bloqueos sin ejecutar operaciones reales.
+            for evento, argumentos in (
+                ('socket.getaddrinfo', ('example.test', 443, 0, 0, 0)),
+                ('socket.__new__', (None, 2, 1, 0)),
+                ('open', ('no_crear', 'w', os.O_WRONLY | os.O_CREAT)),
+                ('open', ('no_crear', None, os.O_RDWR)),
+                ('os.mkdir', ('no_crear', 511, -1)),
+                ('subprocess.Popen', ('no_ejecutar', [], None, None)),
+                ('os.system', ('no_ejecutar',)),
+            ):
+                try:
+                    sys.audit(evento, *argumentos)
+                except AssertionError:
+                    pass
+                else:
+                    raise AssertionError('Bloqueo ausente: ' + evento)
+
+            from core.services.fuentes_rss import FUENTES_RSS, obtener_fuentes
+            assert len(FUENTES_RSS) == 18
+            assert obtener_fuentes() == ()
+            assert obtener_fuentes(solo_habilitadas=False) == FUENTES_RSS
+        ''')
+        resultado = subprocess.run(
+            [sys.executable, '-B', '-c', codigo, str(Path(__file__).resolve().parent.parent)],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+        self.assertEqual(resultado.returncode, 0, resultado.stdout + resultado.stderr)
+
+
 class LoginIdentificadorTestCase(TestCase):
     def setUp(self):
         from rest_framework.test import APIClient
