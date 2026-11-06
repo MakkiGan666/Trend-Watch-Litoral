@@ -47,8 +47,8 @@ from .roles import PERMISOS_PANEL
 from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
 from .services.indicadores import resumen_publicaciones
-from .services.relevancia import noticias_destacadas_por_categoria, tendencias_destacadas, registrar_clic
-from .services.publicaciones_unicas import ids_publicaciones_unicas
+from .services.relevancia import noticias_destacadas_por_categoria, tendencias_destacadas, rankings_valoraciones, ejemplos_rankings, registrar_clic
+from .services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
 from .services.autenticacion import autenticar_identificador
 from .services.identidad import con_identidad_serializada, errores_identidad
 
@@ -91,9 +91,28 @@ def landing(request):
 
 def categorias(request):
     tarjetas = [{'nombre': nombre, 'slug': slugify(nombre)} for nombre in CATEGORIAS_PROYECTO]
+    ranking_positivo, ranking_polemico = rankings_valoraciones(limite=15)
+    candidatas_positivas, candidatas_polemicas = (
+        ejemplos_rankings(limite=30) if len(ranking_positivo) < 15 or len(ranking_polemico) < 15 else ([], [])
+    )
+    def completar(reales, candidatas):
+        visibles = publicaciones_unicas([*reales, *candidatas], limite=15)
+        ids_reales = {publicacion.pk for publicacion in reales}
+        return [publicacion for publicacion in visibles if publicacion.pk not in ids_reales]
+
+    ejemplos_positivos = completar(ranking_positivo, candidatas_positivas)
+    ejemplos_polemicos = completar(ranking_polemico, candidatas_polemicas)
+    tendencias = tendencias_destacadas()
+    prefetch_related_objects(
+        [*ranking_positivo, *ranking_polemico, *ejemplos_positivos, *ejemplos_polemicos,
+         *(tendencia['publicacion'] for tendencia in tendencias)],
+        'etiquetas__etiqueta',
+    )
     return render(request, 'categorias.html', {
         'categorias_disponibles': tarjetas, 'departamentos': DEPARTAMENTOS,
-        'tendencias': tendencias_destacadas(),
+        'tendencias': tendencias,
+        'ranking_positivo': ranking_positivo, 'ranking_polemico': ranking_polemico,
+        'ejemplos_positivos': ejemplos_positivos, 'ejemplos_polemicos': ejemplos_polemicos,
     })
 
 
