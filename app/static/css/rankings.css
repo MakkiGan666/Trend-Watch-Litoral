@@ -1,0 +1,28 @@
+.ranking-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.ranking-panel{min-width:0;padding:24px;border-radius:22px}
+.ranking-panel h2{margin:0 0 8px;font-size:22px}
+.ranking-panel .sub{margin:0;color:var(--tx-2);font-size:13px;line-height:1.5}
+.ranking-preview-label{margin:14px 0 0;padding:9px 12px;border:1px solid var(--aqua-line);border-radius:10px;background:var(--aqua-soft);color:var(--mist);font-size:12px;line-height:1.4}
+.ranking-list{display:grid;align-content:start;gap:12px;list-style:none;margin:20px 0 0;padding:0 8px 0 0;max-height:min(70vh,680px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--sage) transparent;scrollbar-gutter:stable}
+.ranking-list:focus-visible{outline:2px solid var(--aqua);outline-offset:3px;border-radius:12px}
+.ranking-card{min-width:0;padding:10px;border:1px solid var(--edge);border-radius:16px;background:rgba(255,255,255,.035);transition:background .2s,border-color .2s,transform .2s,box-shadow .2s}
+.ranking-card:hover{background:var(--aqua-soft);border-color:var(--aqua-line);transform:translateY(-2px);box-shadow:0 12px 26px rgba(0,0,0,.13)}
+.ranking-card__layout{display:grid;grid-template-columns:minmax(0,38%) minmax(0,1fr);gap:14px;min-height:146px}
+.ranking-card__media{display:grid;place-items:center;min-width:0;overflow:hidden;min-height:140px;border-radius:11px;background:var(--ink-800)}
+.ranking-card__media img{width:100%;height:100%;max-height:180px;object-fit:cover}
+.ranking-card__fallback{color:var(--sage);font-size:12px}
+.ranking-card__body{display:flex;flex-direction:column;gap:9px;min-width:0;padding:4px 2px}
+.ranking-card__body small{color:var(--sage)}
+.ranking-card__title{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:4;color:var(--mist);font-weight:700;line-height:1.35;overflow-wrap:anywhere;text-decoration:none}
+.ranking-card__title:hover{color:var(--aqua)}
+.ranking-card__keywords{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.ranking-card__keywords a{display:inline-flex;align-items:center;max-width:100%;min-height:22px;padding:2px 7px;border:1px solid var(--aqua-line);border-radius:999px;background:var(--aqua-soft);color:var(--mist);font-size:10px;line-height:1.25;overflow-wrap:anywhere;text-decoration:none}
+.ranking-card__keywords a:hover,.ranking-card__keywords a:focus-visible{border-color:var(--aqua);background:var(--glass-hi)}
+.ranking-card__count{color:var(--tx-2);font-size:12px}
+.ranking-card__more{margin-top:auto;color:var(--aqua);font-size:12px;text-decoration:none}
+.ranking-card__more:hover{text-decoration:underline}
+.ranking-card__media:focus-visible,.ranking-card__title:focus-visible,.ranking-card__more:focus-visible{outline:2px solid var(--aqua);outline-offset:3px}
+.ranking-empty{padding:18px;border:1px solid var(--edge);border-radius:14px;color:var(--tx-2);font-size:13px}
+@media(max-width:900px){.ranking-grid{grid-template-columns:1fr}}
+@media(max-width:520px){.ranking-panel{padding:18px}.ranking-list{max-height:60vh}.ranking-card__layout{grid-template-columns:minmax(0,100px) minmax(0,1fr);min-height:120px}.ranking-card__media{min-height:110px}}
+@media(prefers-reduced-motion:reduce){.ranking-card{transition:none}}

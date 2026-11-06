@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}Gestión de administradores · TrendWatch{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/publication-form.css' %}?v=3">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/publication-form.css' %}?v=3"><link rel="stylesheet" href="{% static 'css/admin-accounts.css' %}?v=1">{% endblock %}
 {% block content %}
-<div class="wrap publication-editor">
+<div class="wrap publication-editor admin-accounts-editor">
   <a class="btn btn--ghost publication-editor__back" href="{% url 'publicaciones' %}">← Volver a Publicaciones</a>
+  <div class="admin-accounts-layout">
+  {% include 'partials/_admin_accounts_nav.html' with activa='gestion' %}
   <section class="publication-editor__card glass glass--sheen" aria-labelledby="administradores-title">
     <header class="publication-editor__head">
       <h1 id="administradores-title">Gestión de administradores</h1>
@@ -36,5 +38,6 @@
       </div>
     </form>
   </section>
+  </div>
 </div>
 {% endblock %}

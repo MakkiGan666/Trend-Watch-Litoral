@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}{% if tipo == 'administradores' %}Administradores{% else %}Usuarios registrados{% endif %} · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/admin-accounts.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap admin-accounts-page">
+  <div class="admin-accounts-layout">
+    {% include 'partials/_admin_accounts_nav.html' with activa=tipo %}
+    <section class="admin-accounts-main glass glass--sheen" aria-labelledby="accounts-title">
+      <h1 id="accounts-title">{% if tipo == 'administradores' %}Administradores{% else %}Usuarios registrados{% endif %}</h1>
+      <p>{{ pagina.paginator.count }} cuenta{{ pagina.paginator.count|pluralize:'s' }} registrada{{ pagina.paginator.count|pluralize:'s' }}.</p>
+      {% if pagina %}
+      <div class="admin-accounts-table-wrap"><table class="admin-accounts-table">
+        <thead><tr><th scope="col">Usuario</th><th scope="col">Correo electrónico</th><th scope="col">Estado</th></tr></thead>
+        <tbody>{% for cuenta in pagina %}<tr><td>{{ cuenta.username }}</td><td>{{ cuenta.email|default:'—' }}</td><td>{% if cuenta.is_active %}Activa{% else %}Inactiva{% endif %}{% if cuenta.is_superuser %} · Superusuario{% endif %}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% else %}<p>Todavía no hay cuentas en este listado.</p>{% endif %}
+      {% if pagina.has_other_pages %}<nav class="admin-accounts-pagination" aria-label="Páginas de cuentas">
+        {% if pagina.has_previous %}<a href="?pagina={{ pagina.previous_page_number }}">← Anterior</a>{% endif %}
+        <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+        {% if pagina.has_next %}<a href="?pagina={{ pagina.next_page_number }}">Siguiente →</a>{% endif %}
+      </nav>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

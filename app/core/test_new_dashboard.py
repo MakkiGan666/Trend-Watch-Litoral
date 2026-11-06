@@ -40,6 +40,17 @@ class DashboardAnaliticoTests(TestCase):
         self.assertEqual(self.client.get(reverse('dashboard')).status_code, 200)
         self.assertEqual(self.client.post(reverse('dashboard')).status_code, 405)
 
+    def test_sin_analisis_muestra_estado_claro_y_conserva_conteos_reales(self):
+        self.noticia('sin-analisis')
+        self.client.force_login(self.root)
+        dashboard = self.client.get(reverse('dashboard'))
+        publicaciones = self.client.get(reverse('publicaciones'))
+        self.assertEqual(dashboard.context['resumen']['analizadas'], 0)
+        self.assertContains(dashboard, 'Aún sin análisis')
+        self.assertContains(dashboard, 'Sin casos')
+        self.assertContains(dashboard, '1 publicación sin análisis disponible')
+        self.assertContains(publicaciones, 'Aún sin análisis')
+
     def test_cuenta_analisis_real_no_marca_y_separa_conflictos(self):
         pendiente = self.noticia('pendiente', procesado_ia=True)
         analizada = self.noticia('analizada', procesado_ia=False)
@@ -69,6 +80,27 @@ class DashboardAnaliticoTests(TestCase):
         self.assertEqual(response.context['resumen']['total'], 1)
         self.assertEqual(response.context['categorias'][0]['total'], 1)
         self.assertEqual(next(d['total'] for d in response.context['departamentos'] if d['nombre'] == 'Capital'), 1)
+
+    def test_secciones_de_el_territorio_se_agrupan_como_una_fuente(self):
+        self.noticia('archivo', fuente='El Territorio (Archivo)')
+        self.noticia('policiales', fuente='El Territorio (Policiales)')
+        self.noticia('otra', fuente='Otra fuente (Regional)')
+        self.client.force_login(self.root)
+
+        response = self.client.get(reverse('dashboard'))
+        self.assertEqual(
+            {fila['nombre']: fila['total'] for fila in response.context['fuentes']},
+            {'El Territorio': 2, 'Otra fuente (Regional)': 1},
+        )
+        self.assertEqual(
+            [valor for valor, _ in response.context['filtros'].fields['fuente'].choices],
+            ['', 'El Territorio', 'Otra fuente (Regional)'],
+        )
+
+        filtrada = self.client.get(reverse('dashboard'), {'fuente': 'El Territorio'})
+        self.assertEqual(filtrada.status_code, 200)
+        self.assertEqual(filtrada.context['resumen']['total'], 2)
+        self.assertEqual(filtrada.context['fuentes'][0]['nombre'], 'El Territorio')
 
     def test_fechas_locales_y_captura_si_no_hay_fecha_del_medio(self):
         self.noticia('medianoche', fecha_publicacion=datetime(2026, 10, 2, 1, tzinfo=timezone.utc))
