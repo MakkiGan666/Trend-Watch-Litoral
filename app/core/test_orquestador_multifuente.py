@@ -16,9 +16,12 @@ from django.test.utils import CaptureQueriesContext
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TransactionTestCase
+from django.test.utils import override_settings
+from django.utils import timezone
 from google.genai import types
 
-from core.models import AliasURLPublicacion, Publicacion, RegistroDatos, ProcesamientoIAMultifuente
+from core.models import (AliasURLPublicacion, Publicacion, RegistroDatos,
+                         ProcesamientoIAMultifuente)
 from core.services import (descarga_segura as red, extractor_articulos, fuentes_rss,
                           gemini_multifuente, persistencia_multifuente, orquestador_multifuente as servicio)
 
@@ -343,6 +346,137 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         self.assertEqual(resultado['errores'], [])
         self.assertEqual((resultado['nuevas'], resultado['pendientes_ia'], resultado['descargadas']), (18, 18, 36))
         self.assertFalse(any(f.habilitada for f in self.original))
+        self.gemini_prohibido.assert_not_called()
+
+    def test_integracion_sintetica_cuatro_fuentes_apto_conserva_territorio(self):
+        identificadores = {
+            'noticias_del_6', 'eldorado_noticias', 'norte_misionero', 'fracran_noticias',
+        }
+        seleccionadas = tuple(
+            replace(fuente, habilitada=fuente.identificador in identificadores)
+            for fuente in self.original
+        )
+        fuentes = [f for f in seleccionadas if f.identificador in identificadores]
+        self.assertEqual({f.identificador for f in fuentes}, identificadores)
+        self.assertEqual(len(fuentes), 4)
+
+        registro_territorio = RegistroDatos.objects.create(
+            fuentes_api='El Territorio', fecha_ejecucion=timezone.now(),
+            estado='EXITO', lenguaje='es',
+        )
+        territorio = Publicacion.objects.create(
+            hash_origen='h45b-territorio-historico', fuente='El Territorio (Misiones)',
+            titulo='Registro sintético histórico de El Territorio',
+            contenido='Contenido sintético histórico que debe permanecer intacto.',
+            url='https://www.elterritorio.com.ar/h45b/historica',
+            id_registro=registro_territorio,
+        )
+        territorio_antes = Publicacion.objects.filter(pk=territorio.pk).values().get()
+        registro_antes = RegistroDatos.objects.filter(pk=registro_territorio.pk).values().get()
+
+        url_por_fuente = {}
+        canonica_por_fuente = {}
+        for fuente in fuentes:
+            host = fuente.hosts_permitidos[0]
+            rss_url = f'https://{host}/h45b/nota-compartida'
+            canonica = f'https://{host}/h45b/canonica-compartida'
+            url_por_fuente[fuente.identificador] = rss_url
+            canonica_por_fuente[fuente.identificador] = canonica
+            item = (
+                '<item><title>Proyecto comunitario sintético H45B</title><link>'
+                + escape(rss_url)
+                + '</link><pubDate>Fri, 06 Nov 2026 12:00:00 GMT</pubDate>'
+                '<description>Resumen breve sintético, no es el cuerpo.</description></item>'
+            )
+            self.respuestas[fuente.feed] = (
+                '<rss version="2.0"><channel><title>Feed sintético H45B</title>'
+                + item + '</channel></rss>'
+            ).encode()
+            html = self.html().replace(
+                b'content="Nueva biblioteca local"',
+                b'content="Proyecto comunitario sintetico H45B"',
+            ).replace(
+                b'</head>',
+                ('<link rel="canonical" href="' + canonica + '"></head>').encode(),
+            )
+            self.respuestas[rss_url] = html
+
+        contexto = ExitStack()
+        self.addCleanup(contexto.close)
+        for modulo in (fuentes_rss, red, extractor_articulos,
+                       persistencia_multifuente, gemini_multifuente):
+            contexto.enter_context(patch.object(modulo, 'FUENTES_RSS', seleccionadas))
+
+        seleccion = sorted(identificadores)
+        with override_settings(GEMINI_API_KEY='', GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()):
+            primera = servicio.ejecutar_ingesta_multifuente(
+                seleccion, limite_por_fuente=1, limite_total=4,
+            )
+            self.assertEqual(primera['errores'], [])
+            self.assertEqual((primera['nuevas'], primera['duplicadas']), (4, 0))
+            self.assertEqual(primera['descargadas'], 8)
+            self.assertFalse(primera['procesar_ia'])
+
+            publicaciones = list(Publicacion.objects.exclude(pk=territorio.pk).order_by('fuente'))
+            self.assertEqual(len(publicaciones), 4)
+            self.assertEqual({p.fuente for p in publicaciones}, {f.nombre for f in fuentes})
+            self.assertEqual(len({p.pk for p in publicaciones}), 4)
+            self.assertEqual({p.titulo for p in publicaciones},
+                             {'Proyecto comunitario sintetico H45B'})
+            self.assertEqual({p.url for p in publicaciones}, set(canonica_por_fuente.values()))
+            self.assertEqual(Publicacion.objects.count(), 5)
+
+            for fuente in fuentes:
+                publicacion = Publicacion.objects.get(fuente=fuente.nombre)
+                alias = set(AliasURLPublicacion.objects.filter(
+                    publicacion=publicacion,
+                ).values_list('url_normalizada', flat=True))
+                self.assertEqual(alias, {
+                    url_por_fuente[fuente.identificador],
+                    canonica_por_fuente[fuente.identificador],
+                })
+                self.assertEqual(publicacion.imagen_url,
+                                  f'https://{fuente.hosts_permitidos[0]}/fotos/biblioteca.jpg')
+            self.assertEqual(AliasURLPublicacion.objects.count(), 8)
+            self.assertEqual(ProcesamientoIAMultifuente.objects.count(), 4)
+            self.assertEqual(set(ProcesamientoIAMultifuente.objects.values_list('estado', flat=True)),
+                             {'PENDIENTE'})
+            self.assertEqual(
+                set(ProcesamientoIAMultifuente.objects.values_list('publicacion_id', flat=True)),
+                {p.pk for p in publicaciones},
+            )
+
+            antes_reintento = {
+                p.pk: (p.hash_origen, p.url, p.fuente)
+                for p in publicaciones
+            }
+            segunda = servicio.ejecutar_ingesta_multifuente(
+                seleccion, limite_por_fuente=1, limite_total=4,
+            )
+            self.assertEqual(segunda['errores'], [])
+            self.assertEqual((segunda['nuevas'], segunda['duplicadas']), (0, 4))
+            self.assertEqual(Publicacion.objects.count(), 5)
+            self.assertEqual(AliasURLPublicacion.objects.count(), 8)
+            self.assertEqual(ProcesamientoIAMultifuente.objects.count(), 4)
+            self.assertEqual(set(ProcesamientoIAMultifuente.objects.values_list('estado', flat=True)),
+                             {'PENDIENTE'})
+            self.assertEqual(
+                set(ProcesamientoIAMultifuente.objects.values_list('publicacion_id', flat=True)),
+                {p.pk for p in publicaciones},
+            )
+            self.assertEqual({
+                p.pk: (p.hash_origen, p.url, p.fuente)
+                for p in Publicacion.objects.exclude(pk=territorio.pk)
+            }, antes_reintento)
+
+        self.assertEqual(Publicacion.objects.filter(pk=territorio.pk).values().get(), territorio_antes)
+        self.assertEqual(RegistroDatos.objects.filter(pk=registro_territorio.pk).values().get(), registro_antes)
+        self.assertFalse(any(f.habilitada for f in self.original))
+        self.assertEqual(len(self.peticiones), 12)  # Reintento: 4 feeds, sin repetir HTML.
+        for fuente in fuentes:
+            self.assertEqual(self.peticiones.count(fuente.feed), 2)
+            self.assertEqual(self.peticiones.count(url_por_fuente[fuente.identificador]), 1)
+        self.assertTrue(all('/fotos/' not in url for url in self.peticiones))
         self.gemini_prohibido.assert_not_called()
 
     def test_pausa_gemini_entre_fuentes_y_no_solo_dentro_del_lote(self):

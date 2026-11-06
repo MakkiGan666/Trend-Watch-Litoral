@@ -37,15 +37,24 @@ class RegresionesUIMultifuenteTests(TestCase):
         )
 
     @classmethod
-    def crear_publicacion(cls, fuente, imagen):
-        titulo = 'Misiones: proyecto comunitario sintético para mejorar la salud'
+    def crear_publicacion(cls, fuente, imagen, *, marcador=None):
+        hosts = {
+            'El Territorio (Misiones)': 'elterritorio.com.ar',
+            'Noticias del 6': 'noticiasdel6.com',
+            'Eldorado Noticias': 'eldoradonoticias.com.ar',
+            'Norte Misionero': 'nortemisionero.com.ar',
+            'Fracrán Noticias': 'fracran.com.ar',
+        }
+        host = hosts[fuente]
+        sufijo = f' H45B {marcador}' if marcador else ''
+        titulo = f'Misiones: proyecto comunitario sintético para mejorar la salud{sufijo}'
         publicacion = Publicacion.objects.create(
-            hash_origen=f'h44b-{fuente.lower().replace(" ", "-")}',
+            hash_origen=f'h44b-{fuente.lower().replace(" ", "-")}-{marcador or "base"}',
             fuente=fuente,
             titulo=titulo,
-            contenido=('Artículo de prueba sintético sobre salud comunitaria en Misiones. '
+            contenido=(f'Artículo sintético H45B {marcador or "base"} sobre salud comunitaria en Misiones. '
                        'No corresponde a una noticia ni contiene contenido editorial real.'),
-            url=f'https://{("noticiasdel6.com" if fuente == "Noticias del 6" else "elterritorio.com.ar")}/h44b/original',
+            url=f'https://{host}/h44b/{marcador or "original"}',
             imagen_url=imagen,
             fecha_publicacion=timezone.now(),
             departamento='capital',
@@ -115,6 +124,274 @@ class RegresionesUIMultifuenteTests(TestCase):
             self.assertEqual({p.fuente for p in pagina},
                              {'El Territorio (Misiones)', 'Noticias del 6'})
         self.assertEqual(Publicacion.objects.count(), 2)
+
+    def test_cinco_fuentes_en_listados_busqueda_filtros_analitica_y_detalles(self):
+        hosts = {
+            'El Territorio (Misiones)': 'elterritorio.com.ar',
+            'Noticias del 6': 'noticiasdel6.com',
+            'Eldorado Noticias': 'eldoradonoticias.com.ar',
+            'Norte Misionero': 'nortemisionero.com.ar',
+            'Fracrán Noticias': 'fracran.com.ar',
+        }
+        fuentes = (
+            ('El Territorio (Misiones)', 'territorio45'),
+            ('Noticias del 6', 'del6'),
+            ('Eldorado Noticias', 'eldorado45'),
+            ('Norte Misionero', 'norte45'),
+            ('Fracrán Noticias', 'fracran45'),
+        )
+        # Reescribir las dos filas iniciales del fixture para que cada resultado
+        # tenga una identidad rastreable; la BD de TestCase es aislada.
+        publicaciones_por_fuente = {
+            'El Territorio (Misiones)': self.territorio,
+            'Noticias del 6': self.noticias_del_6,
+        }
+        ahora = timezone.now()
+        for indice, (fuente, marcador) in enumerate(fuentes[:2]):
+            publicacion = publicaciones_por_fuente[fuente]
+            publicacion.titulo = (
+                f'Misiones: proyecto comunitario sintético H45B {marcador} para mejorar la salud'
+            )
+            publicacion.contenido = (
+                f'Artículo sintético H45B {marcador} sobre salud comunitaria en Misiones. '
+                'No corresponde a una noticia ni contiene contenido editorial real.'
+            )
+            publicacion.url = f'https://{hosts[fuente]}/h45b/{marcador}/original'
+            publicacion.imagen_url = f'https://{hosts[fuente]}/h45b/{marcador}/imagen.png'
+            publicacion.fecha_publicacion = ahora + timedelta(seconds=indice)
+            publicacion.departamento = 'capital'
+            publicacion.save(update_fields=(
+                'titulo', 'contenido', 'url', 'imagen_url', 'fecha_publicacion', 'departamento',
+            ))
+
+        for fuente, marcador in fuentes[2:]:
+            imagen = f'https://{hosts[fuente]}/h45b/{marcador}/imagen.png'
+            publicaciones_por_fuente[fuente] = self.crear_publicacion(
+                fuente, imagen, marcador=marcador,
+            )
+            publicaciones_por_fuente[fuente].fecha_publicacion = ahora + timedelta(seconds=2)
+            publicaciones_por_fuente[fuente].departamento = 'capital'
+            publicaciones_por_fuente[fuente].save(update_fields=('fecha_publicacion', 'departamento'))
+
+        categorias_por_fuente = {}
+        etiquetas_por_fuente = {}
+        for fuente, marcador in fuentes:
+            publicacion = publicaciones_por_fuente[fuente]
+            categoria = Categoria.objects.create(nombre_categoria=f'Ensayo {marcador}')
+            etiqueta = Etiqueta.objects.create(
+                nombre=f'Etiqueta {marcador}', slug=f'h45b-{marcador}',
+            )
+            vincular_categoria(publicacion, categoria)
+            posicion = (PublicacionEtiqueta.objects.filter(publicacion=publicacion)
+                       .aggregate(maxima=Max('posicion'))['maxima'] or 0) + 1
+            PublicacionEtiqueta.objects.create(
+                publicacion=publicacion, etiqueta=etiqueta, posicion=posicion,
+            )
+            categorias_por_fuente[fuente] = categoria
+            etiquetas_por_fuente[fuente] = etiqueta
+            Sentimiento.objects.create(
+                id_publicacion_api=publicacion,
+                polaridad=(len(publicaciones_por_fuente) - len(categorias_por_fuente)) / 4 - .5,
+                confianza=.8,
+            )
+            ClicPublicacion.objects.create(usuario=self.usuario, publicacion=publicacion)
+            Comentario.objects.create(
+                publicacion=publicacion, autor=self.usuario,
+                texto=f'Comentario público sintético H45B {marcador}.',
+                estado=Comentario.Estado.PUBLICADO,
+            )
+
+        lectores = [self.admin, self.usuario]
+        lectores.extend(get_user_model().objects.create_user(
+            username=f'lector_h45b_{indice}', password='synthetic-only',
+        ) for indice in range(1, 6))
+        votos_por_marcador = {
+            'territorio45': ('positivo', 'positivo', 'positivo', 'negativo', 'negativo'),
+            'del6': ('negativo', 'positivo', 'positivo', 'positivo', 'negativo', 'negativo', 'neutral'),
+            'eldorado45': ('neutral', 'positivo', 'positivo', 'positivo', 'negativo', 'negativo', 'neutral'),
+            'norte45': ('positivo', 'positivo', 'positivo', 'positivo', 'negativo', 'negativo', 'neutral'),
+            'fracran45': ('negativo', 'positivo', 'positivo', 'positivo', 'positivo', 'negativo', 'negativo'),
+        }
+        for fuente, marcador in fuentes:
+            publicacion = publicaciones_por_fuente[fuente]
+            for lector, sentimiento in zip(lectores, votos_por_marcador[marcador]):
+                ValoracionPublicacion.objects.create(
+                    usuario=lector, publicacion=publicacion,
+                    sentimiento=sentimiento,
+                )
+
+        ids_esperados = {publicacion.pk for publicacion in publicaciones_por_fuente.values()}
+        por_marcador = {
+            marcador: publicaciones_por_fuente[fuente]
+            for fuente, marcador in fuentes
+        }
+
+        listado_html = self.client.get(reverse('landing'))
+        self.assertEqual(listado_html.status_code, 200)
+        for fuente, marcador in fuentes:
+            publicacion = publicaciones_por_fuente[fuente]
+            with self.subTest(vista='portada', fuente=fuente):
+                self.assertContains(listado_html, publicacion.titulo)
+                self.assertContains(listado_html, publicacion.imagen_url)
+
+        listado = self.client.get(reverse('listar_publicaciones'))
+        self.assertEqual(listado.status_code, 200)
+        filas = {fila['id']: fila for fila in listado.json()['data']}
+        self.assertEqual(set(filas), ids_esperados)
+        for fuente, marcador in fuentes:
+            fila = filas[publicaciones_por_fuente[fuente].pk]
+            self.assertEqual((fila['fuente'], fila['titulo'], fila['imagen_url']), (
+                fuente, publicaciones_por_fuente[fuente].titulo,
+                publicaciones_por_fuente[fuente].imagen_url,
+            ))
+
+        resultados = self.client.get(
+            reverse('buscar_publicaciones'), {'q': 'h45b'},
+        ).json()['resultados']
+        self.assertEqual({fila['id_publicacion_api'] for fila in resultados}, ids_esperados)
+        for marcador, publicacion in por_marcador.items():
+            individuales = self.client.get(
+                reverse('buscar_publicaciones'), {'q': marcador},
+            ).json()['resultados']
+            self.assertEqual(
+                {fila['id_publicacion_api'] for fila in individuales}, {publicacion.pk},
+            )
+        busqueda_html = self.client.get(reverse('buscar_noticias'), {'q': 'h45b'})
+        self.assertEqual(busqueda_html.status_code, 200)
+        # Las consultas individuales prueban cada marcador; la común comprueba
+        # el límite de cuatro sin depender del orden elegido por relevancia.
+        for marcador, publicacion in por_marcador.items():
+            sugerencias = self.client.get(
+                reverse('sugerencias_publicaciones'), {'q': marcador},
+            ).json()['noticias']
+            self.assertEqual(
+                {fila['url'] for fila in sugerencias},
+                {reverse('noticia', args=[publicacion.pk])},
+            )
+        sugerencias_comunes = self.client.get(
+            reverse('sugerencias_publicaciones'), {'q': 'h45b'},
+        ).json()['noticias']
+        urls_esperadas = {
+            reverse('noticia', args=[publicacion.pk])
+            for publicacion in publicaciones_por_fuente.values()
+        }
+        urls_comunes = [fila['url'] for fila in sugerencias_comunes]
+        self.assertEqual(len(urls_comunes), 4)
+        self.assertEqual(len(set(urls_comunes)), 4)
+        self.assertTrue(set(urls_comunes).issubset(urls_esperadas))
+        for publicacion in publicaciones_por_fuente.values():
+            self.assertContains(busqueda_html, publicacion.imagen_url)
+
+        self.client.force_login(self.admin)
+        nombre_visible = {
+            'El Territorio (Misiones)': 'El Territorio',
+            'Noticias del 6': 'Noticias del 6',
+            'Eldorado Noticias': 'Eldorado Noticias',
+            'Norte Misionero': 'Norte Misionero',
+            'Fracrán Noticias': 'Fracrán Noticias',
+        }
+        dashboard_todos = self.client.get(reverse('dashboard'))
+        self.assertEqual(dashboard_todos.status_code, 200)
+        self.assertEqual(dashboard_todos.context['resumen']['total'], 5)
+        self.assertEqual(
+            {fila['nombre']: fila['total'] for fila in dashboard_todos.context['fuentes']},
+            {visible: 1 for visible in nombre_visible.values()},
+        )
+        for fuente, marcador in fuentes:
+            publicacion = publicaciones_por_fuente[fuente]
+            visible = nombre_visible[fuente]
+            filtro = 'El Territorio' if fuente == 'El Territorio (Misiones)' else fuente
+            respuesta_admin = self.client.get(reverse('publicaciones'), {'fuente': filtro})
+            self.assertEqual(respuesta_admin.status_code, 200)
+            self.assertEqual({p.pk for p in respuesta_admin.context['publicaciones']}, {publicacion.pk})
+            dashboard = self.client.get(reverse('dashboard'), {'fuente': filtro})
+            self.assertEqual(dashboard.status_code, 200)
+            self.assertEqual(dashboard.context['filtros']['fuente'].value(), filtro)
+            self.assertEqual(dashboard.context['resumen']['total'], 1)
+            self.assertEqual(
+                {fila['nombre']: fila['total'] for fila in dashboard.context['fuentes']},
+                {visible: 1},
+            )
+            polaridad = {
+                'territorio45': .5,
+                'del6': .25,
+                'eldorado45': 0,
+                'norte45': -.25,
+                'fracran45': -.5,
+            }[marcador]
+            self.assertEqual(
+                {fila['nombre']: fila['total'] for fila in dashboard.context['sentimientos']},
+                {
+                    'Positivo': int(polaridad > 0),
+                    'Neutral': int(polaridad == 0),
+                    'Negativo': int(polaridad < 0),
+                },
+            )
+
+            detalle = self.client.get(reverse('noticia', args=[publicacion.pk]))
+            self.assertEqual(detalle.status_code, 200)
+            self.assertContains(detalle, fuente)
+            self.assertContains(detalle, publicacion.imagen_url)
+            self.assertContains(detalle, f'Comentario público sintético H45B {marcador}.')
+            for otro_marcador, otra_publicacion in por_marcador.items():
+                if otra_publicacion.pk != publicacion.pk:
+                    self.assertNotContains(
+                        detalle, f'Comentario público sintético H45B {otro_marcador}.',
+                    )
+            self.assertContains(detalle, reverse('publicaciones_etiqueta', args=[f'h45b-{marcador}']))
+            self.assertEqual(
+                set(detalle.context['categorias_noticia'])
+                - {'Salud'},
+                {categorias_por_fuente[fuente].nombre_categoria},
+            )
+            self.assertIn(
+                etiquetas_por_fuente[fuente].pk,
+                {rel.etiqueta_id for rel in detalle.context['etiquetas_noticia']},
+            )
+            votos_esperados = votos_por_marcador[marcador]
+            valoracion_usuario = votos_esperados[0]
+            self.assertEqual(detalle.context['valoracion_propia'], valoracion_usuario)
+            opciones = {
+                opcion['valor']: opcion['total']
+                for opcion in detalle.context['valoraciones_opciones']
+            }
+            self.assertEqual(opciones['positivo'], votos_esperados.count('positivo'))
+            self.assertEqual(opciones['negativo'], votos_esperados.count('negativo'))
+            self.assertEqual(opciones['neutral'], votos_esperados.count('neutral'))
+            self.assertEqual(detalle.context['valoraciones_total'], len(votos_esperados))
+            self.assertEqual(
+                {opcion['valor'] for opcion in detalle.context['valoraciones_opciones']
+                 if opcion['seleccionada']},
+                {valoracion_usuario},
+            )
+
+            etiqueta = self.client.get(
+                reverse('publicaciones_etiqueta', args=[f'h45b-{marcador}']),
+            )
+            self.assertEqual(etiqueta.context['pagina'].paginator.count, 1)
+            self.assertEqual({p.pk for p in etiqueta.context['pagina']}, {publicacion.pk})
+
+        categoria = self.client.get(reverse('publicaciones_categoria', args=['salud']))
+        self.assertEqual(categoria.context['pagina'].paginator.count, 5)
+        self.assertEqual({p.pk for p in categoria.context['pagina']}, ids_esperados)
+
+        tendencias = tendencias_destacadas()
+        self.assertEqual({item['publicacion'].pk for item in tendencias}, ids_esperados)
+        self.assertTrue(all(item['participaciones'] >= 2 for item in tendencias))
+        categorias = next(
+            grupo for grupo in noticias_destacadas_por_categoria()
+            if grupo['nombre'] == 'Salud'
+        )
+        self.assertEqual({p.pk for p in categorias['publicaciones']}, ids_esperados)
+        rankings = self.client.get(reverse('categorias'))
+        self.assertEqual(rankings.status_code, 200)
+        self.assertEqual(
+            {p.pk for p in rankings.context['ranking_positivo']}, ids_esperados,
+        )
+        self.assertEqual(
+            {p.pk for p in rankings.context['ranking_polemico']}, ids_esperados,
+        )
+        self.assertEqual(Publicacion.objects.count(), 5)
 
     def test_busqueda_pagina_dos_y_filtros_por_fuente(self):
         ahora = timezone.now()
