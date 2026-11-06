@@ -8,10 +8,11 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.models import (
-    Categoria, ClicPublicacion, Comentario, Publicacion, PublicacionGuardada,
-    Tema, TemaTrend,
+    Categoria, ClicPublicacion, Comentario, Etiqueta, Publicacion, PublicacionEtiqueta, PublicacionGuardada,
+    Tema, TemaTrend, ValoracionPublicacion,
 )
 from core.services.clasificacion import CATEGORIAS_PROYECTO, vincular_categoria
+from core.services.relevancia import ejemplos_rankings, tendencias_destacadas
 
 
 class CategoriasYPortadaTests(TestCase):
@@ -55,10 +56,16 @@ class CategoriasYPortadaTests(TestCase):
 
     def test_inicio_muestra_etiquetas_en_noticias_y_tendencias(self):
         etiqueta = self.local.etiquetas.select_related('etiqueta').first().etiqueta
+        segundo = get_user_model().objects.create_user('lector_etiquetas')
+        ValoracionPublicacion.objects.create(publicacion=self.local, usuario=self.lector, sentimiento='positivo')
+        ValoracionPublicacion.objects.create(publicacion=self.local, usuario=segundo, sentimiento='neutral')
         pagina = self.client.get(reverse('landing'))
         url = reverse('publicaciones_etiqueta', args=[etiqueta.slug])
         self.assertContains(pagina, url, count=2)
         self.assertContains(pagina, 'Etiquetas de Nueva escuela en Posadas', count=2)
+        html = pagina.content.decode()
+        tarjeta_tendencia = html.split('class="trend-card__body"', 1)[1].split('</div>', 1)[0]
+        self.assertLess(tarjeta_tendencia.index('trend-card__title'), tarjeta_tendencia.index('news-keywords--trend'))
 
     def test_inicio_limita_a_quince_por_categoria_y_elimina_duplicados(self):
         for i in range(20):
@@ -80,7 +87,7 @@ class CategoriasYPortadaTests(TestCase):
         self.assertTrue(all(noticia.titulo.startswith('Hospital') for noticia in grupos['Salud']))
         self.assertEqual(grupos['Policiales'], [])
 
-    def test_clic_unico_por_usuario_y_relacion_con_tendencia(self):
+    def test_clic_unico_por_usuario_sin_crear_tendencia(self):
         self.local.imagen_url = 'https://cdn.ejemplo.com/portada-regional.webp'
         self.local.save(update_fields=['imagen_url'])
         url = reverse('noticia', args=[self.local.pk])
@@ -91,12 +98,142 @@ class CategoriasYPortadaTests(TestCase):
         self.client.get(url)
         self.assertEqual(ClicPublicacion.objects.filter(publicacion=self.local).count(), 1)
         tema = Tema.objects.get(id_categoria=self.categoria)
-        self.assertTrue(TemaTrend.objects.filter(id_temas=tema, id_trends__relevancia='Lecturas').exists())
+        self.assertFalse(TemaTrend.objects.filter(id_temas=tema, id_trends__relevancia='Lecturas').exists())
         portada = self.client.get(reverse('landing'))
-        self.assertEqual(portada.context['tendencias_inicio'][0]['clics'], 1)
+        self.assertEqual(portada.context['tendencias_inicio'], [])
         self.assertContains(portada, 'https://cdn.ejemplo.com/portada-regional.webp')
-        self.assertContains(portada, 'trend-card--lead')
-        self.assertContains(self.client.get(reverse('categorias')), 'trend-card__media')
+        self.assertContains(portada, 'Todavía no hay suficiente actividad reciente')
+
+    def test_cobertura_reciente_agrupa_noticias_del_mismo_tema_sin_inventar_reacciones(self):
+        etiqueta, _ = Etiqueta.objects.get_or_create(slug='crecida', defaults={'nombre': 'crecida'})
+        noticias = [
+            Publicacion.objects.create(hash_origen='crecida-balsa', titulo='Crecida del río interrumpe la balsa',
+                                       contenido='El caudal subió.', departamento='capital'),
+            Publicacion.objects.create(hash_origen='crecida-cruce', titulo='Cerraron el cruce por la crecida del río',
+                                       contenido='El paso quedó cerrado.', departamento='capital'),
+        ]
+        for noticia in noticias:
+            if not noticia.etiquetas.filter(etiqueta=etiqueta).exists():
+                PublicacionEtiqueta.objects.create(publicacion=noticia, etiqueta=etiqueta,
+                                                   posicion=noticia.etiquetas.count() + 1)
+        tendencias = tendencias_destacadas()
+        self.assertEqual({item['publicacion'].pk for item in tendencias}, {noticia.pk for noticia in noticias})
+        self.assertTrue(all(item['cobertura'] and item['publicaciones_24h'] == 2 for item in tendencias))
+        self.assertContains(self.client.get(reverse('categorias')), 'crecida · 2 noticias en 24 h')
+
+    def test_tendencias_priorizan_velocidad_sobre_total_acumulado(self):
+        acumulada = Publicacion.objects.create(hash_origen='tendencia-acumulada', titulo='Debate acumulado', contenido='Texto')
+        acelerada = Publicacion.objects.create(hash_origen='tendencia-acelerada', titulo='Debate acelerado', contenido='Texto')
+        votos_antiguos = []
+        for indice in range(6):
+            usuario = get_user_model().objects.create_user(f'lector_velocidad_{indice}')
+            voto = ValoracionPublicacion.objects.create(publicacion=acumulada, usuario=usuario, sentimiento='neutral')
+            if indice < 4:
+                votos_antiguos.append(voto.pk)
+            if indice < 2:
+                ValoracionPublicacion.objects.create(publicacion=acelerada, usuario=usuario, sentimiento='positivo')
+        ValoracionPublicacion.objects.filter(pk__in=votos_antiguos).update(
+            fecha_actualizacion=timezone.now() - timedelta(days=2),
+        )
+        tendencias = tendencias_destacadas()
+        self.assertEqual([item['publicacion'].pk for item in tendencias[:2]], [acelerada.pk, acumulada.pk])
+
+    def test_tendencias_muestran_hasta_diez_noticias_en_ambas_vistas(self):
+        lectores = [get_user_model().objects.create_user(f'lector_tendencias_10_{indice}') for indice in range(2)]
+        for indice in range(12):
+            noticia = Publicacion.objects.create(
+                hash_origen=f'tendencia-10-{indice}', titulo=f'Debate regional número {indice} en Misiones', contenido='Texto',
+            )
+            for lector in lectores:
+                ValoracionPublicacion.objects.create(publicacion=noticia, usuario=lector, sentimiento='neutral')
+        for nombre, contexto in (('landing', 'tendencias_inicio'), ('categorias', 'tendencias')):
+            pagina = self.client.get(reverse(nombre))
+            ids = [item['publicacion'].pk for item in pagina.context[contexto]]
+            self.assertEqual(len(ids), 10)
+            self.assertEqual(len(set(ids)), 10)
+            self.assertContains(pagina, 'Hasta diez noticias de Tendencias; desplazá para ver más')
+
+    def test_tendencias_cuentan_valoraciones_y_comentaristas_publicados_sin_clics(self):
+        otra = Publicacion.objects.create(hash_origen='regional-interacciones', titulo='Debate regional en Misiones',
+                                          contenido='Texto', departamento='capital')
+        segundo = get_user_model().objects.create_user('lector_dos')
+        ValoracionPublicacion.objects.create(publicacion=otra, usuario=self.lector, sentimiento='negativo')
+        Comentario.objects.create(publicacion=otra, autor=segundo, texto='Opinión publicada', estado='publicado')
+        Comentario.objects.create(publicacion=otra, autor=segundo, texto='Otra opinión', estado='publicado')
+        Comentario.objects.create(publicacion=otra, autor=self.lector, texto='Sin publicar', estado='pendiente')
+        ClicPublicacion.objects.create(publicacion=self.local, usuario=segundo)
+        inicio = self.client.get(reverse('landing'))
+        categorias = self.client.get(reverse('categorias'))
+        for respuesta, clave in ((inicio, 'tendencias_inicio'), (categorias, 'tendencias')):
+            self.assertEqual(respuesta.context[clave][0]['publicacion'], otra)
+            self.assertEqual(respuesta.context[clave][0]['participaciones'], 2)
+            self.assertContains(respuesta, '2 participaciones')
+
+    def test_rankings_exigen_respuestas_reales_y_opiniones_divididas(self):
+        positiva = Publicacion.objects.create(hash_origen='ranking-positivo', titulo='Noticia valorada positivamente', contenido='Texto')
+        polemica = Publicacion.objects.create(hash_origen='ranking-polemico', titulo='Noticia con opiniones divididas', contenido='Texto')
+        for indice in range(5):
+            usuario = get_user_model().objects.create_user(f'votante_{indice}')
+            ValoracionPublicacion.objects.create(publicacion=positiva, usuario=usuario, sentimiento='positivo')
+            ValoracionPublicacion.objects.create(publicacion=polemica, usuario=usuario,
+                                                sentimiento='positivo' if indice < 2 else 'negativo')
+        pagina = self.client.get(reverse('categorias'))
+        self.assertEqual([p.pk for p in pagina.context['ranking_positivo']], [positiva.pk])
+        self.assertEqual([p.pk for p in pagina.context['ranking_polemico']], [polemica.pk])
+        self.assertContains(pagina, 'Lo más polémico')
+        self.assertContains(pagina, 'ranking-card__keywords', count=2)
+        for publicacion in (positiva, polemica):
+            etiqueta = publicacion.etiquetas.select_related('etiqueta').first().etiqueta
+            self.assertContains(pagina, reverse('publicaciones_etiqueta', args=[etiqueta.slug]))
+
+    def test_vistas_previas_eligen_noticias_por_contenido_y_no_solo_categoria(self):
+        logro = Publicacion.objects.create(
+            hash_origen='previa-logro', titulo='Voluntarios rescataron una especie y lograron recuperarla',
+            contenido='La comunidad celebró el rescate y colaboró con los voluntarios.',
+        )
+        debate = Publicacion.objects.create(
+            hash_origen='previa-debate', titulo='Vecinos rechazan una reforma y denuncian un conflicto',
+            contenido='La propuesta provocó críticas y abrió un debate entre dos sectores.',
+        )
+        Publicacion.objects.create(
+            hash_origen='previa-temporal', titulo='Temporal dejó dos familias evacuadas',
+            contenido='La tormenta afectó varias casas.',
+        )
+        Publicacion.objects.create(
+            hash_origen='previa-politica', titulo='La oposición logró un avance contra el gobierno',
+            contenido='El debate entre los partidos provocó críticas.',
+        )
+        Publicacion.objects.create(
+            hash_origen='previa-deportes', titulo='El equipo dio el golpe y logró su triunfo',
+            contenido='Ganó un partido de fútbol.',
+        )
+        positivas, polemicas = ejemplos_rankings()
+        self.assertEqual([p.pk for p in positivas], [logro.pk])
+        self.assertEqual([p.pk for p in polemicas], [debate.pk])
+
+    def test_cada_ranking_muestra_hasta_quince_noticias_sin_repetir_las_votadas(self):
+        for indice in range(16):
+            Publicacion.objects.create(
+                hash_origen=f'positiva-15-{indice}',
+                titulo=f'Voluntarios rescataron a una familia en el barrio {indice}',
+                contenido='La comunidad colaboró con los voluntarios.',
+            )
+            Publicacion.objects.create(
+                hash_origen=f'polemica-15-{indice}',
+                titulo=f'Vecinos rechazan una reforma en el barrio {indice}',
+                contenido='La medida despertó críticas y abrió un debate.',
+            )
+        votada = Publicacion.objects.get(hash_origen='positiva-15-0')
+        for indice in range(3):
+            usuario = get_user_model().objects.create_user(f'lector_ranking_15_{indice}')
+            ValoracionPublicacion.objects.create(publicacion=votada, usuario=usuario, sentimiento='positivo')
+        pagina = self.client.get(reverse('categorias'))
+        self.assertEqual(len(pagina.context['ranking_positivo']), 1)
+        self.assertEqual(len(pagina.context['ejemplos_positivos']), 14)
+        self.assertEqual(len(pagina.context['ejemplos_polemicos']), 15)
+        self.assertNotIn(votada.pk, [p.pk for p in pagina.context['ejemplos_positivos']])
+        self.assertContains(pagina, 'class="ranking-card"', count=30)
+        self.assertContains(pagina, 'class="ranking-list" tabindex="0"', count=2)
 
     def test_una_nueva_lectura_reactiva_una_noticia_antigua(self):
         self.client.force_login(self.lector)

@@ -1,4 +1,5 @@
 from collections import defaultdict
+import re
 
 from django import forms
 from django.contrib.auth.decorators import login_required
@@ -14,6 +15,12 @@ from .models import Categoria, Locacion, Publicacion
 from .services.indicadores import ANALISIS_VALIDO, publicaciones_con_estado, resumen_publicaciones
 
 
+def fuente_visible(nombre):
+    if re.fullmatch(r'El\s+Territorio(?:\s*\([^)]*\))?', nombre or '', re.I):
+        return 'El Territorio'
+    return nombre or 'Sin fuente'
+
+
 class FiltrosDashboard(forms.Form):
     desde = forms.DateField(required=False, label='Desde', widget=forms.DateInput(attrs={'type': 'date'}))
     hasta = forms.DateField(required=False, label='Hasta', widget=forms.DateInput(attrs={'type': 'date'}))
@@ -23,7 +30,10 @@ class FiltrosDashboard(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['fuente'].choices = [('', 'Todas las fuentes'), *[(s, s) for s in Publicacion.objects.order_by('fuente').values_list('fuente', flat=True).distinct() if s]]
+        nombres_fuente = Publicacion.objects.order_by().values_list('fuente', flat=True).distinct()
+        self.fuentes_territorio = [nombre for nombre in nombres_fuente if fuente_visible(nombre) == 'El Territorio']
+        fuentes = sorted({fuente_visible(nombre) for nombre in nombres_fuente if nombre}, key=str.casefold)
+        self.fields['fuente'].choices = [('', 'Todas las fuentes'), *[(nombre, nombre) for nombre in fuentes]]
 
     def clean(self):
         datos = super().clean()
@@ -60,7 +70,10 @@ def dashboard(request):
         if filtros['categoria']:
             publicaciones = publicaciones.filter(temas__id_categoria=filtros['categoria'])
         if filtros['fuente']:
-            publicaciones = publicaciones.filter(fuente=filtros['fuente'])
+            if filtros['fuente'] == 'El Territorio':
+                publicaciones = publicaciones.filter(fuente__in=form.fuentes_territorio)
+            else:
+                publicaciones = publicaciones.filter(fuente=filtros['fuente'])
         slug = filtros['departamento']
         if slug == 'sin-identificar':
             publicaciones = publicaciones.exclude(departamento__in=[d['slug'] for d in DEPARTAMENTOS]).exclude(locacion__location__in=[n for lista in ubicaciones.values() for n in lista])
@@ -74,7 +87,13 @@ def dashboard(request):
     resumen = resumen_publicaciones(base)
     categorias = list(base.order_by().values('temas__id_categoria__nombre_categoria').annotate(total=Count('pk', distinct=True)))
     categorias = barras([{'nombre': f['temas__id_categoria__nombre_categoria'] or 'Sin categoría asociada', 'total': f['total']} for f in categorias])
-    fuentes = barras([{'nombre': f['fuente'] or 'Sin fuente', 'total': f['total']} for f in base.order_by().values('fuente').annotate(total=Count('pk')).order_by('-total', 'fuente')])
+    totales_fuente = defaultdict(int)
+    for fila in base.order_by().values('fuente').annotate(total=Count('pk')):
+        totales_fuente[fuente_visible(fila['fuente'])] += fila['total']
+    fuentes = barras([
+        {'nombre': nombre, 'total': total}
+        for nombre, total in sorted(totales_fuente.items(), key=lambda item: (-item[1], item[0]))
+    ])
     por_departamento = defaultdict(set)
     conocidos = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
     for pk, slug in base.values_list('pk', 'departamento'):

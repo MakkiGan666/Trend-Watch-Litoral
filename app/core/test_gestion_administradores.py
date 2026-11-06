@@ -41,6 +41,22 @@ class GestionAdministradoresTests(TestCase):
                 self.assertEqual(self.client.post(self.url, self.datos).status_code, esperado)
         self.assertFalse(User.objects.filter(username='pepe').exists())
 
+    def test_listados_separan_usuarios_y_administradores_con_permisos(self):
+        for nombre in ('listado_administradores', 'listado_usuarios'):
+            url = reverse(nombre)
+            self.assertEqual(self.client.get(url).status_code, 302)
+            self.client.force_login(self.normal)
+            self.assertEqual(self.client.get(url).status_code, 403)
+            self.client.force_login(self.admin)
+            self.assertEqual(self.client.get(url).status_code, 200)
+            self.client.logout()
+        self.client.force_login(self.admin)
+        administradores = self.client.get(reverse('listado_administradores'))
+        usuarios = self.client.get(reverse('listado_usuarios'))
+        self.assertEqual({u.username for u in administradores.context['pagina']}, {'juan', 'root'})
+        self.assertEqual([u.username for u in usuarios.context['pagina']], ['lector'])
+        self.assertContains(administradores, 'aria-current="page"')
+
     @override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.PBKDF2PasswordHasher'])
     def test_creacion_permisos_hash_auditoria_y_tercer_administrador(self):
         self.client.force_login(self.admin)

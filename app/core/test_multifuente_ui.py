@@ -159,8 +159,9 @@ class RegresionesUIMultifuenteTests(TestCase):
         self.assertEqual(resumen_publicaciones(Publicacion.objects.all()), {
             'total': 24, 'analizadas': 2, 'pendientes': 22, 'inconsistentes': 0,
         })
+        self.assertEqual(self.territorio.fuente, 'El Territorio (Misiones)')
         for fuente, (nombre_almacenado, cantidad) in {
-            'El Territorio (Misiones)': ('El Territorio (Misiones)', 14),
+            'El Territorio': ('El Territorio', 14),
             'Noticias del 6': ('Noticias del 6', 10),
         }.items():
             dashboard = self.client.get(reverse('dashboard'), {'fuente': fuente})
@@ -172,10 +173,19 @@ class RegresionesUIMultifuenteTests(TestCase):
                 fila['nombre']: fila['total'] for fila in dashboard.context['fuentes']
             }
             self.assertEqual(fuentes_dashboard, {nombre_almacenado: cantidad})
+            if fuente == 'El Territorio':
+                self.assertEqual(self.territorio.fuente, 'El Territorio (Misiones)')
 
     def test_similares_de_medios_distintos_siguen_independientes_en_destacadas_y_tendencias(self):
+        segundo_usuario = get_user_model().objects.create_user(
+            username='lector_h44b_secundario', password='synthetic-only',
+        )
         for publicacion in (self.territorio, self.noticias_del_6):
             ClicPublicacion.objects.create(usuario=self.usuario, publicacion=publicacion)
+            for usuario in (self.usuario, segundo_usuario):
+                ValoracionPublicacion.objects.create(
+                    usuario=usuario, publicacion=publicacion, sentimiento='positivo',
+                )
         self.assertEqual(set(noticias_destacadas()), {self.territorio, self.noticias_del_6})
         por_categoria = next(
             grupo for grupo in noticias_destacadas_por_categoria()
@@ -217,3 +227,19 @@ class RegresionesUIMultifuenteTests(TestCase):
             self.assertNotContains(detalle, oculto)
             self.assertEqual(detalle.context['valoracion_propia'], sentimiento)
             self.assertEqual(detalle.context['valoraciones_total'], 1)
+
+    def test_ranking_valorado_mantiene_publicaciones_de_ambas_fuentes(self):
+        for indice in range(3):
+            lector = get_user_model().objects.create_user(
+                username=f'lector_h44d_ranking_{indice}', password='synthetic-only',
+            )
+            for publicacion in (self.territorio, self.noticias_del_6):
+                ValoracionPublicacion.objects.create(
+                    usuario=lector, publicacion=publicacion, sentimiento='positivo',
+                )
+        pagina = self.client.get(reverse('categorias'))
+        self.assertEqual(pagina.status_code, 200)
+        self.assertEqual(
+            {p.pk for p in pagina.context['ranking_positivo']},
+            {self.territorio.pk, self.noticias_del_6.pk},
+        )
