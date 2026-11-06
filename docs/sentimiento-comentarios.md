@@ -46,6 +46,9 @@ la necesidad.
   Si `usar_ia=True` falla, cae automáticamente al método léxico y lo registra
   como `metodo='lexicon'` para que la UI no afirme algo falso.
 - `calcular_texto_hash(texto)`: SHA-256 del texto normalizado (strip).
+- `sentimiento_vigente(comentario)`: única definición de vigencia (estado
+  `procesado` y hash igual al texto actual). La usan el análisis, el registro
+  de errores y `contexto_comentarios`; el modelo `Comentario` no se modifica.
 - `candidatos_sin_analisis_validos()` y `candidatos_con_hash_desactualizado()`:
   iteradores para procesamiento por lote.
 
@@ -67,7 +70,10 @@ python app/manage.py analizar_sentimiento_comentarios [--limite N] [--reanalizar
   el lote.
 - `--dry-run` imprime qué se procesaría sin escribir en la base.
 - Un error inesperado por comentario queda registrado con `estado='error'` y
-  un `codigo_error`; el lote continúa.
+  un `codigo_error`; el lote continúa. Si el comentario ya tenía un análisis
+  vigente (por ejemplo, con `--reanalizar`), ese análisis se conserva sin
+  cambios y el comando lo informa por stderr. Si el análisis previo estaba
+  desactualizado, se registra el error porque no hay resultado vigente.
 
 ### Reintento de errores
 
@@ -106,7 +112,9 @@ cada comentario cuando hay un análisis en estado `procesado`. El badge:
 
 Las respuestas de Ollama deben tener un objeto JSON exterior con `response`
 de tipo texto, que contenga el JSON de la predicción. Envoltorios inválidos,
-errores HTTP, timeouts y predicciones inválidas activan el fallback léxico.
+errores HTTP, timeouts, `OLLAMA_BASE_URL` mal formada (`httpx.InvalidURL`),
+JSON anidado en exceso (`RecursionError`), enteros que no caben en un float
+(`OverflowError`) y predicciones inválidas activan el fallback léxico.
 
 ## Separación respecto de otras fuentes
 

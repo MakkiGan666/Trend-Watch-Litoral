@@ -10,17 +10,24 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import ComentarioForm
 from .models import Comentario, Publicacion
+from .services.sentimiento_comentarios import sentimiento_vigente
 
 
 def contexto_comentarios(request, publicacion):
     # `select_related('sentimiento')` evita una consulta extra por comentario al
     # pintar la etiqueta de análisis automático en la plantilla.
+    # Moderación: solo se muestran comentarios publicados, más los propios del autor.
     visibles = Q(estado=Comentario.Estado.PUBLICADO)
     if request.user.is_authenticated:
         visibles |= Q(autor=request.user)
-    pagina = Paginator(publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento'), 10).get_page(
-        request.GET.get('pagina_comentarios'),
-    )
+    pagina = Paginator(
+        publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento'),
+        10,
+    ).get_page(request.GET.get('pagina_comentarios'))
+    # Page conserva la lista ya evaluada, así la plantilla recibe estas instancias.
+    # Sin este atributo la plantilla no muestra etiqueta (falla cerrada).
+    for comentario in pagina:
+        comentario.sentimiento_vigente = sentimiento_vigente(comentario)
     return {
         'comentarios_pagina': pagina,
         'comentario_form': ComentarioForm(),
