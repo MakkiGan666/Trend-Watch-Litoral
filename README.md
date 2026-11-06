@@ -338,9 +338,15 @@ automático por comentario, almacenado en `SentimientoComentario` y
 procesado de forma independiente a las peticiones HTTP:
 
 ```
-python app/manage.py migrate core 0011
+python app/manage.py migrate core 0012
 python app/manage.py analizar_sentimiento_comentarios --limite 200
 ```
+
+Al publicar o editar un comentario, el análisis (sentimiento y una de las 12
+categorías del proyecto) se dispara solo en segundo plano, sin demorar la
+respuesta; `SENTIMIENTO_COMENTARIOS_AUTOMATICO=0` lo desactiva y
+`SENTIMIENTO_COMENTARIOS_METODO=lexicon` evita llamar a Ollama. El comando
+anterior es el respaldo para recuperar pendientes.
 
 El flag `--metodo ia` usa Ollama local (`OLLAMA_BASE_URL`, `OLLAMA_MODELO_CHAT`,
 `OLLAMA_TIMEOUT`); si el servicio no responde, cae al método léxico. El

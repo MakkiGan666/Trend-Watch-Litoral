@@ -17,10 +17,11 @@ para no presentar la predicción como una verdad objetiva.
 | `polaridad`          | Float en `[-1, 1]`. `NULL` si el estado es `error`.                |
 | `confianza`          | Float en `[0, 1]`. `NULL` si el estado es `error`.                 |
 | `metodo`             | `lexicon` o `ia`.                                                  |
-| `modelo`             | Identificador versionado (`lexicon_v1`, `ollama:llama3.1:latest`). |
+| `modelo`             | Identificador versionado (`lexicon_v2`, `ollama:llama3.1:latest`). |
 | `texto_hash`         | SHA-256 del texto analizado; cambia si el comentario se edita.     |
+| `categoria`          | FK nullable a `Categoria` (migración `0012`): una de las 12 categorías del proyecto, la misma tabla que usan las noticias. `NULL` si no se pudo determinar o en error. |
 | `estado`             | `procesado` o `error`.                                             |
-| `codigo_error`       | Código corto que explica un fallo, por ejemplo `ollama_sin_respuesta`. |
+| `codigo_error`       | En `error`, el fallo (p. ej. `excepcion_inesperada`). En un resultado `procesado` con `metodo=lexicon`, `ia:<código>` indica que se pidió IA y falló (p. ej. `ia:ollama_sin_respuesta`). |
 | `fecha_analisis`     | Fecha del primer análisis.                                         |
 | `fecha_actualizacion`| Fecha del último registro.                                         |
 
@@ -37,22 +38,62 @@ la necesidad.
 `core/services/sentimiento_comentarios.py` expone:
 
 - `predecir_lexicon(texto)`: usa `analyze_sentiment_lexicon` y
-  `compute_probabilistic_sentiment` existentes. Determinista, sin red.
+  `compute_probabilistic_sentiment` existentes. Determinista, sin red. La
+  categoría sale de las reglas de las noticias (`categoria_con_confianza`) y
+  sólo se asigna si son seguras; si no, queda `NULL` (no se usa la categoría
+  por defecto).
 - `predecir_ollama(texto)`: pide a Ollama (`/api/generate`, `format=json`) un
-  JSON con `polaridad` y `confianza`. Valida tipo, rango y claves. Si falla
-  por red, timeout o formato, lanza `SentimientoNoDisponible`.
+  JSON con `polaridad`, `confianza` y `categoria`. El prompt enumera las 12
+  categorías de `CATEGORIAS_PROYECTO`; se aceptan diferencias de mayúsculas y
+  tildes, `null` o ausencia (sin categoría). Una categoría fuera de la lista
+  invalida la respuesta (`categoria_invalida`). Valida tipo, rango y claves;
+  si falla por red, timeout o formato, lanza `SentimientoNoDisponible`.
 - `analizar_comentario(comentario, usar_ia=False, forzar=False)`: orquesta la
   predicción, persiste y responde `('creado' | 'actualizado' | 'omitido')`.
-  Si `usar_ia=True` falla, cae automáticamente al método léxico y lo registra
-  como `metodo='lexicon'` para que la UI no afirme algo falso.
+  Si `usar_ia=True` falla, cae automáticamente al método léxico, lo registra
+  como `metodo='lexicon'` para que la UI no afirme algo falso y guarda
+  `codigo_error='ia:<código>'`. Un resultado así se reintenta con IA la
+  próxima vez que se pida IA, aunque el texto no haya cambiado.
+- Si la categoría elegida todavía no existe en la tabla `Categorias` (por
+  ejemplo "Tecnología" antes de ingerir una noticia de esa categoría), se crea
+  igual que en la ingesta de noticias. Nunca se crean nombres fuera de la lista.
 - `calcular_texto_hash(texto)`: SHA-256 del texto normalizado (strip).
+- `sentimiento_vigente(comentario)`: única definición de vigencia (estado
+  `procesado` y hash igual al texto actual). La usan el análisis, el registro
+  de errores y `contexto_comentarios`; el modelo `Comentario` no se modifica.
 - `candidatos_sin_analisis_validos()` y `candidatos_con_hash_desactualizado()`:
   iteradores para procesamiento por lote.
 
 El servicio nunca se invoca dentro del flujo HTTP de creación o edición de
 comentarios: el usuario publica el comentario sin esperar al análisis.
 
-## Comando de management
+## Análisis automático en segundo plano
+
+`core/services/analisis_automatico.py`. Al publicar o editar un comentario,
+la vista registra `programar_analisis(pk)` con `transaction.on_commit`: recién
+después del commit se encola el id y la respuesta vuelve enseguida.
+
+- Un único hilo trabajador por proceso (daemon) consume la cola y analiza de
+  a un comentario, así las llamadas a Ollama no se superponen.
+- Un comentario no se encola dos veces mientras espera. El trabajador relee
+  el comentario de la base: una edición posterior se analiza con el texto
+  actual y un reproceso sin cambios se omite por hash.
+- Cualquier excepción queda en el log; si no hay un análisis vigente se
+  registra `estado='error'`. Un error al encolar nunca afecta la publicación.
+- La cola vive en memoria: si el servidor se reinicia antes de procesar, el
+  comentario queda pendiente y lo recupera el comando de respaldo.
+- La interfaz muestra "Análisis automático pendiente" mientras no hay
+  resultado vigente; la insignia aparece al recargar.
+
+Variables de entorno (opcionales):
+
+- `SENTIMIENTO_COMENTARIOS_AUTOMATICO`: `0` lo desactiva (por defecto activo).
+- `SENTIMIENTO_COMENTARIOS_METODO`: `ia` (por defecto) o `lexicon`.
+
+Con varios procesos (por ejemplo gunicorn con dos workers) cada proceso tiene
+su propia cola y su propio hilo.
+
+## Comando de management (respaldo)
 
 ```
 python app/manage.py analizar_sentimiento_comentarios [--limite N] [--reanalizar] [--metodo lexicon|ia] [--dry-run]
@@ -64,10 +105,17 @@ python app/manage.py analizar_sentimiento_comentarios [--limite N] [--reanalizar
   el método). Recorre cada comentario una sola vez por corrida, incluidos
   nuevos, errores y editados; `--limite` cuenta comentarios únicos.
 - `--metodo ia` intenta usar Ollama; si falla, cae al léxico sin interrumpir
-  el lote.
+  el lote. Además incluye los comentarios que quedaron con léxico porque la IA
+  había fallado (`codigo_error='ia:...'`), para recuperarlos cuando Ollama
+  vuelve a estar disponible. Cada comentario se procesa una sola vez por corrida.
+- Los análisis anteriores a la migración `0012` no tienen categoría; para
+  completarla, correr `--reanalizar`.
 - `--dry-run` imprime qué se procesaría sin escribir en la base.
 - Un error inesperado por comentario queda registrado con `estado='error'` y
-  un `codigo_error`; el lote continúa.
+  un `codigo_error`; el lote continúa. Si el comentario ya tenía un análisis
+  vigente (por ejemplo, con `--reanalizar`), ese análisis se conserva sin
+  cambios y el comando lo informa por stderr. Si el análisis previo estaba
+  desactualizado, se registra el error porque no hay resultado vigente.
 
 ### Reintento de errores
 
@@ -106,7 +154,9 @@ cada comentario cuando hay un análisis en estado `procesado`. El badge:
 
 Las respuestas de Ollama deben tener un objeto JSON exterior con `response`
 de tipo texto, que contenga el JSON de la predicción. Envoltorios inválidos,
-errores HTTP, timeouts y predicciones inválidas activan el fallback léxico.
+errores HTTP, timeouts, `OLLAMA_BASE_URL` mal formada (`httpx.InvalidURL`),
+JSON anidado en exceso (`RecursionError`), enteros que no caben en un float
+(`OverflowError`) y predicciones inválidas activan el fallback léxico.
 
 ## Separación respecto de otras fuentes
 

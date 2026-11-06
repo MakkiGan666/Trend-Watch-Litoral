@@ -343,6 +343,7 @@ class GeminiMultifuenteTests(TransactionTestCase):
 
 
 @skipUnless(connection.vendor == 'postgresql', 'Requiere PostgreSQL efímero')
+@override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(FUENTES_RSS[0].identificador,))
 class ConcurrenciaGeminiMultifuenteTests(TransactionTestCase):
     def setUp(self):
         f = FUENTES_RSS[0]

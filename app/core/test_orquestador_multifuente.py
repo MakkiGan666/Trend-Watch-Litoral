@@ -113,7 +113,8 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
 
     def test_integra_transporte_lector_html_persistencia_y_cola_sin_gemini(self):
         self.feed(self.fuente, ['https://misionesonline.net/nota'])
-        resultado = self.ejecutar()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.fuente.identificador,)):
+            resultado = self.ejecutar()
         self.assertEqual(resultado['errores'], [])
         self.assertEqual((resultado['descargadas'], resultado['validas'], resultado['nuevas']), (2, 1, 1))
         self.assertEqual(resultado['pendientes_ia'], 1)
@@ -224,8 +225,13 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         cliente = SimpleNamespace(client=sdk, types=types, model_name='modelo-simulado')
         self.gemini_prohibido.side_effect = lambda recibo, **kwargs: self.procesar_original(
             recibo, pausa_segundos=0, **kwargs)
-        resultado = servicio.ejecutar_ingesta_multifuente([self.fuente.identificador, self.otra.identificador],
-                                                        procesar_ia=True, limite_ia=1, cliente_ia=cliente)
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(
+            self.fuente.identificador, self.otra.identificador,
+        )):
+            resultado = servicio.ejecutar_ingesta_multifuente(
+                [self.fuente.identificador, self.otra.identificador],
+                procesar_ia=True, limite_ia=1, cliente_ia=cliente,
+            )
         self.assertEqual(resultado['errores'], [])
         self.assertEqual(sdk.models.generate_content.call_count, 1)
         self.assertEqual(resultado['pendientes_ia'], 1)
@@ -313,7 +319,8 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         cliente = SimpleNamespace(client=sdk, types=types, model_name='modelo-simulado')
         self.gemini_prohibido.side_effect = lambda recibo, **kwargs: self.procesar_original(
             recibo, pausa_segundos=0, **kwargs)
-        resultado = self.ejecutar(procesar_ia=True, cliente_ia=cliente)
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.fuente.identificador,)):
+            resultado = self.ejecutar(procesar_ia=True, cliente_ia=cliente)
         self.assertEqual(resultado['nuevas'], 2)
         self.assertEqual(resultado['estado'], 'PARCIAL')
         self.assertEqual(Publicacion.objects.count(), 2)
@@ -322,6 +329,9 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
 
     def test_con_ia_recupera_cola_conocida_sin_redescargar_html(self):
         self.feed(self.fuente, ['https://misionesonline.net/nota'])
+        autorizacion = override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.fuente.identificador,))
+        autorizacion.enable()
+        self.addCleanup(autorizacion.disable)
         self.ejecutar()
         sdk = Mock()
         sdk.models.generate_content.return_value.text = json.dumps(dict(polaridad=0.4, confianza=0.8, localidades=[]))
@@ -339,6 +349,9 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         with ExitStack() as contexto:
             for modulo in (fuentes_rss, red, extractor_articulos, persistencia_multifuente, gemini_multifuente):
                 contexto.enter_context(patch.object(modulo, 'FUENTES_RSS', habilitadas))
+            contexto.enter_context(override_settings(
+                GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=tuple(f.identificador for f in habilitadas),
+            ))
             for fuente in habilitadas:
                 self.feed(fuente, ['https://' + fuente.hosts_permitidos[0] + '/nota'])
             resultado = servicio.ejecutar_ingesta_multifuente(
@@ -487,9 +500,13 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         cliente = SimpleNamespace(client=sdk, types=types, model_name='modelo-simulado')
         self.gemini_prohibido.side_effect = lambda recibo, **kwargs: self.procesar_original(
             recibo, pausa_segundos=0, **kwargs)
-        with patch.object(servicio.time, 'sleep') as pausa:
-            resultado = servicio.ejecutar_ingesta_multifuente([self.fuente.identificador, self.otra.identificador],
-                                                            procesar_ia=True, cliente_ia=cliente)
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(
+            self.fuente.identificador, self.otra.identificador,
+        )), patch.object(servicio.time, 'sleep') as pausa:
+            resultado = servicio.ejecutar_ingesta_multifuente(
+                [self.fuente.identificador, self.otra.identificador],
+                procesar_ia=True, cliente_ia=cliente,
+            )
         self.assertEqual(resultado['errores'], [])
         self.assertEqual(sdk.models.generate_content.call_count, 2)
         pausa.assert_called_once_with(12)
