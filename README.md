@@ -193,6 +193,38 @@ fallan; ejecutar la suite completa contra PostgreSQL
 (`docker compose exec web python manage.py test core`).
 No utilizar la base compartida para pruebas que escriban datos.
 
+### Datos sintéticos para demostración
+
+En una base **local de desarrollo** con las migraciones aplicadas, el comando
+`simular_datos_demo` crea cuentas inactivas `demo_sim_`, votos y clics, y
+comentarios breves basados en el titular de cada publicación. Los comentarios
+llevan el prefijo `[Simulación]`; las cuentas no pueden iniciar sesión. No usa
+Gemini, no modifica usuarios existentes fuera del prefijo reservado y es
+idempotente: repetirlo completa interacciones faltantes hasta los objetivos.
+No requiere migraciones y nunca se ejecuta automáticamente al iniciar Django.
+
+Primero confirmar que `DB_HOST` y `DB_NAME` apuntan a la base local propia; la
+previsualización no escribe. Para aplicar cambios se requiere `DEBUG=True` y
+`--aplicar`. Por defecto usa hasta 10.000 cuentas, cuatro votos, un comentario
+y seis clics por publicación:
+
+```bash
+docker compose exec web python manage.py simular_datos_demo
+docker compose exec web python manage.py simular_datos_demo --aplicar
+```
+
+También se puede usar localmente con `python app/manage.py` en lugar de
+`docker compose exec web python manage.py`. Para una prueba pequeña, limitar el
+lote, por ejemplo `--limite 20 --usuarios 100`. Nunca ejecutar `--aplicar` contra
+producción ni contra una base compartida. Los datos se generan sobre las noticias
+que ya existen en cada base, así que no hace falta importar la base del laboratorio.
+
+El dashboard de participación es de solo lectura y sigue limitado a
+superusuarios. Sus filtros se aplican a las publicaciones; muestra clics,
+valoraciones por sentimiento y estados de comentarios. Esas métricas agregan
+interacciones sintéticas y no sintéticas, por lo que deben interpretarse como
+datos de demostración cuando se haya ejecutado este comando.
+
 ## Rutas
 
 | URL            | Vista        |
