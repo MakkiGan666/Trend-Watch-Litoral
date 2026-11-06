@@ -16,6 +16,36 @@ from core.services.fuentes_rss import FUENTES_RSS
 from core.services.lector_rss import NoticiaRSS, _fecha, normalizar_url
 
 
+class ErrorExtraccion(ValueError):
+    """Fallo de extracción con código y métricas sanitizadas, compatible con ValueError."""
+
+    def __init__(self, codigo, mensaje, metricas=None):
+        super().__init__(mensaje)
+        self.codigo = codigo
+        self.metricas = dict(metricas or {})
+
+
+def _error(codigo, mensaje, metricas):
+    return ErrorExtraccion(codigo, mensaje, metricas)
+
+
+def _metricas_iniciales(noticia):
+    try:
+        hostname = urlsplit(noticia.url).hostname
+    except (AttributeError, TypeError, ValueError):
+        hostname = None
+    return {
+        'hostname': hostname,
+        'charset': None,
+        'nodos_html': 0,
+        'scripts_jsonld': 0,
+        'candidatos_jsonld': 0,
+        'jsonld_invalidos': 0,
+        'canonicas_invalidas': 0,
+        'longitudes_contenedores': [],
+    }
+
+
 @dataclass(frozen=True)
 class ArticuloExtraido:
     fuente: str
@@ -210,15 +240,18 @@ def _identidades_json(articulo):
             yield valor.get('@id') if isinstance(valor, dict) else valor
 
 
-def _rechazar_host_ajeno(identidad, base, fuente):
+def _rechazar_host_ajeno(identidad, base, fuente, metricas, *, canonical=False):
     if not isinstance(identidad, str):
         return
     try:
         host = urlsplit(urljoin(base, identidad)).hostname
     except ValueError:
         return
+    if host:
+        metricas['hostname_declarado'] = host
     if host and host not in fuente.hosts_permitidos:
-        raise ValueError('El HTML declara pertenecer a otro medio.')
+        codigo = 'URL_CANONICA' if canonical else 'IDENTIDAD_EDITORIAL'
+        raise _error(codigo, 'El HTML declara un host no autorizado.', metricas)
 
 
 def _imagen_json(valor):
@@ -249,22 +282,38 @@ def _validar_noticia(noticia, fuente):
         raise ValueError('Fecha RSS inválida.')
 
 
-def analizar_articulo(datos, noticia, fuente):
+def analizar_articulo(datos, noticia, fuente, *, _metricas=None):
     """Analiza HTML acotado. Una identidad editorial ajena rechaza la página."""
-    _validar_noticia(noticia, fuente)
-    if not isinstance(datos, bytes) or len(datos) > fuente.max_bytes:
-        raise ValueError('HTML inválido o demasiado grande.')
+    metricas = _metricas if _metricas is not None else _metricas_iniciales(noticia)
+    try:
+        _validar_noticia(noticia, fuente)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise _error('IDENTIDAD_EDITORIAL', 'Noticia o fuente incompatible.', metricas) from exc
+    if not isinstance(datos, bytes):
+        raise _error('HTML_INVALIDO', 'HTML inválido.', metricas)
+    if len(datos) > fuente.max_bytes:
+        raise _error('LIMITE_PROCESAMIENTO', 'HTML supera el límite de tamaño.', metricas)
     documento = _Documento()
     # HTMLParser no infiere codificaciones; UTF-8 y charset declarado son comunes.
     charset = re.search(br'<meta\b[^>]*charset\s*=\s*["\x27]?\s*([a-zA-Z0-9_-]+)', datos[:8192], re.I)
     codificacion = charset[1].decode('ascii') if charset else 'utf-8'
+    metricas['charset'] = codificacion.lower()
     if codificacion.lower() not in ('utf-8', 'utf8', 'iso-8859-1', 'latin-1', 'windows-1252'):
-        raise ValueError('Codificación HTML no admitida.')
+        raise _error('CODIFICACION', 'Codificación HTML no admitida.', metricas)
     try:
         documento.feed(datos.decode(codificacion))
         documento.close()
-    except UnicodeError as exc:
-        raise ValueError('Codificación HTML inválida.') from exc
+    except (UnicodeError, LookupError) as exc:
+        raise _error('CODIFICACION', 'Codificación HTML inválida.', metricas) from exc
+    except ValueError as exc:
+        metricas['nodos_html'] = len(documento.nodos)
+        metricas['scripts_jsonld'] = sum(
+            nodo.tag == 'script' and (nodo.attrs.get('type') or '').lower() == 'application/ld+json'
+            for nodo in documento.nodos
+        )
+        codigo = 'LIMITE_PROCESAMIENTO' if 'complejo' in str(exc).lower() else 'HTML_INVALIDO'
+        raise _error(codigo, 'No se pudo procesar el HTML.', metricas) from exc
+    metricas['nodos_html'] = len(documento.nodos)
     metadatos = {}
     canonicas = []
     for nodo in documento.nodos:
@@ -275,28 +324,20 @@ def analizar_articulo(datos, noticia, fuente):
         if nodo.tag == 'link' and 'canonical' in (nodo.attrs.get('rel') or '').lower().split():
             canonicas.append(nodo.attrs.get('href'))
     identidades = canonicas + metadatos.get('og:url', [])
-    for identidad in identidades:
-        _rechazar_host_ajeno(identidad, noticia.url, fuente)
+    metricas['canonicas_invalidas'] = sum(
+        bool(v) and not _url(v, noticia.url, fuente) for v in canonicas
+    )
     url = next((u for v in identidades if (u := _url(v, noticia.url, fuente))), noticia.url)
     articulos = _json_articulos(documento)
-    elegibles = []
-    for articulo in articulos:
-        identidades_articulo = list(_identidades_json(articulo))
-        for identidad in identidades_articulo:
-            _rechazar_host_ajeno(identidad, noticia.url, fuente)
-        if any(_url(identidad, noticia.url, fuente) not in (
-            normalizar_url(noticia.url, fuente), normalizar_url(url, fuente)
-        ) for identidad in identidades_articulo):
-            continue
-        elegibles.append(articulo)
-    articulo = elegibles[0] if len(elegibles) == 1 else {}
-    if articulos and not elegibles:
-        raise ValueError('JSON-LD sin artículo asociado a la URL RSS.')
-
-    def meta(clave):
-        return metadatos.get(clave, [])
-
-    candidatos_titulo = [articulo.get('headline'), *meta('og:title')]
+    metricas['scripts_jsonld'] = sum(
+        nodo.tag == 'script' and (nodo.attrs.get('type') or '').lower() == 'application/ld+json'
+        for nodo in documento.nodos
+    )
+    metricas['candidatos_jsonld'] = len(articulos)
+    metricas['jsonld_invalidos'] = sum(
+        nodo.tag == 'script' and (nodo.attrs.get('type') or '').lower() == 'application/ld+json'
+        and not _json_script_valido(nodo) for nodo in documento.nodos
+    )
     visibles = list(_recorrer(documento.raiz))
     contenedores = [n for n in visibles if not _ruido(n) and (
         n.attrs.get('itemprop') == 'articleBody'
@@ -307,6 +348,34 @@ def analizar_articulo(datos, noticia, fuente):
     if not contenedores:
         principales = [n for n in visibles if n.tag == 'main' and not _ruido(n)]
         contenedores = principales if len(principales) == 1 else []
+    metricas['longitudes_contenedores'] = [
+        {'indice': indice, 'elemento': nodo.tag,
+         'caracteres': len(texto := _parrafos(nodo)),
+         'palabras': len(texto.split())}
+        for indice, nodo in enumerate(contenedores[:50])
+    ]
+    for identidad in canonicas:
+        _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas, canonical=True)
+    for identidad in metadatos.get('og:url', []):
+        _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas)
+    elegibles = []
+    for articulo in articulos:
+        identidades_articulo = list(_identidades_json(articulo))
+        for identidad in identidades_articulo:
+            _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas)
+        if any(_url(identidad, noticia.url, fuente) not in (
+            normalizar_url(noticia.url, fuente), normalizar_url(url, fuente)
+        ) for identidad in identidades_articulo):
+            continue
+        elegibles.append(articulo)
+    articulo = elegibles[0] if len(elegibles) == 1 else {}
+    if articulos and not elegibles:
+        raise _error('JSONLD', 'JSON-LD no contiene un artículo asociado.', metricas)
+
+    def meta(clave):
+        return metadatos.get(clave, [])
+
+    candidatos_titulo = [articulo.get('headline'), *meta('og:title')]
     contenedor = max(contenedores, key=lambda n: len(_parrafos(n)), default=None)
     if contenedor is not None:
         entorno = next((n for n in visibles if n.tag == 'article' and (
@@ -333,6 +402,35 @@ def analizar_articulo(datos, noticia, fuente):
     suficiente = _suficiente(cuerpo)
     return ArticuloExtraido(fuente.nombre, fuente.identificador, titulo, cuerpo, imagen,
                            fecha, url, suficiente)
+
+
+def _json_script_valido(nodo):
+    try:
+        json.loads(_texto(nodo, limpio=False))
+        return True
+    except (ValueError, RecursionError):
+        return False
+
+
+def diagnosticar_articulo(datos, noticia, fuente):
+    """Devuelve sólo métricas y banderas; nunca incluye título, cuerpo ni URL."""
+    metricas = _metricas_iniciales(noticia)
+    try:
+        articulo = analizar_articulo(datos, noticia, fuente, _metricas=metricas)
+    except ErrorExtraccion as exc:
+        return {'estado': 'error', 'codigo': exc.codigo, 'metricas': exc.metricas}
+    return {
+        'estado': 'analizado', 'codigo': None,
+        'metricas': metricas,
+        'titulo_presente': bool(articulo.titulo),
+        'fecha_presente': articulo.fecha is not None,
+        'cuerpo_caracteres': len(articulo.cuerpo),
+        'cuerpo_palabras': len(articulo.cuerpo.split()),
+        'suficiente': articulo.suficiente,
+        'imagen_presente': bool(articulo.imagen_principal),
+        'canonica_valida': True,
+        'identidad_coincidente': articulo.fuente_id == fuente.identificador,
+    }
 
 
 def extraer_articulo(noticia, fuente=None):

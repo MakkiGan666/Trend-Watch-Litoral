@@ -253,3 +253,54 @@ class ExtractorArticulosTests(SimpleTestCase):
             self.assertEqual(cuerpo.count(frase), 1)
         datos = b'<html><article><blockquote>Cita directa.</blockquote><blockquote><blockquote><p>Cita anidada.</p></blockquote></blockquote></article></html>'
         self.assertEqual(self.analizar(datos).cuerpo, 'Cita directa.\n\nCita anidada.')
+
+    def test_errores_estructurados_conservan_valueerror(self):
+        import json
+
+        casos = (
+            ('IDENTIDAD_EDITORIAL', b'<meta property="og:url" content="https://primeraedicion.com.ar/a">'),
+            ('URL_CANONICA', b'<link rel="canonical" href="https://primeraedicion.com.ar/a">'),
+            ('JSONLD', ('<script type="application/ld+json">' + json.dumps({
+                '@type': 'NewsArticle', 'url': 'https://misionesonline.net/otra',
+                'articleBody': 'Texto que no coincide con la URL RSS.',
+            }) + '</script>').encode()),
+            ('CODIFICACION', b'<meta charset="utf-7">'),
+            ('CODIFICACION', b'<meta charset="utf-8"><p>\xff</p>'),
+            ('LIMITE_PROCESAMIENTO', b'<br>' * 30001),
+        )
+        for codigo, etiqueta in casos:
+            with self.subTest(codigo=codigo), self.assertRaises(ValueError) as contexto:
+                self.analizar(b'<html><head>' + etiqueta + b'</head><body><article><p>Texto de prueba.</p></article></body></html>')
+            self.assertEqual(contexto.exception.codigo, codigo)
+            self.assertIsInstance(contexto.exception.metricas, dict)
+        with self.assertRaises(ValueError) as contexto:
+            extractor.analizar_articulo('no son bytes', self.noticia, self.fuente)
+        self.assertEqual(contexto.exception.codigo, 'HTML_INVALIDO')
+        with self.assertRaises(ValueError) as contexto:
+            extractor.analizar_articulo(b'x' * (self.fuente.max_bytes + 1), self.noticia, self.fuente)
+        self.assertEqual(contexto.exception.codigo, 'LIMITE_PROCESAMIENTO')
+
+    def test_diagnostico_es_resumido_y_no_incluye_contenido(self):
+        html = (b'<html><meta charset="utf-8"><script type="application/ld+json">{roto}</script>'
+                b'<article><div class="entry-content"><p>Contenido de prueba que no debe aparecer en el resumen.</p>'
+                b'<p>Segundo bloque de prueba para medir longitud sin conservar sus palabras.</p></div></article></html>')
+        diagnostico = extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+        self.assertEqual(diagnostico['estado'], 'analizado')
+        metricas = diagnostico['metricas']
+        self.assertEqual(metricas['hostname'], 'misionesonline.net')
+        self.assertEqual(metricas['charset'], 'utf-8')
+        self.assertGreater(metricas['nodos_html'], 0)
+        self.assertEqual(metricas['scripts_jsonld'], 1)
+        self.assertEqual(metricas['candidatos_jsonld'], 0)
+        self.assertEqual(metricas['jsonld_invalidos'], 1)
+        self.assertGreater(metricas['longitudes_contenedores'][0]['caracteres'], 0)
+        resumen = repr(diagnostico)
+        for dato in ('Contenido de prueba', 'Segundo bloque', self.noticia.url, self.noticia.titulo):
+            self.assertNotIn(dato, resumen)
+
+    def test_canonica_insegura_se_mide_sin_cambiar_el_fallback(self):
+        articulo = extractor.analizar_articulo(
+            b'<link rel="canonical" href="javascript:alert(1)"><article><p>Texto breve.</p></article>',
+            self.noticia, self.fuente,
+        )
+        self.assertEqual(articulo.url_canonica, self.noticia.url)
