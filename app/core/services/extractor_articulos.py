@@ -9,24 +9,25 @@ from datetime import datetime
 from html.parser import HTMLParser
 import json
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote_plus, urljoin, urlsplit
 
 from core.services import descarga_segura
 from core.services.fuentes_rss import FUENTES_RSS
-from core.services.lector_rss import NoticiaRSS, _fecha, normalizar_url
+from core.services.lector_rss import NoticiaRSS, SEGUIMIENTO, _fecha, normalizar_url
 
 
 class ErrorExtraccion(ValueError):
     """Fallo de extracción con código y métricas sanitizadas, compatible con ValueError."""
 
-    def __init__(self, codigo, mensaje, metricas=None):
+    def __init__(self, codigo, mensaje, metricas=None, subcodigo=None):
         super().__init__(mensaje)
         self.codigo = codigo
         self.metricas = dict(metricas or {})
+        self.subcodigo = subcodigo
 
 
-def _error(codigo, mensaje, metricas):
-    return ErrorExtraccion(codigo, mensaje, metricas)
+def _error(codigo, mensaje, metricas, subcodigo=None):
+    return ErrorExtraccion(codigo, mensaje, metricas, subcodigo=subcodigo)
 
 
 def _metricas_iniciales(noticia):
@@ -42,6 +43,12 @@ def _metricas_iniciales(noticia):
         'candidatos_jsonld': 0,
         'jsonld_invalidos': 0,
         'canonicas_invalidas': 0,
+        'canonical_presente': False,
+        'canonical_valida': False,
+        'canonical_coincide_url_rss': None,
+        'subcodigos_relacion_canonical': [],
+        'identidades_jsonld': [],
+        'identidades_jsonld_truncadas': 0,
         'longitudes_contenedores': [],
     }
 
@@ -196,6 +203,30 @@ def _url(valor, base, fuente):
     return url if len(url) <= 500 else ''
 
 
+def _identidad_jsonld_sin_fragmento(valor, base, fuente):
+    """Normaliza sólo para comparar una identidad JSON-LD con fragmento.
+
+    No cambia la normalización H2.2 ni la URL que se usa para descargar.
+    """
+    if not isinstance(valor, str) or not valor:
+        return ''
+    if '\\' in valor or any(ord(c) <= 32 or ord(c) == 127 for c in valor):
+        return ''
+    try:
+        absoluta = urljoin(base, valor)
+        partes = urlsplit(absoluta)
+        puerto = partes.port
+    except (TypeError, ValueError):
+        return ''
+    if ('#' not in absoluta or partes.scheme != 'https'
+            or partes.hostname not in fuente.hosts_permitidos
+            or partes.username is not None or partes.password is not None
+            or puerto not in (None, 443)):
+        return ''
+    sin_fragmento = partes._replace(fragment='').geturl()
+    return _url(sin_fragmento, base, fuente)
+
+
 def _fecha_valida(valor):
     try:
         return _fecha({'published': valor}) if valor else None
@@ -233,25 +264,156 @@ def _json_articulos(documento):
     return articulos
 
 
-def _identidades_json(articulo):
+def _identidades_json_detalladas(articulo):
     for campo in ('mainEntityOfPage', 'url'):
         valor = articulo.get(campo)
         if valor:
-            yield valor.get('@id') if isinstance(valor, dict) else valor
+            yield campo, valor.get('@id') if isinstance(valor, dict) else valor
 
 
-def _rechazar_host_ajeno(identidad, base, fuente, metricas, *, canonical=False):
+def _identidades_json(articulo):
+    for _, identidad in _identidades_json_detalladas(articulo):
+        yield identidad
+
+
+def _hostname_url(url, base):
+    if not isinstance(url, str):
+        return None
+    try:
+        return urlsplit(urljoin(base, url)).hostname
+    except ValueError:
+        return None
+
+
+def _quitar_tracking_conocido(query):
+    return '&'.join(
+        parametro for parametro in query.split('&')
+        if unquote_plus(parametro.split('=', 1)[0]).lower() not in SEGUIMIENTO
+    )
+
+
+def _sin_una_barra_final(path):
+    return path[:-1] if path.endswith('/') and path != '/' else path
+
+
+def _comparar_componentes_url(identidad, referencia, base, fuente):
+    """Resumen booleano de URLs; nunca devuelve sus componentes textuales."""
+    vacio = {
+        'parseable': False, 'normalizable': False, 'esquema_https': False,
+        'puerto_permitido': False, 'sin_credenciales': False,
+        'hostname_permitido': False,
+        'fragmento_presente': False,
+        'referencia': {
+            campo: False for campo in (
+                'esquema_igual', 'puerto_igual', 'hostname_exacto',
+                'path_exacto', 'path_igual_sin_barra_final', 'query_exacta',
+                'query_igual_sin_tracking', 'query_difiere_solo_tracking',
+                'fragmento_igual', 'normaliza_igual',
+            )
+        },
+    }
+    if not isinstance(identidad, str) or not isinstance(referencia, str):
+        return vacio
+    try:
+        absoluta = urljoin(base, identidad)
+        absoluta_referencia = urljoin(base, referencia)
+        partes = urlsplit(absoluta)
+        partes_referencia = urlsplit(absoluta_referencia)
+        puerto = partes.port
+        puerto_referencia = partes_referencia.port
+    except (TypeError, ValueError):
+        return vacio
+
+    normalizada = _url(identidad, base, fuente)
+    normalizada_referencia = _url(referencia, base, fuente)
+    puerto_efectivo = (puerto if puerto is not None
+                       else (443 if partes.scheme == 'https' else None))
+    puerto_referencia_efectivo = (
+        puerto_referencia if puerto_referencia is not None
+        else (443 if partes_referencia.scheme == 'https' else None)
+    )
+    sin_credenciales = partes.username is None and partes.password is None
+    sin_credenciales_referencia = (
+        partes_referencia.username is None and partes_referencia.password is None
+    )
+    fragmento_presente = '#' in absoluta
+    fragmento_presente_referencia = '#' in absoluta_referencia
+    host_permitido = partes.hostname in fuente.hosts_permitidos
+    query_igual_sin_tracking = (
+        _quitar_tracking_conocido(partes.query)
+        == _quitar_tracking_conocido(partes_referencia.query)
+    )
+    path_exacto = partes.path == partes_referencia.path
+    esquema_igual = partes.scheme == partes_referencia.scheme
+    puerto_igual = puerto_efectivo == puerto_referencia_efectivo
+    hostname_exacto = partes.hostname == partes_referencia.hostname
+    query_exacta = partes.query == partes_referencia.query
+    fragmento_igual = (
+        partes.fragment == partes_referencia.fragment
+        and fragmento_presente == fragmento_presente_referencia
+    )
+    solo_tracking = (
+        bool(normalizada and normalizada_referencia)
+        and not query_exacta and query_igual_sin_tracking and esquema_igual and puerto_igual
+        and hostname_exacto and path_exacto
+        and not fragmento_presente and not fragmento_presente_referencia
+        and sin_credenciales and sin_credenciales_referencia
+    )
+    return {
+        'parseable': True,
+        'normalizable': bool(normalizada),
+        'esquema_https': partes.scheme == 'https',
+        'puerto_permitido': partes.scheme == 'https' and puerto in (None, 443),
+        'sin_credenciales': sin_credenciales,
+        'fragmento_presente': fragmento_presente,
+        'hostname_permitido': bool(host_permitido),
+        'referencia': {
+            'esquema_igual': esquema_igual,
+            'puerto_igual': puerto_igual,
+            'hostname_exacto': hostname_exacto,
+            'path_exacto': path_exacto,
+            'path_igual_sin_barra_final': (
+                _sin_una_barra_final(partes.path)
+                == _sin_una_barra_final(partes_referencia.path)
+            ),
+            'query_exacta': query_exacta,
+            'query_igual_sin_tracking': query_igual_sin_tracking,
+            'query_difiere_solo_tracking': solo_tracking,
+            'fragmento_igual': fragmento_igual,
+            'normaliza_igual': bool(normalizada and normalizada == normalizada_referencia),
+        },
+    }
+
+
+def _rechazar_host_ajeno(identidad, base, fuente, metricas, *, canonical=False,
+                         campo_identidad=None):
     if not isinstance(identidad, str):
         return
-    try:
-        host = urlsplit(urljoin(base, identidad)).hostname
-    except ValueError:
-        return
-    if host:
+    host = _hostname_url(identidad, base)
+    permitido = host in fuente.hosts_permitidos if host else None
+    if permitido:
         metricas['hostname_declarado'] = host
-    if host and host not in fuente.hosts_permitidos:
+    if host and not permitido:
         codigo = 'URL_CANONICA' if canonical else 'IDENTIDAD_EDITORIAL'
-        raise _error(codigo, 'El HTML declara un host no autorizado.', metricas)
+        if campo_identidad:
+            campo_codigo = {
+                'url': 'URL', 'mainEntityOfPage': 'MAIN_ENTITY_OF_PAGE',
+            }.get(campo_identidad, 'IDENTIDAD')
+            subcodigo = f'JSONLD_{campo_codigo}_HOST_NO_PERMITIDO'
+        else:
+            subcodigo = 'CANONICAL_HOST_NO_PERMITIDO' if canonical else 'IDENTIDAD_HOST_NO_PERMITIDA'
+        metricas['hostname_declarado_permitido'] = False
+        if campo_identidad and len(metricas['identidades_jsonld']) < 10:
+            metricas['identidades_jsonld'].append({
+                'campo': campo_identidad,
+                'campo_presente': True,
+                'identidad_presente': True,
+                'hostname_permitido': False,
+                'coincide_url_rss': None,
+                'coincide_canonical': None,
+                'coincide_referencia_final': None,
+            })
+        raise _error(codigo, 'El HTML declara un host no autorizado.', metricas, subcodigo)
 
 
 def _imagen_json(valor):
@@ -324,9 +486,24 @@ def analizar_articulo(datos, noticia, fuente, *, _metricas=None):
         if nodo.tag == 'link' and 'canonical' in (nodo.attrs.get('rel') or '').lower().split():
             canonicas.append(nodo.attrs.get('href'))
     identidades = canonicas + metadatos.get('og:url', [])
+    url_rss = normalizar_url(noticia.url, fuente)
+    canonical_principal = None
+    canonical_referencia = None
+    for valor in canonicas:
+        normalizada_canonical = _url(valor, noticia.url, fuente)
+        if normalizada_canonical and canonical_principal is None:
+            canonical_principal = normalizada_canonical
+            canonical_referencia = valor
     metricas['canonicas_invalidas'] = sum(
         bool(v) and not _url(v, noticia.url, fuente) for v in canonicas
     )
+    metricas['canonical_presente'] = any(bool(v) for v in canonicas)
+    metricas['canonical_valida'] = canonical_principal is not None
+    metricas['canonical_coincide_url_rss'] = (
+        canonical_principal == url_rss if canonical_principal else None
+    )
+    if canonical_principal and not metricas['canonical_coincide_url_rss']:
+        metricas['subcodigos_relacion_canonical'] = ['CANONICAL_NO_COINCIDE_URL_RSS']
     url = next((u for v in identidades if (u := _url(v, noticia.url, fuente))), noticia.url)
     articulos = _json_articulos(documento)
     metricas['scripts_jsonld'] = sum(
@@ -359,18 +536,88 @@ def analizar_articulo(datos, noticia, fuente, *, _metricas=None):
     for identidad in metadatos.get('og:url', []):
         _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas)
     elegibles = []
-    for articulo in articulos:
-        identidades_articulo = list(_identidades_json(articulo))
-        for identidad in identidades_articulo:
-            _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas)
-        if any(_url(identidad, noticia.url, fuente) not in (
-            normalizar_url(noticia.url, fuente), normalizar_url(url, fuente)
-        ) for identidad in identidades_articulo):
+    subcodigo_jsonld = None
+    comparaciones_jsonld = []
+    for indice, articulo in enumerate(articulos):
+        registrar_comparaciones = indice < 10
+        identidades_articulo = list(_identidades_json_detalladas(articulo))
+        # Mantener el mismo orden y las mismas comprobaciones de host de H2.3.
+        for campo, identidad in identidades_articulo:
+            _rechazar_host_ajeno(identidad, noticia.url, fuente, metricas,
+                                 campo_identidad=campo)
+        comparaciones_candidato = {}
+        discrepancias = []
+        for campo in ('url', 'mainEntityOfPage'):
+            valor_campo = articulo.get(campo)
+            campo_identidades = [v for nombre, v in identidades_articulo if nombre == campo]
+            identidad_url = campo_identidades[0] if campo_identidades else None
+            identidad_normalizada = (_url(identidad_url, noticia.url, fuente)
+                                     if campo_identidades else '')
+            identidad_sin_fragmento = (
+                _identidad_jsonld_sin_fragmento(identidad_url, noticia.url, fuente)
+                if campo_identidades and not identidad_normalizada else ''
+            )
+            coincide_fragmento_rss = bool(
+                identidad_sin_fragmento and identidad_sin_fragmento == url_rss
+            )
+            coincide_fragmento_canonical = bool(
+                identidad_sin_fragmento and canonical_principal
+                and identidad_sin_fragmento == canonical_principal
+            )
+            coincide_rss = bool(identidad_normalizada and identidad_normalizada == url_rss)
+            coincide_canonical = (
+                identidad_normalizada == canonical_principal
+                if identidad_normalizada and canonical_principal else False
+            )
+            coincide_referencia_final = bool(
+                (identidad_normalizada and identidad_normalizada in (
+                    url_rss, normalizar_url(url, fuente)))
+                or coincide_fragmento_rss or coincide_fragmento_canonical
+            )
+            if registrar_comparaciones:
+                hostname_identidad = _hostname_url(identidad_url, noticia.url) if campo_identidades else None
+                comparaciones_candidato[campo] = {
+                    'campo_presente': campo in articulo,
+                    'identidad_presente': bool(campo_identidades),
+                    'hostname_permitido': (
+                        hostname_identidad in fuente.hosts_permitidos
+                        if hostname_identidad else None
+                    ),
+                    'coincide_url_rss': coincide_rss,
+                    'coincide_canonical': coincide_canonical,
+                    'coincide_referencia_final': coincide_referencia_final,
+                    'coincide_por_fragmento': (
+                        coincide_fragmento_rss or coincide_fragmento_canonical
+                    ),
+                    'estructura': {
+                        'rss': _comparar_componentes_url(
+                            identidad_url, noticia.url, noticia.url, fuente),
+                        'canonical': _comparar_componentes_url(
+                            identidad_url, canonical_referencia, noticia.url, fuente),
+                    },
+                }
+            if campo_identidades and not coincide_referencia_final:
+                if subcodigo_jsonld is None:
+                    campo_codigo = 'URL' if campo == 'url' else 'MAIN_ENTITY_OF_PAGE'
+                    referencia_codigo = ('CANONICAL' if canonical_principal
+                                         else 'REFERENCIA_FINAL')
+                    subcodigo_jsonld = (
+                        f'JSONLD_{campo_codigo}_NO_COINCIDE_RSS_NI_{referencia_codigo}'
+                    )
+                discrepancias.append(True)
+            else:
+                discrepancias.append(False)
+        if registrar_comparaciones:
+            comparaciones_jsonld.append({'candidato': indice + 1, **comparaciones_candidato})
+        if any(discrepancias):
             continue
         elegibles.append(articulo)
+    metricas['identidades_jsonld'] = comparaciones_jsonld
+    metricas['identidades_jsonld_truncadas'] = max(0, len(articulos) - len(comparaciones_jsonld))
     articulo = elegibles[0] if len(elegibles) == 1 else {}
     if articulos and not elegibles:
-        raise _error('JSONLD', 'JSON-LD no contiene un artículo asociado.', metricas)
+        subcodigo = subcodigo_jsonld or 'JSONLD_SIN_IDENTIDAD_ASOCIADA'
+        raise _error('JSONLD', 'JSON-LD no contiene un artículo asociado.', metricas, subcodigo)
 
     def meta(clave):
         return metadatos.get(clave, [])
@@ -418,9 +665,10 @@ def diagnosticar_articulo(datos, noticia, fuente):
     try:
         articulo = analizar_articulo(datos, noticia, fuente, _metricas=metricas)
     except ErrorExtraccion as exc:
-        return {'estado': 'error', 'codigo': exc.codigo, 'metricas': exc.metricas}
+        return {'estado': 'error', 'codigo': exc.codigo, 'subcodigo': exc.subcodigo,
+                'metricas': exc.metricas}
     return {
-        'estado': 'analizado', 'codigo': None,
+        'estado': 'analizado', 'codigo': None, 'subcodigo': None,
         'metricas': metricas,
         'titulo_presente': bool(articulo.titulo),
         'fecha_presente': articulo.fecha is not None,

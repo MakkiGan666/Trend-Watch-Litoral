@@ -3734,6 +3734,19 @@ class TransporteMultifuenteTestCase(SimpleTestCase):
                     self.red.descargar(origen.feed, fuente=origen)
                 self.assertEqual(conexion.call_count, 1)
 
+    def test_redirect_entre_medios_sigue_denegado_despues_del_cambio_jsonld(self):
+        origen, destino = self.fuentes[0], self.fuentes[1]
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]) as dns, patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta(
+                302, destino.feed)
+            with self.assertRaises(ValueError):
+                self.red.descargar(origen.feed, fuente=origen)
+            self.assertEqual(dns.call_count, 1)
+            self.assertEqual(conexion.call_count, 1)
+            conexion.return_value.close.assert_called_once()
+
     def test_dns_publico_completo_y_revalidado_tras_redirect(self):
         fuente = self.fuentes[0]
         for ip in ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', 'fc00::1',

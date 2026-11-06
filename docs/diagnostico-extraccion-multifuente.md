@@ -14,6 +14,22 @@ banderas de presencia y longitudes del cuerpo, pero no título, resumen ni
 cuerpo. No se deben registrar el HTML, el `ArticuloExtraido`, el mensaje de
 excepciones ajenas a `ErrorExtraccion` ni objetos `NoticiaRSS`.
 
+Para rechazos JSON-LD, `ErrorExtraccion.subcodigo` y el campo `subcodigo` del
+resumen diferencian discrepancias de `url` y `mainEntityOfPage`, así como
+hostnames no permitidos. `metricas.identidades_jsonld` contiene como máximo diez
+registros con presencia de campos y comparaciones booleanas frente a URL RSS,
+canonical y referencia final. También registra si canonical está presente,
+válida y coincide con URL RSS. Nunca incluye rutas ni URLs. Los hostnames
+declarados solo se incluyen si pertenecen a la política permitida; ante un host
+ajeno se registra `hostname_declarado_permitido: false` sin revelar el host.
+Cada identidad añade banderas estructurales para parseo/normalización, HTTPS,
+puerto permitido, hostname autorizado, credenciales y fragmento. Frente a RSS y
+canonical registra igualdad de esquema, puerto, hostname exacto, path, path sin
+una barra final, query literal, query tras quitar únicamente tracking conocido,
+si la diferencia es solo ese tracking, fragmento y resultado de normalización.
+No conserva componentes ni valores de query. Los subcódigos describen rechazos,
+no alteran la autorización ni los criterios de aceptación.
+
 ## Diagnóstico dirigido sin persistencia
 
 Con una `NoticiaRSS` ya obtenida y los bytes HTML ya disponibles en memoria,

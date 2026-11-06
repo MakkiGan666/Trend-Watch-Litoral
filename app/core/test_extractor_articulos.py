@@ -304,3 +304,216 @@ class ExtractorArticulosTests(SimpleTestCase):
             self.noticia, self.fuente,
         )
         self.assertEqual(articulo.url_canonica, self.noticia.url)
+
+    def test_diagnostico_identidad_jsonld_coincide_con_rss_y_canonical(self):
+        import json
+        html = ('<link rel="canonical" href="/canonica">'
+                '<script type="application/ld+json">' + json.dumps({
+                    '@type': 'NewsArticle', 'url': 'https://misionesonline.net/canonica',
+                    'mainEntityOfPage': {'@id': self.noticia.url},
+                }) + '</script><article><p>Texto breve.</p></article>').encode()
+        diagnostico = extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+        self.assertEqual(diagnostico['estado'], 'analizado')
+        metricas = diagnostico['metricas']
+        self.assertFalse(metricas['canonical_coincide_url_rss'])
+        self.assertEqual(metricas['subcodigos_relacion_canonical'], ['CANONICAL_NO_COINCIDE_URL_RSS'])
+        identidad = metricas['identidades_jsonld'][0]
+        self.assertTrue(identidad['url']['coincide_canonical'])
+        self.assertTrue(identidad['mainEntityOfPage']['coincide_url_rss'])
+        self.assertTrue(identidad['url']['hostname_permitido'])
+        self.assertNotIn(self.noticia.url, repr(diagnostico))
+
+    def test_diagnostico_distingue_url_y_mainentity_que_no_coinciden(self):
+        import json
+        casos = (
+            ('url', {'url': 'https://misionesonline.net/otra',
+                     'mainEntityOfPage': {'@id': self.noticia.url}},
+             'JSONLD_URL_NO_COINCIDE_RSS_NI_CANONICAL'),
+            ('mainEntityOfPage', {'url': self.noticia.url,
+                                  'mainEntityOfPage': {'@id': 'https://misionesonline.net/otra'}},
+             'JSONLD_MAIN_ENTITY_OF_PAGE_NO_COINCIDE_RSS_NI_CANONICAL'),
+        )
+        for campo, identidad, esperado in casos:
+            with self.subTest(campo=campo):
+                articulo = {'@type': 'NewsArticle', **identidad}
+                html = ('<link rel="canonical" href="/canonica">'
+                        '<script type="application/ld+json">' + json.dumps(articulo)
+                        + '</script><article><p>Texto breve.</p></article>').encode()
+                diagnostico = extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+                self.assertEqual(diagnostico['codigo'], 'JSONLD')
+                self.assertEqual(diagnostico['subcodigo'], esperado)
+                comparacion = diagnostico['metricas']['identidades_jsonld'][0]
+                self.assertTrue(comparacion['url']['campo_presente'])
+                self.assertTrue(comparacion['mainEntityOfPage']['campo_presente'])
+                self.assertNotIn('https://misionesonline.net/', repr(diagnostico))
+
+    def test_diagnostico_host_jsonld_ajeno_solo_registra_denegacion(self):
+        import json
+        articulo = {'@type': 'NewsArticle', 'url': 'https://example.invalid/nota'}
+        html = ('<script type="application/ld+json">' + json.dumps(articulo)
+                + '</script><article><p>Texto breve.</p></article>').encode()
+        diagnostico = extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+        self.assertEqual(diagnostico['codigo'], 'IDENTIDAD_EDITORIAL')
+        self.assertEqual(diagnostico['subcodigo'], 'JSONLD_URL_HOST_NO_PERMITIDO')
+        self.assertFalse(diagnostico['metricas']['hostname_declarado_permitido'])
+        self.assertNotIn('example.invalid', repr(diagnostico))
+        self.assertNotIn('url', diagnostico['metricas'])
+
+    def test_jsonld_acepta_fragmento_solo_si_coincide_con_rss_o_canonical(self):
+        import json
+        casos_validos = (
+            ('https://misionesonline.net/nota#principal', 'https://misionesonline.net/canonica'),
+            ('https://misionesonline.net/canonica#principal', 'https://misionesonline.net/canonica'),
+        )
+        for identidad, canonical in casos_validos:
+            with self.subTest(identidad=identidad, canonical=canonical):
+                html = ('<link rel="canonical" href="' + canonical + '">'
+                        '<script type="application/ld+json">' + json.dumps({
+                            '@type': 'NewsArticle', 'url': self.noticia.url,
+                            'mainEntityOfPage': {'@id': identidad},
+                        }) + '</script><article><p>Texto breve.</p></article>').encode()
+                articulo = self.analizar(html)
+                diagnostico = extractor.diagnosticar_articulo(
+                    html, self.noticia, self.fuente)
+                self.assertEqual(articulo.url_canonica, canonical)
+                self.assertTrue(
+                    diagnostico['metricas']['identidades_jsonld'][0]
+                    ['mainEntityOfPage']['coincide_por_fragmento']
+                )
+                self.assertFalse(
+                    diagnostico['metricas']['identidades_jsonld'][0]
+                    ['mainEntityOfPage']['estructura']['rss']['normalizable']
+                )
+                self.assertNotIn('#principal', repr(diagnostico))
+
+    def test_jsonld_fragmento_no_acepta_host_path_query_ni_puerto_ajenos(self):
+        import json
+        casos = (
+            ('https://evil.invalid/nota#x', 'IDENTIDAD_EDITORIAL'),
+            ('https://misionesonline.net/otra#x', 'JSONLD'),
+            ('https://misionesonline.net/nota?edicion=2#x', 'JSONLD'),
+            ('https://user@misionesonline.net/nota#x', 'JSONLD'),
+            ('https://misionesonline.net:8443/nota#x', 'JSONLD'),
+            ('http://misionesonline.net/nota#x', 'JSONLD'),
+        )
+        for identidad, codigo in casos:
+            with self.subTest(identidad=identidad):
+                html = ('<script type="application/ld+json">' + json.dumps({
+                    '@type': 'NewsArticle', 'url': self.noticia.url,
+                    'mainEntityOfPage': {'@id': identidad},
+                }) + '</script><article><p>Texto breve.</p></article>').encode()
+                with self.assertRaises(ValueError) as contexto:
+                    self.analizar(html)
+                self.assertEqual(contexto.exception.codigo, codigo)
+
+    def test_graph_masivo_conserva_primer_subcodigo_y_metricas_acotadas(self):
+        import json
+        candidatos = []
+        for indice in range(80):
+            if indice == 0:
+                candidatos.append({
+                    '@type': 'NewsArticle',
+                    'url': 'https://misionesonline.net/otra',
+                    'mainEntityOfPage': {'@id': self.noticia.url},
+                })
+            else:
+                candidatos.append({
+                    '@type': 'NewsArticle',
+                    'url': self.noticia.url,
+                    'mainEntityOfPage': {'@id': f'https://misionesonline.net/otra-{indice}'},
+                })
+        html = ('<link rel="canonical" href="/canonica">'
+                '<script type="application/ld+json">' + json.dumps({'@graph': candidatos})
+                + '</script><article><p>Texto breve.</p></article>').encode()
+
+        diagnostico = extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+
+        self.assertEqual(diagnostico['codigo'], 'JSONLD')
+        self.assertEqual(diagnostico['subcodigo'], 'JSONLD_URL_NO_COINCIDE_RSS_NI_CANONICAL')
+        metricas = diagnostico['metricas']
+        self.assertEqual(metricas['candidatos_jsonld'], 80)
+        self.assertEqual(len(metricas['identidades_jsonld']), 10)
+        self.assertEqual(metricas['identidades_jsonld_truncadas'], 70)
+        self.assertNotIn('subcodigos_jsonld', metricas)
+        self.assertLess(len(repr(metricas)), 30000)
+
+    def test_comparaciones_estructurales_url_no_exponen_valores(self):
+        import json
+
+        def medir(identidad, canonical=None):
+            articulo = {'@type': 'NewsArticle', 'mainEntityOfPage': {'@id': identidad}}
+            cabeza = (f'<link rel="canonical" href="{canonical}">' if canonical else '')
+            html = (cabeza + '<script type="application/ld+json">'
+                    + json.dumps(articulo) + '</script><article><p>Texto breve.</p></article>').encode()
+            return extractor.diagnosticar_articulo(html, self.noticia, self.fuente)
+
+        casos = (
+            ('https://misionesonline.net/nota/', None, 'barra_final'),
+            ('https://www.misionesonline.net/nota', None, 'www'),
+            ('https://misionesonline.net/nota?vista=amp', None, 'query_funcional'),
+        )
+        for identidad, canonical, tipo in casos:
+            with self.subTest(tipo=tipo):
+                diagnostico = medir(identidad, canonical)
+                estructura = diagnostico['metricas']['identidades_jsonld'][0][
+                    'mainEntityOfPage']['estructura']['rss']
+                self.assertTrue(estructura['normalizable'])
+                referencia = estructura['referencia']
+                if tipo == 'barra_final':
+                    self.assertFalse(referencia['path_exacto'])
+                    self.assertTrue(referencia['path_igual_sin_barra_final'])
+                elif tipo == 'www':
+                    self.assertTrue(estructura['hostname_permitido'])
+                    self.assertFalse(referencia['hostname_exacto'])
+                else:
+                    self.assertFalse(referencia['query_exacta'])
+                    self.assertFalse(referencia['query_igual_sin_tracking'])
+                    self.assertFalse(referencia['query_difiere_solo_tracking'])
+                self.assertTrue(all(
+                    isinstance(valor, bool)
+                    for valor in _valores_hoja(estructura)
+                ))
+                for dato in (identidad, 'vista=amp'):
+                    self.assertNotIn(dato, repr(diagnostico))
+
+        tracking = medir('https://misionesonline.net/nota?utm_source=campania')
+        estructura = tracking['metricas']['identidades_jsonld'][0][
+            'mainEntityOfPage']['estructura']['rss']
+        self.assertTrue(estructura['normalizable'])
+        self.assertFalse(estructura['referencia']['query_exacta'])
+        self.assertTrue(estructura['referencia']['query_igual_sin_tracking'])
+        self.assertTrue(estructura['referencia']['query_difiere_solo_tracking'])
+        self.assertTrue(tracking['metricas']['identidades_jsonld'][0][
+            'mainEntityOfPage']['coincide_url_rss'])
+        self.assertNotIn('campania', repr(tracking))
+
+        con_fragmento = medir(self.noticia.url + '#seccion')
+        estructura = con_fragmento['metricas']['identidades_jsonld'][0][
+            'mainEntityOfPage']['estructura']['rss']
+        self.assertFalse(estructura['normalizable'])
+        self.assertTrue(estructura['fragmento_presente'])
+        self.assertFalse(estructura['referencia']['normaliza_igual'])
+        self.assertFalse(estructura['referencia']['fragmento_igual'])
+
+        casos_no_validos = (
+            ('http://misionesonline.net/nota', 'esquema_https'),
+            ('https://misionesonline.net:8443/nota', 'puerto_permitido'),
+            ('https://misionesonline.net:0/nota', 'puerto_permitido'),
+            ('https://usuario:secreto@misionesonline.net/nota', 'sin_credenciales'),
+        )
+        for identidad, bandera in casos_no_validos:
+            with self.subTest(bandera=bandera):
+                diagnostico = medir(identidad)
+                estructura = diagnostico['metricas']['identidades_jsonld'][0][
+                    'mainEntityOfPage']['estructura']['rss']
+                self.assertFalse(estructura['normalizable'])
+                self.assertFalse(estructura[bandera])
+                self.assertNotIn(identidad, repr(diagnostico))
+
+
+def _valores_hoja(valor):
+    if isinstance(valor, dict):
+        for hijo in valor.values():
+            yield from _valores_hoja(hijo)
+    else:
+        yield valor
