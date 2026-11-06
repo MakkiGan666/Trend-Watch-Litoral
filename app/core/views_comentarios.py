@@ -2,6 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -10,6 +11,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from .forms import ComentarioForm
 from .models import Comentario, Publicacion
+from .services.analisis_automatico import programar_analisis
 from .services.sentimiento_comentarios import sentimiento_vigente
 
 
@@ -21,13 +23,15 @@ def contexto_comentarios(request, publicacion):
     if request.user.is_authenticated:
         visibles |= Q(autor=request.user)
     pagina = Paginator(
-        publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento'),
+        publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento__categoria'),
         10,
     ).get_page(request.GET.get('pagina_comentarios'))
     # Page conserva la lista ya evaluada, así la plantilla recibe estas instancias.
     # Sin este atributo la plantilla no muestra etiqueta (falla cerrada).
     for comentario in pagina:
         comentario.sentimiento_vigente = sentimiento_vigente(comentario)
+        # Sin resultado vigente: lo procesará el análisis automático o el comando de respaldo.
+        comentario.analisis_pendiente = comentario.sentimiento_vigente is None
     return {
         'comentarios_pagina': pagina,
         'comentario_form': ComentarioForm(),
@@ -57,6 +61,8 @@ def crear_comentario(request, pk):
         comentario.publicacion = publicacion
         comentario.autor = request.user
         comentario.save()
+        # Después del commit y en segundo plano: la respuesta no espera a Ollama.
+        transaction.on_commit(lambda: programar_analisis(comentario.pk))
         messages.success(request, 'Comentario enviado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(pk, comentario_id=comentario.pk))
     return render(request, 'core/comentario_form.html', {
@@ -79,6 +85,7 @@ def editar_comentario(request, pk):
         comentario.fecha_edicion = timezone.now()
         comentario.estado = Comentario.Estado.PENDIENTE
         comentario.save(update_fields=['texto', 'fecha_edicion', 'estado'])
+        transaction.on_commit(lambda: programar_analisis(comentario.pk))
         messages.success(request, 'Comentario editado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(comentario.publicacion_id, _pagina(request), comentario.pk))
     return render(request, 'core/comentario_form.html', {

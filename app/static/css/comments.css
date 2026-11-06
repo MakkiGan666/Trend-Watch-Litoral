@@ -37,3 +37,5 @@
 .comment-sentiment--positivo .comment-sentiment__dot{background:#3fd0b4}
 .comment-sentiment--negativo .comment-sentiment__dot{background:#ef6a6a}
 .comment-sentiment--neutral .comment-sentiment__dot{background:#8aa0b5}
+.comment-sentiment__topic{color:var(--tx-2)}
+.comment-analysis-pending{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;border:1px dashed var(--edge);font-size:10px;color:var(--tx-3);line-height:1}

@@ -1,9 +1,11 @@
 """Comando idempotente para analizar el sentimiento de los comentarios.
 
-Se puede correr tantas veces como se quiera: no reanaliza un comentario cuyo
-texto no cambió desde el último análisis, salvo que se pase `--reanalizar`.
-El procesamiento es independiente de las peticiones HTTP de los usuarios
-(ver `core/services/sentimiento_comentarios.py`).
+Es el respaldo del análisis automático en segundo plano
+(`core/services/analisis_automatico.py`): recupera comentarios sin análisis,
+en error, editados o, con `--metodo ia`, analizados con léxico porque Ollama
+había fallado. Se puede correr tantas veces como se quiera: no reanaliza un
+comentario cuyo texto no cambió desde el último análisis, salvo que se pase
+`--reanalizar`.
 """
 from django.core.management.base import BaseCommand, CommandError
 
@@ -13,6 +15,7 @@ from core.services.sentimiento_comentarios import (
     SentimientoNoDisponible,
     analizar_comentario,
     candidatos_con_hash_desactualizado,
+    candidatos_pendientes_de_ia,
     candidatos_sin_analisis_validos,
     registrar_error_analisis,
 )
@@ -42,7 +45,7 @@ class Command(BaseCommand):
         usar_ia = options['metodo'] == METODO_IA
         dry_run = options['dry_run']
 
-        candidatos = self._candidatos(reanalizar=reanalizar, limite=limite)
+        candidatos = self._candidatos(reanalizar=reanalizar, limite=limite, usar_ia=usar_ia)
         procesados, actualizados, omitidos, fallidos = 0, 0, 0, 0
 
         for comentario in candidatos:
@@ -78,8 +81,9 @@ class Command(BaseCommand):
                    f'omitidos={omitidos} fallidos={fallidos}')
         self.stdout.write(self.style.SUCCESS(resumen) if not fallidos else resumen)
 
-    def _candidatos(self, reanalizar, limite):
-        """Itera primero los comentarios sin análisis válido y luego los desactualizados.
+    def _candidatos(self, reanalizar, limite, usar_ia=False):
+        """Itera los comentarios sin análisis válido, luego los desactualizados y,
+        con `--metodo ia`, los que quedaron con léxico porque la IA había fallado.
 
         Si `reanalizar=True` abarca todos (incluidos los que están al día), lo que
         permite recorrer la tabla completa cuando cambia el método o la versión.
@@ -95,20 +99,20 @@ class Command(BaseCommand):
             yield from qs.iterator(chunk_size=200)
             return
 
-        pendientes = candidatos_sin_analisis_validos().order_by('pk')
-        if limite:
-            pendientes = pendientes[:limite]
-        emitidos = 0
-        for comentario in pendientes:
-            yield comentario
-            emitidos += 1
-
-        restante = (limite - emitidos) if limite else None
-        if restante is not None and restante <= 0:
-            return
-
-        for comentario in candidatos_con_hash_desactualizado():
-            if restante is not None and emitidos >= limite:
-                return
-            yield comentario
-            emitidos += 1
+        fuentes = [
+            candidatos_sin_analisis_validos().order_by('pk').iterator(chunk_size=200),
+            candidatos_con_hash_desactualizado(),
+        ]
+        if usar_ia:
+            fuentes.append(candidatos_pendientes_de_ia().iterator(chunk_size=200))
+        # Las fuentes se superponen (p. ej. un fallback de IA que además se editó):
+        # cada comentario se emite una sola vez y `--limite` cuenta comentarios únicos.
+        emitidos = set()
+        for fuente in fuentes:
+            for comentario in fuente:
+                if limite and len(emitidos) >= limite:
+                    return
+                if comentario.pk in emitidos:
+                    continue
+                emitidos.add(comentario.pk)
+                yield comentario
