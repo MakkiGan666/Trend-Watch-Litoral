@@ -183,7 +183,7 @@ class _Lote:
                 continue
             validos.append(candidato)
         candidatos = validos
-        clasificaciones = clasificar_lote(candidatos, usar_ia=usar_ia)
+        clasificaciones = clasificar_lote(candidatos, usar_ia=usar_ia, fuente_id='el_territorio')
         if len(clasificaciones) != len(candidatos):
             raise ValueError('Clasificación incompleta')
         for candidato, clasificacion in zip(candidatos, clasificaciones):

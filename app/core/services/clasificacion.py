@@ -292,8 +292,33 @@ def _validar_respuesta(raw, indices):
     return resultado
 
 
-def _clasificar_con_ia(lote):
+def _origen_ia_verificado(lote, fuente_id):
+    """Comprueba URL/host y autorización antes de clasificar una noticia con Gemini."""
+    from core.services import descarga_segura
+    from core.services.autorizacion_gemini import fuente_autorizada
+    from core.services.fuentes_rss import FUENTES_RSS
+
+    if not isinstance(fuente_id, str) or not fuente_id:
+        return False
+    if fuente_id == 'el_territorio':
+        validar = lambda url: descarga_segura.validar_url(url)
+    else:
+        fuente = next((f for f in FUENTES_RSS if f.identificador == fuente_id), None)
+        if fuente is None or not fuente_autorizada(fuente_id):
+            return False
+        validar = lambda url: descarga_segura.validar_url(url, fuente=fuente)
+    try:
+        return all(isinstance(n.get('url'), str) and validar(n['url']) for _, n in lote)
+    except (TypeError, ValueError):
+        return False
+
+
+def _clasificar_con_ia(lote, fuente_id):
     """Devuelve {indice: categoria} con lo que Gemini clasificó válidamente; {} si no está disponible."""
+    # Denegar todo el lote si falta identidad, hay host ajeno o falta autorización.
+    if not _origen_ia_verificado(lote, fuente_id):
+        logger.warning('Clasificación IA omitida: origen ausente, no verificable o no autorizado.')
+        return {}
     # Importación diferida: gemini_cliente importa el scraper, que importa este módulo.
     from core.services.gemini_cliente import gemini_cliente
     if gemini_cliente.client is None or gemini_cliente.types is None:
@@ -327,7 +352,7 @@ def _clasificar_con_ia(lote):
     return resultado
 
 
-def clasificar_lote(noticias, usar_ia=True):
+def clasificar_lote(noticias, usar_ia=True, *, fuente_id=None):
     """Clasifica noticias {'titulo', 'contenido', 'seccion'} en el mismo orden recibido.
 
     Conserva categoria/departamento/metodo y agrega confirmada. La categoría de
@@ -348,7 +373,7 @@ def clasificar_lote(noticias, usar_ia=True):
         })
         if not segura:
             dudosas.append((indice, noticia))
-    por_ia = _clasificar_con_ia(dudosas) if usar_ia and dudosas else {}
+    por_ia = _clasificar_con_ia(dudosas, fuente_id) if usar_ia and dudosas else {}
     for indice, categoria in por_ia.items():
         resultados[indice].update(categoria=categoria, metodo='ia', confirmada=True)
     return resultados

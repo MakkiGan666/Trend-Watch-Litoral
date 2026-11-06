@@ -75,9 +75,9 @@ def respuesta_ia(*items):
 class ClasificarLoteConIATestCase(TestCase):
     # 0: la sección define la categoría; 1: palabra clave clara en el título; 2: dudosa.
     noticias = [
-        {'titulo': 'Exportaciones de té', 'contenido': 'Productores de Oberá', 'seccion': 'agro'},
-        {'titulo': 'Detuvieron a un hombre por un robo en Cataratas', 'contenido': '', 'seccion': 'misiones'},
-        {'titulo': 'Nota nacional', 'contenido': 'Sin localidad', 'seccion': 'pais-y-mundo'},
+        {'titulo': 'Exportaciones de té', 'contenido': 'Productores de Oberá', 'seccion': 'agro', 'url': 'https://www.elterritorio.com.ar/te'},
+        {'titulo': 'Detuvieron a un hombre por un robo en Cataratas', 'contenido': '', 'seccion': 'misiones', 'url': 'https://www.elterritorio.com.ar/robo'},
+        {'titulo': 'Nota nacional', 'contenido': 'Sin localidad', 'seccion': 'pais-y-mundo', 'url': 'https://www.elterritorio.com.ar/nacional'},
     ]
 
     def setUp(self):
@@ -90,11 +90,36 @@ class ClasificarLoteConIATestCase(TestCase):
         llamada = self.gemini.client.models.generate_content.call_args
         return [n['titulo'] for n in json.loads(llamada.kwargs['contents'])]
 
+
+    def test_ia_denegada_si_falta_identidad_o_url_no_corresponde(self):
+        self.gemini.client.models.generate_content.return_value = respuesta_ia(
+            {'indice': 2, 'categoria': 'Política'},
+        )
+        clasificar_lote(self.noticias, usar_ia=True)
+        self.gemini.client.models.generate_content.assert_not_called()
+        ajena = [dict(n, url='https://misionesonline.net/nota') for n in self.noticias]
+        clasificar_lote(ajena, fuente_id='el_territorio')
+        self.gemini.client.models.generate_content.assert_not_called()
+
+    def test_fuente_rss_autorizada_requiere_host_catalogado(self):
+        from django.test import override_settings
+        from core.services.fuentes_rss import FUENTES_RSS
+        fuente = FUENTES_RSS[0]
+        noticias = [dict(n, url='https://misionesonline.net/nota') for n in self.noticias]
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(fuente.identificador,)):
+            clasificar_lote(noticias, fuente_id=fuente.identificador)
+        self.gemini.client.models.generate_content.assert_called_once()
+        self.gemini.client.models.generate_content.reset_mock()
+        ajena = [dict(n, url='https://evil.example/nota') for n in self.noticias]
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(fuente.identificador,)):
+            clasificar_lote(ajena, fuente_id=fuente.identificador)
+        self.gemini.client.models.generate_content.assert_not_called()
+
     def test_solo_las_dudosas_van_a_la_ia(self):
         self.gemini.client.models.generate_content.return_value = respuesta_ia(
             {'indice': 2, 'categoria': 'Política'},
         )
-        resultado = clasificar_lote(self.noticias)
+        resultado = clasificar_lote(self.noticias, fuente_id='el_territorio')
         self.assertEqual(self.gemini.client.models.generate_content.call_count, 1)
         self.assertEqual(self.enviadas_a_la_ia(), ['Nota nacional'])
         self.assertEqual([r['categoria'] for r in resultado], ['Economía', 'Policiales', 'Política'])
@@ -118,7 +143,7 @@ class ClasificarLoteConIATestCase(TestCase):
         ):
             with self.subTest(respuesta=invalida.text):
                 self.gemini.client.models.generate_content.return_value = invalida
-                resultado = clasificar_lote(self.noticias)
+                resultado = clasificar_lote(self.noticias, fuente_id='el_territorio')
                 self.assertEqual([r['metodo'] for r in resultado], ['reglas', 'reglas', 'reglas'])
                 self.assertEqual(resultado[0]['categoria'], 'Economía')
                 self.assertIn(resultado[2]['categoria'], CATEGORIAS_PROYECTO)
@@ -127,7 +152,7 @@ class ClasificarLoteConIATestCase(TestCase):
         self.assertEqual([r['metodo'] for r in clasificar_lote(self.noticias, usar_ia=False)],
                          ['reglas'] * 3)
         self.gemini.client = None
-        self.assertEqual([r['metodo'] for r in clasificar_lote(self.noticias)], ['reglas'] * 3)
+        self.assertEqual([r['metodo'] for r in clasificar_lote(self.noticias, fuente_id='el_territorio')], ['reglas'] * 3)
         self.gemini.types.GenerateContentConfig.assert_not_called()
 
 

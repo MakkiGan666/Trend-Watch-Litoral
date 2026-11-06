@@ -109,7 +109,8 @@ class GeminiCliente:
     def procesar_pendientes(self, batch_size=5):
         entero_positivo(batch_size, 'batch_size')
         # Evaluar antes de comprobar disponibilidad: un fallo de consulta se propaga.
-        pendientes = list(Publicacion.objects.filter(procesado_ia=False)[:batch_size])
+        from core.services.gemini_multifuente import filtro_cliente_global
+        pendientes = list(Publicacion.objects.filter(filtro_cliente_global(), procesado_ia=False)[:batch_size])
         resultado = {
             'estado': 'SIN_PENDIENTES', 'seleccionadas': len(pendientes),
             'procesadas': 0, 'omitidas': 0, 'fallidas': 0, 'errores': [],
@@ -130,6 +131,24 @@ class GeminiCliente:
             return resultado
 
         for pub in pendientes:
+            # H3.2 coordina sólo multifuente; El Territorio conserva su camino.
+            from core.services.gemini_multifuente import procesar_desde_cliente_global
+            try:
+                selectivo = procesar_desde_cliente_global(pub, self)
+            except Exception:
+                registrar_error(pub, 'persistencia')
+                continue
+            if selectivo is not None:
+                resultado['procesadas'] += selectivo['procesadas']
+                resultado['omitidas'] += selectivo['omitidas']
+                for error in selectivo['errores']:
+                    registrar_error(pub, error['codigo'])
+                if selectivo['procesadas']:
+                    try:
+                        time.sleep(12)
+                    except Exception:
+                        pass
+                continue
             prompt = f"Título: {pub.titulo}\nContenido: {pub.contenido}"
 
             try:

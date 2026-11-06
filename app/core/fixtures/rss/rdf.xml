@@ -1,0 +1,3 @@
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel rdf:about="https://misionesonline.net/feed/"><title>Medio</title><link>https://misionesonline.net/</link><description>Noticias</description></channel>
+<item rdf:about="https://misionesonline.net/rdf"><title>Noticia RDF</title><link>https://misionesonline.net/rdf</link><dc:date>2026-11-05T00:00:00Z</dc:date><description>Sólo resumen</description><dc:subject>Locales</dc:subject></item></rdf:RDF>

@@ -18,6 +18,325 @@ from core.scrapers.noticias import fetch_elterritorio_news
 from core.serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer
 
 
+class CatalogoFuentesRSSTestCase(SimpleTestCase):
+    def setUp(self):
+        from core.services.fuentes_rss import FUENTES_RSS
+        self.fuente = FUENTES_RSS[0]
+
+    def test_catalogo_de_18_fuentes_sin_el_territorio(self):
+        from core.services.fuentes_rss import FUENTES_RSS, obtener_fuentes, validar_catalogo
+        self.assertEqual(len(FUENTES_RSS), 18)
+        self.assertEqual(validar_catalogo(FUENTES_RSS), FUENTES_RSS)
+        self.assertFalse(any('elterritorio.com.ar' in f.hosts_permitidos for f in FUENTES_RSS))
+        self.assertEqual(obtener_fuentes(), ())
+        self.assertEqual(obtener_fuentes(solo_habilitadas=False), FUENTES_RSS)
+
+    def test_las_18_urls_auditadas(self):
+        from core.services.fuentes_rss import FUENTES_RSS
+        feeds = {f.identificador: f.feed for f in FUENTES_RSS}
+        self.assertEqual(feeds, {
+            'misiones_online': 'https://misionesonline.net/feed/',
+            'primera_edicion': 'https://www.primeraedicion.com.ar/feed/',
+            'noticias_de_la_calle': 'https://www.noticiasdelacalle.com.ar/rss/noticias',
+            'noticias_del_6': 'https://noticiasdel6.com/feed/',
+            'infober': 'https://infoberdigital.com/feed/',
+            'obera_online': 'https://oberaonline.com.ar/feed/',
+            'obera_inside': 'https://oberainside.com.ar/?feed=rss2',
+            'stop_en_linea': 'https://www.stopenlinea.com.ar/rss/noticias',
+            'e24n': 'https://e24n.com.ar/feed/',
+            'eldorado_noticias': 'https://eldoradonoticias.com.ar/feed/',
+            'norte_misionero': 'https://nortemisionero.com.ar/feed/',
+            'la_voz_de_cataratas': 'https://lavozdecataratas.com/feed/',
+            'iguazu_ahora': 'https://iguazuahora.com/feed/',
+            'radio_yguazu': 'https://radioiguazu.com/feed/',
+            'alem_news': 'https://www.alem.news/feed/',
+            'la_mision_digital': 'https://lamisiondigital.com/feed/',
+            'fracran_noticias': 'https://www.fracran.com.ar/feed.xml',
+            'noticias_de_irigoyen': 'https://noticiasdeirigoyen.com.ar/feed/',
+        })
+
+    def test_habilitacion_y_limites_independientes(self):
+        from dataclasses import FrozenInstanceError, replace
+        from core.services.fuentes_rss import obtener_fuentes
+        activa = replace(self.fuente, habilitada=True, limite_noticias=5,
+                         timeout_segundos=2.5, max_bytes=2048, max_redirecciones=0)
+        with patch('core.services.fuentes_rss.FUENTES_RSS', (activa, replace(self.fuente, identificador='otra'))):
+            self.assertEqual(obtener_fuentes(), (activa,))
+        self.assertFalse(self.fuente.habilitada)
+        self.assertEqual(self.fuente.limite_noticias, 30)
+        with self.assertRaises(FrozenInstanceError):
+            self.fuente.habilitada = True
+
+    def test_rechaza_configuracion_invalida_incluso_deshabilitada(self):
+        from dataclasses import replace
+        casos = {
+            'identificador': ('', 'Con espacios', '../medio', 1),
+            'nombre': ('', '  ', None),
+            'habilitada': (0, 1, 'false', None),
+            'hosts_permitidos': ((), ['misionesonline.net'], ('*.net',),
+                                 ('localhost',), ('127.0.0.1',), ('https://medio.net',),
+                                 ('Medio.net',), ('medio.net:443',), ('medio.net', 'medio.net')),
+            'limite_noticias': (0, -1, True, 1.5, '10'),
+            'max_bytes': (0, -1, False, 1.5, None),
+            'timeout_segundos': (0, -1, True, '10', float('inf'), float('nan')),
+            'max_redirecciones': (-1, True, 1.5, '4'),
+        }
+        for campo, valores in casos.items():
+            for valor in valores:
+                with self.subTest(campo=campo, valor=valor), self.assertRaises(ValueError):
+                    replace(self.fuente, **{campo: valor})
+
+    def test_urls_ajenas_o_ambiguas_rechazadas(self):
+        from dataclasses import replace
+        for url in (
+            'http://misionesonline.net/feed/', '//misionesonline.net/feed/',
+            'https://otro.net/feed/', 'https://misionesonline.net.otro.net/feed/',
+            'https://sub.misionesonline.net/feed/', 'https://127.0.0.1/feed/',
+            'https://usuario@misionesonline.net/feed/',
+            'https://misionesonline.net:80/feed/', 'https://misionesonline.net:abc/feed/',
+            'https://misionesonline.net/feed/#fragmento', 'https://misionesonline.net/feed/#',
+            'https://misionesonline.net/fee\nd/', 'https://misionesonline.net/fee\\d/',
+            '', None, 'https://[invalido/feed/',
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                replace(self.fuente, feed=url)
+
+    def test_hosts_exactos_www_y_https_por_defecto(self):
+        for url in ('https://misionesonline.net/feed/',
+                    'https://www.misionesonline.net/feed/',
+                    'https://misionesonline.net:443/feed/'):
+            self.assertIn(self.fuente.validar_url(url).hostname, self.fuente.hosts_permitidos)
+
+    def test_duplicados_y_tipos_invalidos(self):
+        from dataclasses import replace
+        from core.services.fuentes_rss import validar_catalogo
+        for otra in (self.fuente,
+                     replace(self.fuente, identificador='otra'),
+                     replace(self.fuente, identificador='otra', feed='https://misionesonline.net:443/feed/'),
+                     replace(self.fuente, feed='https://misionesonline.net/otro/'), None):
+            with self.subTest(otra=otra), self.assertRaises(ValueError):
+                validar_catalogo((self.fuente, otra))
+
+    def test_importacion_fria_y_consulta_sin_efectos_secundarios(self):
+        from pathlib import Path
+        import subprocess
+        import sys
+        import textwrap
+
+        # El proceso nuevo no hereda sys.modules ni los imports de setUp.
+        # El único proceso permitido es este intérprete de comprobación.
+        codigo = textwrap.dedent('''
+            import os
+            import sys
+
+            sys.path.insert(0, sys.argv[1])
+            assert not any(n == 'core' or n.startswith('core.') for n in sys.modules)
+
+            def bloquear_efectos(evento, argumentos):
+                if evento == 'open':
+                    modo, flags = argumentos[1:3]
+                    escritura = (
+                        isinstance(modo, str) and any(c in modo for c in 'wax+')
+                    ) or (
+                        isinstance(flags, int) and flags & (
+                            os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+                        )
+                    )
+                    if escritura:
+                        raise AssertionError('Escritura no permitida')
+                if evento.startswith(('socket.', 'subprocess.', 'os.exec', 'os.spawn')) or evento in (
+                    'os.system', 'os.fork', 'os.forkpty', 'os.posix_spawn',
+                    'os.remove', 'os.rename', 'os.mkdir', 'os.rmdir',
+                    'os.link', 'os.symlink', 'os.truncate', 'os.chmod', 'os.chown', 'os.utime',
+                ):
+                    raise AssertionError('Efecto no permitido: ' + evento)
+
+            sys.addaudithook(bloquear_efectos)
+            # Comprobar los bloqueos sin ejecutar operaciones reales.
+            for evento, argumentos in (
+                ('socket.getaddrinfo', ('example.test', 443, 0, 0, 0)),
+                ('socket.__new__', (None, 2, 1, 0)),
+                ('open', ('no_crear', 'w', os.O_WRONLY | os.O_CREAT)),
+                ('open', ('no_crear', None, os.O_RDWR)),
+                ('os.mkdir', ('no_crear', 511, -1)),
+                ('subprocess.Popen', ('no_ejecutar', [], None, None)),
+                ('os.system', ('no_ejecutar',)),
+            ):
+                try:
+                    sys.audit(evento, *argumentos)
+                except AssertionError:
+                    pass
+                else:
+                    raise AssertionError('Bloqueo ausente: ' + evento)
+
+            from core.services.fuentes_rss import FUENTES_RSS, obtener_fuentes
+            assert len(FUENTES_RSS) == 18
+            assert obtener_fuentes() == ()
+            assert obtener_fuentes(solo_habilitadas=False) == FUENTES_RSS
+        ''')
+        resultado = subprocess.run(
+            [sys.executable, '-B', '-c', codigo, str(Path(__file__).resolve().parent.parent)],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+        self.assertEqual(resultado.returncode, 0, resultado.stdout + resultado.stderr)
+
+
+class ListadosMultifuenteTestCase(TestCase):
+    def test_similares_se_agrupan_solo_dentro_del_mismo_medio(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        variante = titulo + ' gratuita'
+        # La variante supera el umbral de similitud sin ser un título idéntico.
+        for segundo_titulo in (titulo, variante):
+            filas = [
+                (1, titulo, ahora, ahora, 'El Territorio (Misiones)'),
+                (2, segundo_titulo, ahora, ahora, '  EL  TERRITORIO (Archivo) '),
+                (3, segundo_titulo, ahora, ahora, 'Misiones Online'),
+                (4, titulo, ahora, ahora, 'Misiones Online'),
+            ]
+            for orden, esperado in ((filas, [1, 3]), (list(reversed(filas)), [4, 2])):
+                with self.subTest(titulo=segundo_titulo, esperado=esperado):
+                    self.assertEqual(ids_publicaciones_unicas(iter(orden)), esperado)
+                    objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp,
+                                               fecha_captura=fc, fuente=f)
+                               for pk, t, fp, fc, f in orden]
+                    for limite in (None, 0, -1, 1, 2, 10):
+                        visibles = publicaciones_unicas(iter(objetos), limite)
+                        self.assertEqual([p.pk for p in visibles],
+                                         esperado if limite is None or limite <= 0 else esperado[:limite])
+
+    def test_conserva_contrato_anterior_y_fuentes_desconocidas(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        filas = [(1, titulo, None, ahora), (2, titulo, None, ahora)]
+        self.assertEqual(ids_publicaciones_unicas(iter(filas)), [1])
+        objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp, fecha_captura=fc)
+                   for pk, t, fp, fc in filas]
+        self.assertEqual([p.pk for p in publicaciones_unicas(objetos)], [1])
+        filas = [(*filas[0], None), (*filas[1], ''),
+                 (3, titulo, None, ahora, 'Primera Edición')]
+        self.assertEqual(ids_publicaciones_unicas(filas), [1, 3])
+
+    def test_parentesis_no_fusionan_identidades_de_medios(self):
+        from types import SimpleNamespace
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        fuentes = ('Radio (FM 100.1)', 'Radio (FM 98.5)', '(Medio A)', '(Medio B)',
+                   'Misiones Online', 'Misiones Online (Archivo)',
+                   'El Territorio', 'El Territorio (Desconocida)',
+                   'Otro El Territorio (Misiones)', 'El Territorio (Misiones) (Archivo)')
+        filas = [(pk, titulo, ahora, ahora, fuente) for pk, fuente in enumerate(fuentes, 1)]
+        esperado = list(range(1, len(fuentes) + 1))
+        self.assertEqual(ids_publicaciones_unicas(filas), esperado)
+        objetos = [SimpleNamespace(pk=pk, titulo=t, fecha_publicacion=fp,
+                                   fecha_captura=fc, fuente=f) for pk, t, fp, fc, f in filas]
+        self.assertEqual([p.pk for p in publicaciones_unicas(objetos)], esperado)
+
+    def test_solo_secciones_reconocidas_de_el_territorio_comparten_medio(self):
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        secciones = ('Misiones', 'Tecnologia', 'Policiales', 'Cultura', 'Actualidad',
+                     'Deportes', 'Agro', 'La-region', 'Pais-y-mundo', 'Archivo')
+        filas = [(1, titulo, ahora, ahora, 'El Territorio')]
+        filas.extend((pk, titulo, ahora, ahora, f'  EL  TERRITORIO ( {seccion.upper()} )  ')
+                     for pk, seccion in enumerate(secciones, 2))
+        self.assertEqual(ids_publicaciones_unicas(filas), [1])
+        # Un sufijo reconocido no se elimina de otros nombres de medios.
+        filas = [(1, titulo, ahora, ahora, 'Radio'),
+                 (2, titulo, ahora, ahora, 'Radio (Misiones)')]
+        self.assertEqual(ids_publicaciones_unicas(filas), [1, 2])
+
+    def test_admite_filas_iterables_de_cuatro_o_cinco_campos(self):
+        from core.services.publicaciones_unicas import ids_publicaciones_unicas
+
+        ahora = timezone.now()
+        titulo = 'Personas mayores desarrollan proyectos comunitarios para mejorar salud mental'
+        antiguas = [(1, titulo, None, ahora), (2, titulo, None, ahora)]
+        nuevas = [(3, titulo, ahora, ahora, 'El Territorio (Misiones)'),
+                  (4, titulo, ahora, ahora, 'El Territorio (Archivo)'),
+                  (5, titulo, ahora, ahora, 'Misiones Online')]
+        for filas, esperado in ((antiguas, [1]), (nuevas, [3, 5]),
+                                (antiguas + nuevas, [1, 3, 5])):
+            for construir in (iter, lambda fila: (campo for campo in fila)):
+                with self.subTest(campos=[len(f) for f in filas], construir=construir):
+                    self.assertEqual(ids_publicaciones_unicas(construir(f) for f in filas), esperado)
+        for fila in ((1, titulo, ahora), (1, titulo, ahora, ahora, 'Medio', 'extra')):
+            with self.subTest(fila=fila), self.assertRaises(ValueError):
+                ids_publicaciones_unicas([iter(fila)])
+
+    def crear_copias_de_dos_medios(self):
+        from core.models import Categoria
+        from core.services.clasificacion import vincular_categoria
+
+        categoria = Categoria.objects.create(nombre_categoria='Salud')
+        ahora = timezone.now()
+        publicaciones = []
+        for numero, fuente in enumerate(('El Territorio (Misiones)',
+                                         'El Territorio (Archivo)', 'Misiones Online')):
+            publicacion = Publicacion.objects.create(
+                hash_origen=f'h12-copia-{numero}', fuente=fuente,
+                titulo='Personas mayores desarrollan proyectos comunitarios para mejorar salud mental',
+                contenido='La salud mental de las personas mayores requiere atención.',
+                departamento='capital', fecha_publicacion=ahora,
+            )
+            vincular_categoria(publicacion, categoria)
+            publicaciones.append(publicacion)
+        return publicaciones
+
+    def test_categoria_y_etiqueta_conservan_dos_medios_y_paginacion(self):
+        from django.urls import reverse
+        publicaciones = self.crear_copias_de_dos_medios()
+        for url in (reverse('publicaciones_categoria', args=['salud']),
+                    reverse('publicaciones_etiqueta', args=['salud'])):
+            for orden in ('recientes', 'antiguas'):
+                with self.subTest(url=url, orden=orden):
+                    respuesta = self.client.get(url, {'orden': orden})
+                    self.assertEqual(respuesta.status_code, 200)
+                    pagina = respuesta.context['pagina']
+                    self.assertEqual(pagina.paginator.count, 2)
+                    self.assertEqual(sum(p.fuente.startswith('El Territorio') for p in pagina), 1)
+                    self.assertIn(publicaciones[2].pk, [p.pk for p in pagina])
+        self.assertEqual(Publicacion.objects.count(), 3)
+
+    def test_destacadas_conservan_dos_medios_y_limite(self):
+        from core.services.relevancia import noticias_destacadas, noticias_destacadas_por_categoria
+        self.crear_copias_de_dos_medios()
+        self.assertEqual(len(noticias_destacadas()), 2)
+        self.assertEqual(len(noticias_destacadas(limite=1)), 1)
+        salud = next(c for c in noticias_destacadas_por_categoria() if c['nombre'] == 'Salud')
+        self.assertEqual(len(salud['publicaciones']), 2)
+        self.assertEqual(len({p.fuente.split(' (')[0] for p in salud['publicaciones']}), 2)
+
+    def test_tendencias_conservan_dos_medios_y_prioridad(self):
+        from core.models import ValoracionPublicacion
+        from core.services.relevancia import tendencias_destacadas
+        publicaciones = self.crear_copias_de_dos_medios()
+        for indice in range(3):
+            usuario = get_user_model().objects.create_user(username=f'lector_h12_{indice}')
+            ValoracionPublicacion.objects.create(
+                publicacion=publicaciones[1], usuario=usuario, sentimiento='positivo',
+            )
+            if indice < 2:
+                ValoracionPublicacion.objects.create(
+                    publicacion=publicaciones[2], usuario=usuario, sentimiento='neutral',
+                )
+        tendencias = tendencias_destacadas()
+        self.assertEqual([t['publicacion'].pk for t in tendencias],
+                         [publicaciones[1].pk, publicaciones[2].pk])
+        self.assertEqual([t['participaciones'] for t in tendencias], [3, 2])
+        self.assertTrue(all(not t['estimada'] for t in tendencias))
+
+
 class LoginIdentificadorTestCase(TestCase):
     def setUp(self):
         from rest_framework.test import APIClient
@@ -3338,3 +3657,192 @@ class ModeracionConcurrenteH4Tests(TransactionTestCase):
             self.assertEqual(evento.change_message, f'Moderación de comentario: estado {anterior} → {destino}.')
             anterior = destino
         self.assertEqual(self.comentario.estado, anterior)
+
+
+class TransporteMultifuenteTestCase(SimpleTestCase):
+    """Transporte real con DNS y conexiones simulados; prohíbe red accidental."""
+
+    def setUp(self):
+        import socket
+        from core.services import descarga_segura
+        from core.services.fuentes_rss import FUENTES_RSS
+        self.red = descarga_segura
+        self.fuentes = FUENTES_RSS
+        self.publica = (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))
+        for nombre in ('socket.socket.connect', 'socket.socket.connect_ex', 'socket.getaddrinfo'):
+            parche = patch(nombre, side_effect=AssertionError('Red real prohibida'))
+            parche.start()
+            self.addCleanup(parche.stop)
+
+    def respuesta(self, estado=200, destino=None, cuerpo=b'RSS'):
+        from unittest.mock import MagicMock
+        respuesta = MagicMock(status=estado)
+        respuesta.getheader.return_value = destino
+        respuesta.read1.side_effect = [cuerpo, b'']
+        return respuesta
+
+    def test_descarga_y_redirect_www_para_cada_fuente(self):
+        for fuente in self.fuentes:
+            with self.subTest(fuente=fuente.identificador), patch.object(
+                self.red.socket, 'getaddrinfo', return_value=[self.publica]
+            ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                destino = 'https://' + fuente.hosts_permitidos[1] + '/otra?x=1'
+                conexion.return_value.getresponse.side_effect = [
+                    self.respuesta(302, destino), self.respuesta()]
+                self.assertEqual(self.red.descargar(fuente.feed, fuente=fuente), b'RSS')
+                self.assertEqual(dns.call_count, 2)
+                self.assertEqual(conexion.call_args.args[:2], (fuente.hosts_permitidos[1], self.publica))
+                self.assertEqual(conexion.return_value.request.call_args.args, ('GET', '/otra?x=1'))
+                self.assertEqual(conexion.return_value.close.call_count, 2)
+
+    def test_destinos_maliciosos_y_otros_medios_sin_dns(self):
+        for fuente in self.fuentes:
+            host = fuente.hosts_permitidos[0]
+            urls = [otra.feed for otra in self.fuentes if otra != fuente]
+            urls += ['https://www.elterritorio.com.ar/', 'http://' + host,
+                     'https://' + host + '.evil.org/', 'https://' + host + '@evil.org/',
+                     'https://user@' + host, 'https://' + host + ':8443/',
+                     'https://' + host + ':abc/', 'https://' + host + '/#',
+                     'https://' + host + '/\nfoo', 'https://' + host + '\\@evil.org/',
+                     'https://127.0.0.1/', 'https://[::1]/', 'https://169.254.169.254/']
+            for url in urls:
+                with self.subTest(fuente=fuente.identificador, url=url), self.assertRaises(ValueError):
+                    self.red.descargar(url, fuente=fuente)
+
+    def test_redirect_no_cruza_medios_ni_degrada_https(self):
+        for fuente in self.fuentes:
+            for destino in ('https://elterritorio.com.ar/', 'http://' + fuente.hosts_permitidos[0],
+                            '//localhost/', 'https://169.254.169.254/'):
+                with self.subTest(fuente=fuente.identificador, destino=destino), patch.object(
+                    self.red.socket, 'getaddrinfo', return_value=[self.publica]
+                ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                    conexion.return_value.getresponse.return_value = self.respuesta(302, destino)
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(fuente.feed, fuente=fuente)
+                    self.assertEqual(dns.call_count, 1)
+                    conexion.return_value.close.assert_called_once()
+        # También entre dos medios del catálogo, en ambos sentidos.
+        for origen, destino in ((self.fuentes[0], self.fuentes[1]), (self.fuentes[1], self.fuentes[0])):
+            with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+                self.red, '_Conexion'
+            ) as conexion:
+                conexion.return_value.getresponse.return_value = self.respuesta(302, destino.feed)
+                with self.assertRaises(ValueError):
+                    self.red.descargar(origen.feed, fuente=origen)
+                self.assertEqual(conexion.call_count, 1)
+
+    def test_redirect_entre_medios_sigue_denegado_despues_del_cambio_jsonld(self):
+        origen, destino = self.fuentes[0], self.fuentes[1]
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]) as dns, patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta(
+                302, destino.feed)
+            with self.assertRaises(ValueError):
+                self.red.descargar(origen.feed, fuente=origen)
+            self.assertEqual(dns.call_count, 1)
+            self.assertEqual(conexion.call_count, 1)
+            conexion.return_value.close.assert_called_once()
+
+    def test_dns_publico_completo_y_revalidado_tras_redirect(self):
+        fuente = self.fuentes[0]
+        for ip in ('127.0.0.1', '10.0.0.1', '169.254.169.254', '::1', 'fc00::1',
+                   '::ffff:127.0.0.1', '224.0.0.1', 'ff02::1', '2002:7f00:1::', '2001::1'):
+            privado = (*self.publica[:4], (ip, 443))
+            for respuestas_dns in ([[self.publica, privado]], [[self.publica], [privado]]):
+                with self.subTest(ip=ip, saltos=len(respuestas_dns)), patch.object(
+                    self.red.socket, 'getaddrinfo', side_effect=respuestas_dns
+                ), patch.object(self.red, '_Conexion') as conexion:
+                    conexion.return_value.getresponse.return_value = self.respuesta(302, '/otra')
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(fuente.feed, fuente=fuente)
+                    self.assertEqual(conexion.call_count, len(respuestas_dns) - 1)
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[]), self.assertRaises(ValueError):
+            self.red.descargar(fuente.feed, fuente=fuente)
+
+    def test_limites_de_fuente_y_timeout_compatibles(self):
+        from dataclasses import replace
+        fuente = replace(self.fuentes[0], max_bytes=3, max_redirecciones=0, timeout_segundos=2)
+        for respuesta in (self.respuesta(cuerpo=b'1234'), self.respuesta(302, '/otra')):
+            with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+                self.red, '_Conexion'
+            ) as conexion, patch.object(self.red.time, 'monotonic', return_value=100), patch.object(
+                self.red, 'FUENTES_RSS', (fuente,)
+            ):
+                conexion.return_value.getresponse.return_value = respuesta
+                with self.assertRaises(ValueError):
+                    self.red.descargar(fuente.feed, 8, fuente=fuente)
+                self.assertEqual(conexion.call_count, 1)
+                self.assertEqual(conexion.call_args.args[2], 2)
+                conexion.return_value.close.assert_called_once()
+        for timeout in (None, True, 0, -1, float('inf')):
+            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                self.red.descargar(self.fuentes[0].feed, timeout, fuente=self.fuentes[0])
+
+    def test_territorio_sigue_siendo_predeterminado(self):
+        url = 'https://www.elterritorio.com.ar/noticia'
+        self.assertEqual(self.red.validar_url(url).hostname, 'www.elterritorio.com.ar')
+        self.assertEqual(self.red.clave_identidad_url(url), url)
+        for fuente in self.fuentes:
+            with self.assertRaises(ValueError):
+                self.red.descargar(fuente.feed)
+        with self.assertRaises(ValueError):
+            self.red.descargar(url, fuente='misiones_online')
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta()
+            self.assertEqual(self.red.descargar(url, 5), b'RSS')
+
+
+    def test_politicas_manipuladas_rechazadas_antes_de_dns_y_conexion(self):
+        from dataclasses import replace
+        from core.services.fuentes_rss import FuenteRSS
+        fuente, otra = self.fuentes[:2]
+        alteraciones = (
+            {'hosts_permitidos': fuente.hosts_permitidos + otra.hosts_permitidos},
+            {'hosts_permitidos': fuente.hosts_permitidos + ('evil.org',)},
+            {'hosts_permitidos': fuente.hosts_permitidos[:1]},
+            {'max_bytes': fuente.max_bytes + 1},
+            {'max_bytes': fuente.max_bytes - 1},
+            {'max_redirecciones': fuente.max_redirecciones + 1},
+            {'max_redirecciones': 0},
+            {'timeout_segundos': fuente.timeout_segundos + 1},
+            {'timeout_segundos': 1},
+            {'limite_noticias': fuente.limite_noticias + 1},
+            {'habilitada': True},
+            {'identificador': 'fuente_desconocida'},
+            {'feed': 'https://' + fuente.hosts_permitidos[0] + '/otro'},
+            {'nombre': 'Nombre alterado'},
+            {'hosts_permitidos': otra.hosts_permitidos, 'feed': otra.feed},
+        )
+        class PoliticaSuplantada(FuenteRSS):
+            def validar_url(self, url):
+                raise AssertionError('No debe ejecutar validación redefinida')
+
+        # El constructor llama validar_url; para esta prueba aislamos ese paso.
+        with patch.object(PoliticaSuplantada, 'validar_url'):
+            suplantada = PoliticaSuplantada(**vars(fuente))
+        politicas = [replace(fuente, **cambios) for cambios in alteraciones] + [suplantada]
+        for politica in politicas:
+            with self.subTest(politica=politica), patch.object(
+                self.red.socket, 'getaddrinfo'
+            ) as dns, patch.object(self.red, '_Conexion') as conexion:
+                # Simula el redirect entre medios que antes aceptaba la política ampliada.
+                conexion.return_value.getresponse.return_value = self.respuesta(302, otra.feed)
+                for url in (fuente.feed, otra.feed):
+                    with self.assertRaises(ValueError):
+                        self.red.validar_url(url, fuente=politica)
+                    with self.assertRaises(ValueError):
+                        self.red.descargar(url, fuente=politica)
+                dns.assert_not_called()
+                conexion.assert_not_called()
+
+    def test_copia_canonica_conserva_compatibilidad(self):
+        from dataclasses import replace
+        fuente = replace(self.fuentes[0])
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = self.respuesta()
+            self.assertEqual(self.red.descargar(fuente.feed, fuente=fuente), b'RSS')

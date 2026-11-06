@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel><title>Medio</title><link>https://misionesonline.net/</link><description>Noticias</description>
+<item><title><![CDATA[Educación &amp; salud]]></title><link>https://misionesonline.net/nota?id=42&amp;utm_source=rss&amp;vista=amp</link><dc:date>2026-11-05T10:20:30-03:00</dc:date><description><![CDATA[<p>Resumen breve.</p>]]></description><content:encoded><![CDATA[<p>Contenido completo diferente.</p><script>alert(1)</script>]]></content:encoded><category>Sociedad</category></item>
+</channel></rss>
