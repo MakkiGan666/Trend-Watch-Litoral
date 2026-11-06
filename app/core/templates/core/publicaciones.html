@@ -28,9 +28,9 @@
     {% endif %}
 
     <div class="dashboard-summary" aria-label="Resumen de los registros filtrados">
-        <div class="glass"><span>Coincidencias</span><strong>{{ resumen.total }}</strong><small>de {{ total_global }} publicaciones registradas</small></div>
-        <div class="glass"><span>Con análisis de sentimiento</span><strong>{{ resumen.analizadas }}</strong></div>
-        <div class="glass"><span>Pendientes de análisis</span><strong>{{ resumen.pendientes }}</strong></div>
+        <div class="glass"><span>Coincidencias</span><strong {% if not resumen.total %}class="dashboard-summary-empty"{% endif %}>{% if resumen.total %}{{ resumen.total }}{% else %}Sin coincidencias{% endif %}</strong><small>de {{ total_global }} publicaciones registradas</small></div>
+        <div class="glass"><span>Con análisis de sentimiento</span><strong {% if not resumen.analizadas %}class="dashboard-summary-empty"{% endif %}>{% if resumen.analizadas %}{{ resumen.analizadas }}{% else %}Aún sin análisis{% endif %}</strong></div>
+        <div class="glass"><span>Pendientes de análisis</span><strong {% if not resumen.pendientes %}class="dashboard-summary-empty"{% endif %}>{% if resumen.pendientes %}{{ resumen.pendientes }}{% else %}Sin pendientes{% endif %}</strong></div>
     </div>
 
     <form class="dashboard-filters glass glass--sheen" data-dashboard-filters method="get" action="{% url 'publicaciones' %}">
@@ -59,7 +59,7 @@
                 <p>Los filtros y el resumen abarcan todas las noticias registradas. La tabla muestra 25 por página.</p>
                 <p data-dashboard-edit-help role="status" hidden>Modo de edición activo. Elegí una noticia para editarla o eliminarla.</p>
             </div>
-            <span class="publication-count" role="status" aria-live="polite">{% if resumen.total %}{{ pagina.start_index }}–{{ pagina.end_index }} de {{ resumen.total }} registros{% else %}0 registros{% endif %}</span>
+            <span class="publication-count" role="status" aria-live="polite">{% if resumen.total %}{{ pagina.start_index }}–{{ pagina.end_index }} de {{ resumen.total }} registros{% else %}Sin registros{% endif %}</span>
         </div>
 
         <div class="publication-table-wrap">
