@@ -19,6 +19,7 @@ from core.models import (AliasURLPublicacion, Locacion, ProcesamientoIAMultifuen
 from core.services.fuentes_rss import FUENTES_RSS
 from core.services.parametros import entero_positivo, segundos_validos
 from core.services.persistencia_multifuente import persistir_lote
+from core.services.autorizacion_gemini import fuente_autorizada, publicacion_multifuente_autorizada
 
 
 def _opciones(batch_size, timeout_segundos, pausa_segundos):
@@ -46,14 +47,19 @@ def _listos():
 
 def filtro_cliente_global():
     """Filtra antes del cupo; no cambia los candidatos ajenos a H3.1."""
-    origen = Q(fuente__in=[f.nombre for f in FUENTES_RSS], id_registro__fuentes_api='RSS multifuente')
+    editorial_multifuente = Q(fuente__in=[f.nombre for f in FUENTES_RSS])
+    registro_multifuente = Q(id_registro__fuentes_api='RSS multifuente')
     listos = (Q(procesamiento_ia_multifuente__estado='PENDIENTE')
               | Q(procesamiento_ia_multifuente__estado='EN_PROCESO',
                   procesamiento_ia_multifuente__enviado__isnull=True))
     sin_resultados = (~Q(Exists(Sentimiento.objects.filter(id_publicacion_api_id=OuterRef('pk'))))
                       & ~Q(Exists(Locacion.objects.filter(id_publicacion_api_id=OuterRef('pk')))))
     alias = Q(Exists(AliasURLPublicacion.objects.filter(publicacion_id=OuterRef('pk'))))
-    return ~origen | (origen & listos & sin_resultados & alias)
+    autorizadas = Q(fuente__in=[f.nombre for f in FUENTES_RSS if fuente_autorizada(f.identificador)])
+    # La fuente editorial identifica multifuente incluso si falta o está mal el registro.
+    # Un registro inconsistente nunca cae al camino legacy de El Territorio.
+    return ~editorial_multifuente | (editorial_multifuente & registro_multifuente & autorizadas
+                                    & listos & sin_resultados & alias)
 
 
 def _elegible(pub, registro_id, hash_origen):
@@ -66,7 +72,8 @@ def _elegible(pub, registro_id, hash_origen):
         publicacion=pub, fuente=fuente.identificador
     ).exists():
         return False
-    return (not pub.procesado_ia
+    return (publicacion_multifuente_autorizada(pub)
+            and not pub.procesado_ia
             and not Sentimiento.objects.filter(id_publicacion_api=pub).exists()
             and not Locacion.objects.filter(id_publicacion_api=pub).exists()
             and ProcesamientoIAMultifuente.objects.filter(_listos(), publicacion=pub).exists())
@@ -173,6 +180,12 @@ def _procesar(candidatos, *, dry_run, batch_size, timeout_segundos, pausa_segund
                 continue
             pub, token = reserva
             _sin_transaccion()
+            # Revalidar en el último punto antes del envío. Si se revocó,
+            # liberar sólo la reserva propia y conservar PENDIENTE.
+            if not publicacion_multifuente_autorizada(pub):
+                _cancelar_preenvio(pk, token)
+                resultado['omitidas'] += 1
+                continue
             if not _marcar_envio(pk, token):
                 resultado['omitidas'] += 1  # Otro intento recuperó la reserva antes del envío.
                 continue

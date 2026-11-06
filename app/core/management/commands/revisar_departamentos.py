@@ -5,10 +5,14 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 
 from core.models import Publicacion, RevisionDepartamento
 from core.services.clasificacion import departamento_por_texto
 from core.services.clasificacion_departamentos import MAX_LOTE_IA, cliente_ia, consultar_ia
+from core.services.autorizacion_gemini import (es_publicacion_multifuente, fuentes_autorizadas,
+                                               publicacion_multifuente_autorizada)
+from core.services.fuentes_rss import FUENTES_RSS
 
 
 def _huella_contenido(publicacion):
@@ -80,6 +84,15 @@ class Command(BaseCommand):
             raise CommandError('--sin-ia y --previsualizar-ia son excluyentes.')
 
         pendientes = Publicacion.objects.filter(departamento='', pk__gt=cursor_inicial).order_by('pk')
+        excluidas_autorizacion = 0
+        consulta_ia_solicitada = (options['aplicar'] or options['previsualizar_ia']) and not options['sin_ia']
+        if consulta_ia_solicitada:
+            nombres_multifuente = [f.nombre for f in FUENTES_RSS]
+            nombres_autorizados = [f.nombre for f in FUENTES_RSS if f.identificador in fuentes_autorizadas()]
+            origen_multifuente = Q(fuente__in=nombres_multifuente)
+            autorizadas = Q(fuente__in=nombres_autorizados)
+            excluidas_autorizacion = pendientes.filter(origen_multifuente).exclude(autorizadas).count()
+            pendientes = pendientes.filter(~origen_multifuente | autorizadas).order_by('pk')
         if not options['revisar']:
             pendientes = pendientes.filter(revision_departamento__isnull=True)
         lote = list(pendientes.only('id_publicacion_api', 'titulo', 'contenido', 'departamento')[:limite + 1])
@@ -110,7 +123,7 @@ class Command(BaseCommand):
 
         escritas = errores = abstenciones = omitidas = 0
         self.stdout.write(f'Seleccionadas: {len(seleccionadas)}. Resueltas por reglas: {len(reglas)}. '
-                          f'Pendientes de IA: {len(requieren_ia)}.')
+                          f'Pendientes de IA: {len(requieren_ia)}. Excluidas por autorización Gemini: {excluidas_autorizacion}.')
         for publicacion, decision in reglas:
             guardada = False
             if options['aplicar']:
@@ -128,8 +141,14 @@ class Command(BaseCommand):
             tamano_lote_ia = options['tamano_lote_ia']
             for inicio in range(0, len(requieren_ia), tamano_lote_ia):
                 parte = requieren_ia[inicio:inicio + tamano_lote_ia]
+                # Revalidar cada publicación inmediatamente antes del lote externo.
+                parte_autorizada = [p for p in parte if not es_publicacion_multifuente(p)
+                                    or publicacion_multifuente_autorizada(p)]
+                excluidas_autorizacion += len(parte) - len(parte_autorizada)
+                if not parte_autorizada:
+                    continue
                 try:
-                    decisiones, rechazadas = consultar_ia(parte, cliente=cliente)
+                    decisiones, rechazadas = consultar_ia(parte_autorizada, cliente=cliente)
                 except Exception as error:
                     errores += len(parte)
                     codigo = getattr(error, 'code', None)
@@ -142,7 +161,7 @@ class Command(BaseCommand):
                 errores += len(rechazadas)
                 for pk, codigo in sorted(rechazadas.items()):
                     self.stderr.write(f'#{pk}: respuesta IA descartada ({codigo}).')
-                for publicacion in parte:
+                for publicacion in parte_autorizada:
                     decision = decisiones.get(publicacion.pk)
                     if decision is None:
                         continue
@@ -169,7 +188,8 @@ class Command(BaseCommand):
             self.stdout.write('No se consultó a la IA; estas noticias permanecen sin departamento.')
 
         self.stdout.write(f'Decisiones guardadas: {escritas}. Abstenciones IA: {abstenciones}. '
-                          f'Omitidas por cambios concurrentes: {omitidas}. Errores IA: {errores}. Cursor: {cursor}.')
+                          f'Omitidas por cambios concurrentes: {omitidas}. Excluidas por autorización Gemini: {excluidas_autorizacion}. '
+                          f'Errores IA: {errores}. Cursor: {cursor}.')
         if errores:
             raise CommandError(
                 f'{errores} decisiones sin resolver. Reintentá desde '

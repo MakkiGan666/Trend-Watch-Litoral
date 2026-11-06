@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import json
 
 from django.db import close_old_connections, connection, connections, transaction
-from django.test import SimpleTestCase, TransactionTestCase
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from google.genai import types
@@ -36,6 +36,9 @@ class GeminiMultifuenteTests(TransactionTestCase):
         self.sdk = Mock()
         self.sdk.models.generate_content.return_value.text = json.dumps(self.data)
         self.cliente = SimpleNamespace(client=self.sdk, types=types, model_name='modelo-configurado')
+        autorizacion = override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(f.identificador,))
+        autorizacion.enable()
+        self.addCleanup(autorizacion.disable)
         for destino in ('socket.getaddrinfo', 'socket.socket.connect', 'socket.socket.connect_ex',
                         'core.services.descarga_segura.descargar',
                         'core.services.clasificacion._clasificar_con_ia'):
@@ -501,3 +504,64 @@ class MigracionGeminiMultifuenteTests(SimpleTestCase):
         publicacion = dict(operacion.fields)['publicacion']
         self.assertIsInstance(publicacion, models.OneToOneField)
         self.assertTrue(publicacion.primary_key)
+
+
+class AutorizacionGeminiMultifuenteTests(GeminiMultifuenteTests):
+    def test_fuente_editorial_catalogada_no_pasa_a_legacy_con_registro_ausente_o_inconsistente(self):
+        recibo = self.guardar()
+        pub_id = recibo['noticias'][0]['publicacion_id']
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.noticia.fuente_id,)):
+            pub = Publicacion.objects.get(pk=pub_id)
+            RegistroDatos.objects.filter(pk=pub.id_registro_id).update(fuentes_api='otro-origen')
+            cliente = GeminiCliente()
+            cliente.client, cliente.types = self.sdk, types
+            self.assertEqual(cliente.procesar_pendientes()['seleccionadas'], 0)
+            pub.id_registro = None
+            pub.save(update_fields=['id_registro'])
+            self.assertEqual(cliente.procesar_pendientes()['seleccionadas'], 0)
+        self.sdk.models.generate_content.assert_not_called()
+        self.assertEqual(ProcesamientoIAMultifuente.objects.get(publicacion_id=pub_id).estado, 'PENDIENTE')
+
+    def test_denegada_por_defecto_y_recuperable_sin_consumir_cupo(self):
+        from django.test import override_settings
+        recibo = self.guardar()
+        pub_id = recibo['noticias'][0]['publicacion_id']
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()):
+            globales = Publicacion.objects.filter(ia.filtro_cliente_global(), procesado_ia=False)
+            self.assertFalse(globales.filter(pk=pub_id).exists())
+            cliente_global = GeminiCliente()
+            cliente_global.client, cliente_global.types = self.sdk, types
+            self.assertEqual(cliente_global.procesar_pendientes()['seleccionadas'], 0)
+            self.sdk.models.generate_content.assert_not_called()
+            resultado = self.procesar(recibo, batch_size=1)
+            self.assertEqual(resultado['llamadas'], 0)
+            self.sdk.models.generate_content.assert_not_called()
+            trabajo = ProcesamientoIAMultifuente.objects.get(publicacion_id=pub_id)
+            self.assertEqual(trabajo.estado, 'PENDIENTE')
+            self.assertIsNone(trabajo.token_intento)
+
+    def test_autorizacion_revalidada_inmediatamente_antes_del_envio(self):
+        from django.test import override_settings
+        recibo = self.guardar()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.noticia.fuente_id,)):
+            with patch.object(ia, '_marcar_envio', side_effect=lambda *args: False):
+                # La revocación entre reserva y envío deja la fila recuperable.
+                with patch.object(ia, 'publicacion_multifuente_autorizada', side_effect=[True, False]):
+                    resultado = self.procesar(recibo)
+        self.assertEqual(resultado['llamadas'], 0)
+        self.sdk.models.generate_content.assert_not_called()
+        trabajo = ProcesamientoIAMultifuente.objects.get()
+        self.assertEqual(trabajo.estado, 'PENDIENTE')
+        self.assertIsNone(trabajo.token_intento)
+
+    def test_fuente_autorizada_procesa_y_ids_invalidos_fallan_cerrado(self):
+        from django.test import override_settings
+        from django.core.exceptions import ImproperlyConfigured
+        recibo = self.guardar()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(self.noticia.fuente_id,)):
+            resultado = self.procesar(recibo)
+        self.assertEqual(resultado['llamadas'], 1)
+        self.sdk.models.generate_content.assert_called_once()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=('fuente_ajena',)):
+            with self.assertRaises(ImproperlyConfigured):
+                ia.filtro_cliente_global()

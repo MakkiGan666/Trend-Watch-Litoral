@@ -188,3 +188,8 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+
+# IDs H1.1 autorizados a Gemini; vacío por defecto y separado de habilitada RSS.
+GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS = tuple(filter(None, (
+    valor.strip() for valor in os.getenv('GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS', '').split(',')
+)))
