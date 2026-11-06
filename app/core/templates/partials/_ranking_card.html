@@ -1,0 +1,19 @@
+<li class="ranking-card">
+  <div class="ranking-card__layout">
+    <a class="ranking-card__media" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer {{ publicacion.titulo }}">
+      {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
+      {% else %}<span class="ranking-card__fallback" aria-hidden="true">Sin imagen</span>{% endif %}
+    </a>
+    <div class="ranking-card__body">
+      <small>{{ publicacion.fuente|default:'TrendWatch Litoral' }}</small>
+      <a class="ranking-card__title" href="{% url 'noticia' publicacion.pk %}">{{ publicacion.titulo }}</a>
+      {% with etiquetas=publicacion.etiquetas.all %}{% if etiquetas %}
+      <nav class="ranking-card__keywords" aria-label="Etiquetas de {{ publicacion.titulo }}">
+        {% for relacion in etiquetas|slice:':5' %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}
+      </nav>
+      {% endif %}{% endwith %}
+      <span class="ranking-card__count">{% if ejemplo %}Selección por contenido · sin posición calculada{% elif tipo == 'positivo' %}{{ publicacion.positivos }} opiniones positivas{% else %}{{ publicacion.positivos }} a favor · {{ publicacion.negativos }} en contra{% endif %}</span>
+      <a class="ranking-card__more" href="{% url 'noticia' publicacion.pk %}">Leer noticia →</a>
+    </div>
+  </div>
+</li>

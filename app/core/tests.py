@@ -3041,16 +3041,15 @@ class TendenciasH2Tests(TransactionTestCase):
         PublicacionTema.objects.create(id_publicacion_api=self.noticia, id_temas=self.tema)
         self.usuarios = [get_user_model().objects.create_user(f'lector-h2-{i}') for i in range(3)]
 
-    def test_clave_unica_y_rollback_de_lectura_si_falla_asociacion(self):
+    def test_una_lectura_no_crea_tendencia(self):
         from django.db import transaction
         from core.models import ClicPublicacion, Trend
         from core.services.relevancia import registrar_clic
-        with patch('core.services.relevancia.TemaTrend.objects.get_or_create', side_effect=RuntimeError('fallo')):
-            with self.assertRaises(RuntimeError):
-                registrar_clic(self.noticia, self.usuarios[0])
-        self.assertFalse(ClicPublicacion.objects.exists())
+        self.assertTrue(registrar_clic(self.noticia, self.usuarios[0]))
+        self.assertFalse(registrar_clic(self.noticia, self.usuarios[0]))
+        self.assertEqual(ClicPublicacion.objects.count(), 1)
         self.assertFalse(Trend.objects.exists())
-        registrar_clic(self.noticia, self.usuarios[0])
+        Trend.objects.create(clave='lecturas_7_dias', relevancia='Lecturas', intervalos_periodo='7 días')
         with self.assertRaises(IntegrityError), transaction.atomic():
             Trend.objects.create(clave='lecturas_7_dias', relevancia='Lecturas', intervalos_periodo='7 días')
 
@@ -3078,13 +3077,11 @@ class TendenciasH2Tests(TransactionTestCase):
 
     def test_primeras_lecturas_concurrentes_postgresql(self):
         from concurrent.futures import ThreadPoolExecutor
-        from threading import Barrier
         from django.db import connection, close_old_connections
         from core.models import Trend, TemaTrend, ClicPublicacion
         from core.services.relevancia import registrar_clic
         if connection.vendor != 'postgresql':
             self.skipTest('Requiere conexiones PostgreSQL independientes')
-        barrera = Barrier(2)
         def leer(pk):
             close_old_connections()
             try:
@@ -3092,18 +3089,11 @@ class TendenciasH2Tests(TransactionTestCase):
             finally:
                 connections.close_all()
 
-        # get_or_create usa QuerySet.create: sincroniza justo antes de ambos INSERT.
-        from django.db.models import QuerySet
-        crear_queryset = QuerySet.create
-        def insertar(queryset, **kwargs):
-            if queryset.model is Trend:
-                barrera.wait(timeout=15)
-            return crear_queryset(queryset, **kwargs)
-        with patch.object(QuerySet, 'create', insertar), ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=2) as pool:
             resultados = list(pool.map(leer, [u.pk for u in self.usuarios[:2]]))
         self.assertEqual(resultados, [True, True])
-        self.assertEqual(Trend.objects.filter(clave='lecturas_7_dias').count(), 1)
-        self.assertEqual(TemaTrend.objects.count(), 1)
+        self.assertFalse(Trend.objects.exists())
+        self.assertFalse(TemaTrend.objects.exists())
         self.assertTrue(registrar_clic(self.noticia, self.usuarios[2]))
         self.assertEqual(ClicPublicacion.objects.count(), 3)
 

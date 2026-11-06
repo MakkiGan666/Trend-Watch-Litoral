@@ -11,7 +11,8 @@
 <link rel="stylesheet" href="{% static 'css/categories-map.css' %}?v=1">
 <link rel="stylesheet" href="{% static 'css/locality-cards.css' %}?v=3">
 <link rel="stylesheet" href="{% static 'css/categories-layout.css' %}?v=10">
-<link rel="stylesheet" href="{% static 'css/trends-cards.css' %}?v=1">
+<link rel="stylesheet" href="{% static 'css/trends-cards.css' %}?v=4">
+<link rel="stylesheet" href="{% static 'css/rankings.css' %}?v=3">
 {% endblock %}
 
 {% block categories_nav %}
@@ -167,12 +168,39 @@
 
       <section id="resultados" class="chart-card glass glass--sheen reveal" aria-labelledby="h-tendencias">
         <h2 id="h-tendencias">Tendencias</h2>
-        <p class="sub">{% if tendencias.0.estimada %}Selección regional mientras se registran lecturas.{% else %}Noticias más leídas por usuarios registrados en los últimos siete días.{% endif %}</p>
-        <ol class="category-trends trend-card-list">
+        <p class="sub">Actividad reciente de lectores y cobertura regional. Las selecciones temáticas se identifican en cada tarjeta.</p>
+        <ol class="category-trends trend-card-list" tabindex="0" aria-label="Hasta diez noticias de Tendencias; desplazá para ver más">
           {% for tendencia in tendencias %}
           {% include "partials/_tendencia_card.html" with numero=forloop.counter destacada=forloop.first %}
-          {% empty %}<li class="trend-card-list__empty">Todavía no hay noticias regionales identificadas.</li>{% endfor %}
+          {% empty %}<li class="trend-card-list__empty">Todavía no hay suficiente actividad reciente para identificar tendencias.</li>{% endfor %}
         </ol>
+      </section>
+
+      <section class="ranking-grid" aria-label="Rankings de valoraciones recientes">
+        <div class="ranking-panel glass glass--sheen">
+          <h2>Más valoradas positivamente</h2>
+          <p class="sub">Opiniones positivas de lectores durante los últimos siete días. Se requieren al menos tres valoraciones positivas.</p>
+          {% if ejemplos_positivos %}<p class="ranking-preview-label">{% if ranking_positivo %}Después de las valoraciones reales, se muestran candidatas por contenido.{% else %}Vista previa: noticias sobre logros, ayuda y avances. Aún no hay valoraciones suficientes para ordenarlas.{% endif %}</p>{% endif %}
+          <ol class="ranking-list" tabindex="0" aria-label="Noticias del ranking positivo; desplazá para ver más">
+            {% for publicacion in ranking_positivo %}
+              {% include 'partials/_ranking_card.html' with tipo='positivo' %}
+            {% endfor %}
+            {% for publicacion in ejemplos_positivos %}{% include 'partials/_ranking_card.html' with ejemplo=True %}{% endfor %}
+            {% if not ranking_positivo and not ejemplos_positivos %}<li class="ranking-empty">Todavía no hay noticias para mostrar.</li>{% endif %}
+          </ol>
+        </div>
+        <div class="ranking-panel glass glass--sheen">
+          <h2>Lo más polémico</h2>
+          <p class="sub">Noticias con opiniones a favor y en contra, y conversación publicada en los últimos siete días.</p>
+          {% if ejemplos_polemicos %}<p class="ranking-preview-label">{% if ranking_polemico %}Después de las opiniones divididas reales, se muestran candidatas por contenido.{% else %}Vista previa: noticias con señales de debate o confrontación en el título y el contenido. Aún no hay opiniones suficientemente divididas.{% endif %}</p>{% endif %}
+          <ol class="ranking-list" tabindex="0" aria-label="Noticias del ranking polémico; desplazá para ver más">
+            {% for publicacion in ranking_polemico %}
+              {% include 'partials/_ranking_card.html' with tipo='polemico' %}
+            {% endfor %}
+            {% for publicacion in ejemplos_polemicos %}{% include 'partials/_ranking_card.html' with ejemplo=True %}{% endfor %}
+            {% if not ranking_polemico and not ejemplos_polemicos %}<li class="ranking-empty">Todavía no hay noticias para mostrar.</li>{% endif %}
+          </ol>
+        </div>
       </section>
 
       <section class="categories-map-section" id="mapa-misiones" aria-labelledby="map-title">
