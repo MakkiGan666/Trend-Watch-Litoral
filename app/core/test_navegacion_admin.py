@@ -17,7 +17,9 @@ class NavegacionAdminTests(TestCase):
             nav = html[html.index('class="nav__links"'):html.index('class="nav__act"')]
             posiciones = [nav.index('>Inicio<'), nav.index('>Publicaciones<'), nav.index('>Categorías'), nav.index('>Dashboard<'), nav.index('>Administradores<')]
             self.assertEqual(posiciones, sorted(posiciones))
-            self.assertEqual(html.count('href="/administradores/"'), 1)
+            # La barra principal no duplica el enlace; la página de gestión suma
+            # además su propio submenú de cuentas (_admin_accounts_nav).
+            self.assertEqual(nav.count('href="/administradores/"'), 1)
             if ruta == 'gestion_administradores':
                 self.assertIn('href="/administradores/" aria-current="page"', nav)
                 self.assertContains(response, 'data-password-toggle="id_password1"', count=1)
