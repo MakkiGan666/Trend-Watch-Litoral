@@ -84,8 +84,8 @@ class Command(BaseCommand):
         if options['sin_ia'] and options['previsualizar_ia']:
             raise CommandError('--sin-ia y --previsualizar-ia son excluyentes.')
 
-        pendientes = Publicacion.objects.filter(
-            departamento='', contenido_completo=True, pk__gt=cursor_inicial,
+        pendientes = Publicacion.objects.con_cuerpo_completo().filter(
+            departamento='', pk__gt=cursor_inicial,
         ).order_by('pk')
         excluidas_autorizacion = 0
         consulta_ia_solicitada = (options['aplicar'] or options['previsualizar_ia']) and not options['sin_ia']
@@ -98,7 +98,9 @@ class Command(BaseCommand):
             pendientes = pendientes.filter(~origen_multifuente | autorizadas).order_by('pk')
         if not options['revisar']:
             pendientes = pendientes.filter(revision_departamento__isnull=True)
-        lote = list(pendientes.only('id_publicacion_api', 'titulo', 'contenido', 'departamento')[:limite + 1])
+        lote = list(pendientes.only(
+            'id_publicacion_api', 'titulo', 'contenido', 'contenido_completo', 'departamento',
+        )[:limite + 1])
         hay_mas = len(lote) > limite
         seleccionadas = lote[:limite]
         # Capturar la identidad antes de reglas/IA, sin mantener una transacción
@@ -128,6 +130,9 @@ class Command(BaseCommand):
         self.stdout.write(f'Seleccionadas: {len(seleccionadas)}. Resueltas por reglas: {len(reglas)}. '
                           f'Pendientes de IA: {len(requieren_ia)}. Excluidas por autorización Gemini: {excluidas_autorizacion}.')
         for publicacion, decision in reglas:
+            if not Publicacion.objects.con_cuerpo_completo().filter(pk=publicacion.pk).exists():
+                omitidas += 1
+                continue
             guardada = False
             if options['aplicar']:
                 guardada = self._guardar(
@@ -146,7 +151,7 @@ class Command(BaseCommand):
                 parte = requieren_ia[inicio:inicio + tamano_lote_ia]
                 # Revalidar cada publicación inmediatamente antes del lote externo.
                 parte_autorizada = [p for p in parte
-                                    if Publicacion.objects.filter(pk=p.pk, contenido_completo=True).exists()
+                                    if Publicacion.objects.con_cuerpo_completo().filter(pk=p.pk).exists()
                                     and (not es_publicacion_multifuente(p)
                                          or publicacion_multifuente_autorizada(p))]
                 excluidas_autorizacion += len(parte) - len(parte_autorizada)

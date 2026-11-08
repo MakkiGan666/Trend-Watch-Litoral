@@ -6,6 +6,12 @@ from django.utils import timezone
 from uuid import uuid4
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from contextvars import ContextVar
+
+
+_actualizacion_masiva_publicacion_validada = ContextVar(
+    'actualizacion_masiva_publicacion_validada', default=False,
+)
 
 
 def ruta_imagen_publicacion(instance, filename):
@@ -81,7 +87,121 @@ class RegistroDatos(models.Model):
         return f"Registro {self.id_registro} - {self.fuentes_api}"
 
 
-class PublicacionManager(models.Manager):
+class PublicacionQuerySet(models.QuerySet):
+    def con_cuerpo_completo(self):
+        """Sólo artículos con bandera y texto no blanco; excluye legacy vacíos."""
+        return self.filter(contenido_completo=True, contenido__regex=r'\S')
+
+    def update(self, **kwargs):
+        campos_cuerpo = {'contenido', 'contenido_completo'}
+        if not campos_cuerpo.intersection(kwargs):
+            return super().update(**kwargs)
+        if _actualizacion_masiva_publicacion_validada.get():
+            return models.QuerySet.update(self, **kwargs)
+
+        # Las expresiones SQL no permiten validar el estado resultante en Python.
+        # Para estos dos campos se exige usar valores literales y una transición
+        # validada bajo bloqueo; el resto de campos conserva update() normal.
+        if 'contenido' in kwargs and not isinstance(kwargs['contenido'], str):
+            raise ValidationError('Actualizá el cuerpo mediante una transición explícita.')
+        if 'contenido_completo' in kwargs and type(kwargs['contenido_completo']) is not bool:
+            raise ValidationError('Actualizá la disponibilidad del cuerpo con un booleano explícito.')
+
+        using = self.db
+        with transaction.atomic(using=using):
+            actuales = list(self.using(using).select_for_update().values(
+                'pk', 'contenido', 'contenido_completo',
+            ))
+            for actual in actuales:
+                contenido = kwargs.get('contenido', actual['contenido'])
+                completo = kwargs.get('contenido_completo', actual['contenido_completo'])
+                if _estado_cuerpo_valido(contenido, completo):
+                    continue
+                # Compatibilidad: se permite una escritura no-op del estado
+                # histórico vacío que ya existía antes de H5.3.
+                estado_legacy_sin_cambios = (
+                    actual['contenido_completo'] is True
+                    and not (actual['contenido'] or '').strip()
+                    and contenido == actual['contenido']
+                    and completo is True
+                )
+                if not estado_legacy_sin_cambios:
+                    raise ValidationError(
+                        'La actualización dejaría un estado incoherente entre cuerpo y disponibilidad.'
+                    )
+            if not actuales:
+                return 0
+            # Limitar el UPDATE al conjunto bloqueado/validado evita que una
+            # fila insertada concurrentemente entre SELECT y UPDATE eluda el
+            # chequeo por condición original.
+            ids_validados = {fila['pk'] for fila in actuales}
+            return models.QuerySet.update(
+                self.using(using).filter(pk__in=ids_validados), **kwargs,
+            )
+
+    def bulk_create(self, objs, **kwargs):
+        objs = list(objs)
+        for obj in objs:
+            if not _estado_cuerpo_valido(obj.contenido, obj.contenido_completo):
+                _validar_estado_cuerpo(obj.contenido, obj.contenido_completo)
+        campos_conflicto = set(kwargs.get('update_fields') or ())
+        if kwargs.get('update_conflicts') and campos_conflicto.intersection(
+                {'contenido', 'contenido_completo'}):
+            raise ValidationError(
+                'No se permiten upserts masivos sobre cuerpo o disponibilidad; usá una transición validada.'
+            )
+        return super().bulk_create(objs, **kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        fields = list(fields)
+        campos_cuerpo = {'contenido', 'contenido_completo'}
+        nombres = {getattr(campo, 'name', campo) for campo in fields}
+        if not campos_cuerpo.intersection(nombres):
+            return super().bulk_update(objs, fields, batch_size=batch_size)
+
+        objs = list(objs)
+        if any(not hasattr(obj, 'pk') or obj.pk is None for obj in objs):
+            return super().bulk_update(objs, fields, batch_size=batch_size)
+        if 'contenido' in nombres and any(not isinstance(obj.contenido, str) for obj in objs):
+            raise ValidationError('Actualizá el cuerpo mediante una transición explícita.')
+        if 'contenido_completo' in nombres and any(type(obj.contenido_completo) is not bool for obj in objs):
+            raise ValidationError('Actualizá la disponibilidad del cuerpo con un booleano explícito.')
+
+        using = self.db
+        with transaction.atomic(using=using):
+            actuales = {
+                fila['pk']: fila
+                for fila in self.model._base_manager.using(using).select_for_update()
+                .filter(pk__in={obj.pk for obj in objs})
+                .values('pk', 'contenido', 'contenido_completo')
+            }
+            for obj in objs:
+                anterior = actuales.get(obj.pk)
+                if anterior is None:
+                    continue  # Django base valida la fila inexistente.
+                contenido = obj.contenido if 'contenido' in nombres else anterior['contenido']
+                completo = obj.contenido_completo if 'contenido_completo' in nombres else anterior['contenido_completo']
+                if _estado_cuerpo_valido(contenido, completo):
+                    continue
+                estado_legacy_sin_cambios = (
+                    anterior['contenido_completo'] is True
+                    and not (anterior['contenido'] or '').strip()
+                    and contenido == anterior['contenido']
+                    and completo is True
+                )
+                if not estado_legacy_sin_cambios:
+                    raise ValidationError(
+                        'La actualización masiva dejaría un estado incoherente entre cuerpo y disponibilidad.'
+                    )
+
+            token = _actualizacion_masiva_publicacion_validada.set(True)
+            try:
+                return super().bulk_update(objs, fields, batch_size=batch_size)
+            finally:
+                _actualizacion_masiva_publicacion_validada.reset(token)
+
+
+class PublicacionManager(models.Manager.from_queryset(PublicacionQuerySet)):
     def get_queryset(self):
         # Sólo son necesarios para filtrar en SQL; no se presentan ni se leen
         # desde instancias en las vistas. Evitar duplicar texto transferido.
@@ -139,14 +259,7 @@ class Publicacion(models.Model):
 
     def clean(self):
         super().clean()
-        errores = {}
-        tiene_texto = bool((self.contenido or '').strip())
-        if self.contenido_completo and not tiene_texto:
-            errores['contenido'] = 'Una publicación con cuerpo completo requiere contenido.'
-        elif not self.contenido_completo and tiene_texto:
-            errores['contenido'] = 'Una ficha sin cuerpo completo no puede guardar contenido.'
-        if errores:
-            raise ValidationError(errores)
+        _validar_estado_cuerpo(self.contenido, self.contenido_completo)
 
     def save(self, *args, **kwargs):
         # Incluir pre_save/post_save en la misma transacción que el texto.
@@ -155,24 +268,31 @@ class Publicacion(models.Model):
         kwargs['using'] = using
         campos_cuerpo = {'contenido', 'contenido_completo'}
         update_fields = kwargs.get('update_fields')
-        validar_cuerpo = self._state.adding or update_fields is None or bool(campos_cuerpo & set(update_fields))
-        if validar_cuerpo:
-            errores = {}
-            tiene_texto = bool((self.contenido or '').strip())
-            if self.contenido_completo and not tiene_texto:
-                errores['contenido'] = 'Una publicación con cuerpo completo requiere contenido.'
-            elif not self.contenido_completo and tiene_texto:
-                errores['contenido'] = 'Una ficha sin cuerpo completo no puede guardar contenido.'
-            if errores and not self._state.adding:
-                # No bloquear escrituras ajenas al contenido de filas históricas
-                # que pudieran haber quedado vacías antes de este indicador.
-                anterior = (type(self).objects.using(using).filter(pk=self.pk)
-                            .values('contenido', 'contenido_completo').first())
-                if anterior == {'contenido': self.contenido, 'contenido_completo': self.contenido_completo}:
-                    errores = {}
-            if errores:
-                raise ValidationError(errores)
         with transaction.atomic(using=using):
+            validar_cuerpo = (
+                self._state.adding or update_fields is None
+                or bool(campos_cuerpo & set(update_fields))
+            )
+            if validar_cuerpo:
+                anterior = None
+                if not self._state.adding:
+                    anterior = (type(self).objects.using(using).select_for_update()
+                                .filter(pk=self.pk)
+                                .values('contenido', 'contenido_completo').first())
+                campos = set(update_fields) if update_fields is not None else campos_cuerpo
+                contenido_final = self.contenido if 'contenido' in campos else (anterior or {}).get('contenido', self.contenido)
+                completo_final = (self.contenido_completo if 'contenido_completo' in campos
+                                  else (anterior or {}).get('contenido_completo', self.contenido_completo))
+                if not _estado_cuerpo_valido(contenido_final, completo_final):
+                    estado_legacy_sin_cambios = (
+                        anterior is not None
+                        and anterior['contenido_completo'] is True
+                        and not (anterior['contenido'] or '').strip()
+                        and contenido_final == anterior['contenido']
+                        and completo_final is True
+                    )
+                    if not estado_legacy_sin_cambios:
+                        _validar_estado_cuerpo(contenido_final, completo_final)
             return super().save(*args, **kwargs)
 
     @property
@@ -180,6 +300,18 @@ class Publicacion(models.Model):
         if self.imagen_archivo:
             return self.imagen_archivo.url
         return '' if es_portada_generica(self.imagen_url) else self.imagen_url
+
+
+def _estado_cuerpo_valido(contenido, completo):
+    tiene_texto = isinstance(contenido, str) and bool(contenido.strip())
+    return (completo is True and tiene_texto) or (completo is False and not tiene_texto)
+
+
+def _validar_estado_cuerpo(contenido, completo):
+    if not _estado_cuerpo_valido(contenido, completo):
+        if completo is True:
+            raise ValidationError({'contenido': 'Una publicación con cuerpo completo requiere contenido.'})
+        raise ValidationError({'contenido': 'Una ficha sin cuerpo completo no puede guardar contenido.'})
 
 
 class AliasURLPublicacion(models.Model):

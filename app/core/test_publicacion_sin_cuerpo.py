@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
-from django.db import IntegrityError, migrations, transaction
+from django.db import IntegrityError, connection, migrations, transaction
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from google.genai import types
@@ -42,6 +42,100 @@ class MigracionCuerpoCompletoTests(SimpleTestCase):
 
 
 class ValidacionCuerpoPublicacionTests(TestCase):
+    def test_update_fields_no_promueve_ficha_sin_persistir_cuerpo(self):
+        ficha = Publicacion.objects.create(
+            hash_origen='h53-partial-update-repro', titulo='Ficha',
+            contenido='', contenido_completo=False,
+        )
+        ficha.contenido = 'Cuerpo de artículo completo.'
+        ficha.contenido_completo = True
+
+        with self.assertRaises(ValidationError):
+            ficha.save(update_fields={'contenido_completo'})
+
+        ficha.refresh_from_db()
+        self.assertFalse(ficha.contenido_completo)
+        self.assertEqual(ficha.contenido, '')
+
+    def test_queryset_update_no_promueve_ficha_sin_cuerpo(self):
+        ficha = Publicacion.objects.create(
+            hash_origen='h53-queryset-update-repro', titulo='Ficha',
+            contenido='', contenido_completo=False,
+        )
+
+        with self.assertRaises(ValidationError):
+            Publicacion.objects.filter(pk=ficha.pk).update(contenido_completo=True)
+
+        ficha.refresh_from_db()
+        self.assertFalse(ficha.contenido_completo)
+        self.assertEqual(ficha.contenido, '')
+
+    def test_bulk_update_no_promueve_ficha_sin_persistir_cuerpo(self):
+        ficha = Publicacion.objects.create(
+            hash_origen='h53-bulk-update-repro', titulo='Ficha',
+            contenido='', contenido_completo=False,
+        )
+        ficha.contenido = 'Cuerpo completo.'
+        ficha.contenido_completo = True
+        with self.assertRaises(ValidationError):
+            Publicacion.objects.bulk_update([ficha], ['contenido_completo'])
+        ficha.refresh_from_db()
+        self.assertFalse(ficha.contenido_completo)
+        self.assertEqual(ficha.contenido, '')
+
+    def test_bulk_create_rechaza_articulo_completo_sin_cuerpo(self):
+        articulo = Publicacion(
+            hash_origen='h53-bulk-create-vacio', titulo='Artículo sin cuerpo',
+            contenido='', contenido_completo=True,
+        )
+        with self.assertRaises(ValidationError):
+            Publicacion.objects.bulk_create([articulo])
+        self.assertFalse(Publicacion.objects.filter(hash_origen='h53-bulk-create-vacio').exists())
+
+    def test_promocion_valida_guarda_cuerpo_y_estado_en_una_sola_transicion(self):
+        ficha = Publicacion.objects.create(
+            hash_origen='h53-promocion-valida', titulo='Ficha',
+            contenido='', contenido_completo=False,
+        )
+        ficha.contenido = 'Cuerpo extraído y validado.'
+        ficha.contenido_completo = True
+        ficha.save(update_fields={'contenido', 'contenido_completo'})
+        ficha.refresh_from_db()
+        self.assertTrue(ficha.tiene_cuerpo_completo)
+        self.assertEqual(ficha.contenido, 'Cuerpo extraído y validado.')
+
+    def test_queryset_update_permite_transicion_valida_con_ambos_campos(self):
+        ficha = Publicacion.objects.create(
+            hash_origen='h53-promocion-queryset-valida', titulo='Ficha',
+            contenido='', contenido_completo=False,
+        )
+        actualizadas = Publicacion.objects.filter(pk=ficha.pk).update(
+            contenido='Cuerpo validado por el pipeline.', contenido_completo=True,
+        )
+        ficha.refresh_from_db()
+        self.assertEqual(actualizadas, 1)
+        self.assertTrue(ficha.tiene_cuerpo_completo)
+
+    def test_queryset_update_preserva_fila_historica_vacia_sin_cambiar_estado(self):
+        antigua = Publicacion.objects.create(
+            hash_origen='h53-historica-queryset-vacia', titulo='Histórica', contenido='Temporal',
+        )
+        self._vaciar_cuerpo_historico(antigua)
+        antigua.refresh_from_db()
+        self.assertTrue(antigua.contenido_completo)
+        self.assertEqual(Publicacion.objects.filter(pk=antigua.pk).update(contenido_completo=True), 1)
+        antigua.refresh_from_db()
+        self.assertTrue(antigua.contenido_completo)
+        self.assertEqual(antigua.contenido, '')
+
+    @staticmethod
+    def _vaciar_cuerpo_historico(publicacion):
+        tabla = connection.ops.quote_name(Publicacion._meta.db_table)
+        pk = connection.ops.quote_name(Publicacion._meta.pk.column)
+        cuerpo = connection.ops.quote_name(Publicacion._meta.get_field('contenido').column)
+        with connection.cursor() as cursor:
+            cursor.execute(f'UPDATE {tabla} SET {cuerpo} = %s WHERE {pk} = %s', ['', publicacion.pk])
+
     def test_articulo_completo_requiere_texto_y_ficha_rss_debe_tener_cuerpo_vacio(self):
         with self.assertRaises(ValidationError):
             Publicacion.objects.create(hash_origen='h53-completo-vacio', titulo='Artículo')
@@ -65,7 +159,7 @@ class ValidacionCuerpoPublicacionTests(TestCase):
         )
         identidad = (antigua.pk, antigua.hash_origen, antigua.contenido)
         # Representa una fila histórica excepcionalmente vacía anterior a H5.3.
-        Publicacion.objects.filter(pk=antigua.pk).update(contenido='')
+        self._vaciar_cuerpo_historico(antigua)
         antigua.refresh_from_db()
         antigua.save(update_fields=['titulo'])
         antigua.refresh_from_db()
@@ -94,8 +188,12 @@ class ValidacionCuerpoPublicacionTests(TestCase):
         ficha = Publicacion.objects.create(
             hash_origen='h53-check', titulo='Ficha', contenido='', contenido_completo=False,
         )
+        tabla = connection.ops.quote_name(Publicacion._meta.db_table)
+        pk = connection.ops.quote_name(Publicacion._meta.pk.column)
+        cuerpo = connection.ops.quote_name(Publicacion._meta.get_field('contenido').column)
         with self.assertRaises(IntegrityError), transaction.atomic():
-            Publicacion.objects.filter(pk=ficha.pk).update(contenido='no permitido')
+            with connection.cursor() as cursor:
+                cursor.execute(f'UPDATE {tabla} SET {cuerpo} = %s WHERE {pk} = %s', ['no permitido', ficha.pk])
 
     def test_ficha_no_genera_etiquetas_y_clasificacion_no_infiere_con_titulo(self):
         ficha = Publicacion.objects.create(
@@ -114,6 +212,16 @@ class ValidacionCuerpoPublicacionTests(TestCase):
             'categoria': None, 'departamento': None,
             'metodo': 'omitida_sin_cuerpo', 'confirmada': False,
         }])
+        clasificador_ia.assert_not_called()
+
+    def test_clasificacion_omite_cuerpo_vacio_aunque_el_flag_historico_sea_true(self):
+        with patch('core.services.clasificacion._clasificar_con_ia') as clasificador_ia:
+            resultado = clasificar_lote([{
+                'titulo': 'Hospital en San Pedro', 'contenido': '',
+                'contenido_completo': True, 'url': 'https://www.elterritorio.com.ar/nota',
+            }], usar_ia=True, fuente_id='el_territorio')
+        self.assertEqual(resultado[0]['metodo'], 'omitida_sin_cuerpo')
+        self.assertIsNone(resultado[0]['departamento'])
         clasificador_ia.assert_not_called()
 
     def test_al_convertir_articulo_en_ficha_se_quitan_etiquetas_generadas(self):
@@ -188,6 +296,21 @@ class ValidacionCuerpoPublicacionTests(TestCase):
         ficha.refresh_from_db()
         self.assertEqual(ficha.departamento, '')
 
+    def test_historica_vacia_no_genera_etiquetas_ni_clasificacion_territorial(self):
+        antigua = Publicacion.objects.create(
+            hash_origen='h53-historica-vacia-sin-proceso', fuente='El Territorio',
+            titulo='Titular histórico', contenido='Temporal',
+        )
+        self._vaciar_cuerpo_historico(antigua)
+        antigua.refresh_from_db()
+        self.assertFalse(antigua.tiene_cuerpo_completo)
+        etiquetas_antes = PublicacionEtiqueta.objects.filter(publicacion=antigua).count()
+        call_command('generar_etiquetas', '--limite=1')
+        self.assertEqual(PublicacionEtiqueta.objects.filter(publicacion=antigua).count(), etiquetas_antes)
+        salida = __import__('io').StringIO()
+        call_command('revisar_departamentos', '--sin-ia', '--limite=1', stdout=salida)
+        self.assertIn('Seleccionadas: 0.', salida.getvalue())
+
 
 class ExclusionesColaMultifuenteTests(TransactionTestCase):
     def test_ficha_no_consumida_ni_enviada_por_cola_h32(self):
@@ -257,3 +380,27 @@ class ExclusionesColaMultifuenteTests(TransactionTestCase):
         self.assertFalse(ficha.procesado_ia)
         completa.refresh_from_db()
         self.assertTrue(completa.procesado_ia)
+
+    def test_procesador_global_no_deja_que_historica_vacia_consuma_el_lote(self):
+        historica = Publicacion.objects.create(
+            hash_origen='h53-global-historica-vacia', fuente='El Territorio',
+            titulo='Titular histórico sin cuerpo', contenido='Cuerpo temporal',
+        )
+        ValidacionCuerpoPublicacionTests._vaciar_cuerpo_historico(historica)
+        completa = Publicacion.objects.create(
+            hash_origen='h53-global-historica-siguiente', fuente='El Territorio',
+            titulo='Artículo con cuerpo', contenido='Cuerpo completo para analizar.',
+        )
+        sdk = Mock()
+        sdk.models.generate_content.return_value.text = json.dumps({
+            'polaridad': 0, 'confianza': 0.8, 'localidades': [],
+        })
+        cliente = GeminiCliente(api_key='synthetic-test-key')
+        cliente.client = sdk
+        cliente.types = types
+        with patch('core.services.gemini_cliente.time.sleep'):
+            resultado = cliente.procesar_pendientes(batch_size=1)
+        self.assertEqual(resultado['seleccionadas'], 1)
+        self.assertIn('Artículo con cuerpo', sdk.models.generate_content.call_args.kwargs['contents'])
+        self.assertNotIn('Titular histórico sin cuerpo', sdk.models.generate_content.call_args.kwargs['contents'])
+        sdk.models.generate_content.assert_called_once()

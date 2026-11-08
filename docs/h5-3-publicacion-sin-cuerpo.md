@@ -11,13 +11,24 @@ Las altas completas requieren texto no vacío; las fichas se guardan con el
 indicador explícito en `False` y `contenido=''`. La restricción de base impide
 que una fila marcada sin cuerpo contenga texto. No se añadió una restricción
 inversa que pudiera rechazar filas históricas preexistentes con cuerpo vacío.
-El pipeline H2/H3 que exige cuerpo suficiente permanece sin cambios.
+Por ello, una fila histórica vacía con el default `True` no equivale a un cuerpo
+disponible: sólo `tiene_cuerpo_completo` o `Publicacion.objects.con_cuerpo_completo()`
+lo certifican.
+
+Las transiciones entre ficha y artículo deben persistir el cuerpo y el indicador
+juntos en `save(update_fields={...})`. `QuerySet.update()` valida la pareja final
+bajo bloqueo, permite expresiones no relacionadas con el cuerpo y rechaza
+expresiones SQL sobre los dos campos de estado. `bulk_update()` valida sus filas
+bajo bloqueo; `bulk_create()` rechaza altas incoherentes. Una escritura histórica no-op de
+`True`/vacío permanece permitida; una fila histórica no se reclasifica. El CHECK
+de la migración 0023 sigue protegiendo la dirección `sin cuerpo => texto vacío`.
 
 ## Exclusiones de análisis
 
-Las fichas no generan etiquetas automáticas, clasificación por reglas o Gemini,
-revisión territorial ni análisis de sentimiento. Los selectores las descartan
-antes de los límites; los puntos de entrada directos también las revalidan.
+Las fichas y las filas históricas sin texto no generan etiquetas automáticas,
+clasificación por reglas o Gemini, revisión territorial ni análisis de
+sentimiento. Los selectores exigen bandera verdadera y texto no blanco antes de
+los límites; los puntos de envío y persistencia también revalidan el cuerpo.
 Las tareas de recuperación de imagen no descargan páginas para estas filas.
 El Territorio y los artículos completos mantienen su flujo habitual.
 

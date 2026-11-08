@@ -156,13 +156,18 @@ class GeminiFase23TestCase(TestCase):
         self.assertFalse(Sentimiento.objects.exists())
 
     def test_clasificacion_parcial_y_vacia_no_confirma_omitidas(self):
-        noticias = [{'titulo': 'Lorem ipsum', 'contenido': ''}, {'titulo': 'Dolor sit amet', 'contenido': ''}]
+        noticias = [
+            {'titulo': 'Lorem ipsum', 'contenido': 'Texto sintético para clasificar la noticia.',
+             'url': 'https://www.elterritorio.com.ar/nota-1'},
+            {'titulo': 'Dolor sit amet', 'contenido': 'Otro cuerpo sintético sin términos concluyentes.',
+             'url': 'https://www.elterritorio.com.ar/nota-2'},
+        ]
         gemini = SimpleNamespace(client=self.cliente.client, types=self.cliente.types, model_name='modelo-simulado')
         for raw in ('[]', '[{"indice":0,"categoria":"Salud"}]', '[{"indice":8,"categoria":"Salud"}]',
                     '[{"indice":0,"categoria":"Salud"},{"indice":0,"categoria":"Turismo"}]'):
             with self.subTest(raw=raw), patch('core.services.gemini_cliente.gemini_cliente', gemini):
                 self.generar.return_value.text = raw
-                resultado = clasificar_lote(noticias)
+                resultado = clasificar_lote(noticias, fuente_id='el_territorio')
             self.assertFalse(resultado[1]['confirmada'])
             self.assertEqual(resultado[0]['confirmada'], raw == '[{"indice":0,"categoria":"Salud"}]')
         self.assertFalse(PublicacionTema.objects.exists())

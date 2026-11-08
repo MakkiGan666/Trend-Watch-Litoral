@@ -152,7 +152,7 @@ class GeminiCliente:
                         pass
                 continue
             # Revalidar antes del envío por si el lote quedó obsoleto.
-            if not Publicacion.objects.filter(pk=pub.pk, contenido_completo=True).exists():
+            if not Publicacion.objects.con_cuerpo_completo().filter(pk=pub.pk).exists():
                 resultado['omitidas'] += 1
                 continue
             prompt = f"Título: {pub.titulo}\nContenido: {pub.contenido}"

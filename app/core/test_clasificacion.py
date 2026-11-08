@@ -76,7 +76,7 @@ class ClasificarLoteConIATestCase(TestCase):
     # 0: la sección define la categoría; 1: palabra clave clara en el título; 2: dudosa.
     noticias = [
         {'titulo': 'Exportaciones de té', 'contenido': 'Productores de Oberá', 'seccion': 'agro', 'url': 'https://www.elterritorio.com.ar/te'},
-        {'titulo': 'Detuvieron a un hombre por un robo en Cataratas', 'contenido': '', 'seccion': 'misiones', 'url': 'https://www.elterritorio.com.ar/robo'},
+        {'titulo': 'Detuvieron a un hombre por un robo en Cataratas', 'contenido': 'La Policía informó el procedimiento.', 'seccion': 'misiones', 'url': 'https://www.elterritorio.com.ar/robo'},
         {'titulo': 'Nota nacional', 'contenido': 'Sin localidad', 'seccion': 'pais-y-mundo', 'url': 'https://www.elterritorio.com.ar/nacional'},
     ]
 

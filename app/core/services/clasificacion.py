@@ -300,7 +300,10 @@ def _origen_ia_verificado(lote, fuente_id):
 
     if not isinstance(fuente_id, str) or not fuente_id:
         return False
-    if any(noticia.get('contenido_completo', True) is not True for _, noticia in lote):
+    if any(noticia.get('contenido_completo', True) is not True
+           or not isinstance(noticia.get('contenido'), str)
+           or not noticia['contenido'].strip()
+           for _, noticia in lote):
         return False
     if fuente_id == 'el_territorio':
         validar = lambda url: descarga_segura.validar_url(url)
@@ -364,7 +367,9 @@ def clasificar_lote(noticias, usar_ia=True, *, fuente_id=None):
     resultados = []
     dudosas = []
     for indice, noticia in enumerate(noticias):
-        if noticia.get('contenido_completo', True) is not True:
+        if (noticia.get('contenido_completo', True) is not True
+                or not isinstance(noticia.get('contenido'), str)
+                or not noticia['contenido'].strip()):
             # Las fichas RSS no se clasifican a partir del título aislado.
             resultados.append({
                 'categoria': None, 'departamento': None,

@@ -58,7 +58,7 @@ def filtro_cliente_global():
     autorizadas = Q(fuente__in=[f.nombre for f in FUENTES_RSS if fuente_autorizada(f.identificador)])
     # La fuente editorial identifica multifuente incluso si falta o está mal el registro.
     # Un registro inconsistente nunca cae al camino legacy de El Territorio.
-    return Q(contenido_completo=True) & (~editorial_multifuente | (editorial_multifuente & registro_multifuente & autorizadas
+    return Q(contenido_completo=True, contenido__regex=r'\S') & (~editorial_multifuente | (editorial_multifuente & registro_multifuente & autorizadas
                                     & listos & sin_resultados & alias)
                                     )
 
