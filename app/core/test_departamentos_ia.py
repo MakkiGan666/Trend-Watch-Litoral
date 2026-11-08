@@ -6,9 +6,11 @@ from unittest.mock import MagicMock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 
-from core.models import Publicacion, RevisionDepartamento
+from core.models import AliasURLPublicacion, Publicacion, RegistroDatos, RevisionDepartamento
+from core.services.fuentes_rss import FUENTES_RSS
 from core.services.clasificacion_departamentos import validar_respuesta_ia
 
 
@@ -38,6 +40,86 @@ class RevisionDepartamentoTests(TestCase):
             contenido='Wanda recibió nuevos equipos para el centro cultural.',
             departamento='',
         )
+
+
+    def crear_multifuente(self, registro='RSS multifuente', hash_origen='multifuente-departamento'):
+        fuente = FUENTES_RSS[0]
+        recibo = None if registro is None else RegistroDatos.objects.create(fuentes_api=registro, estado='EXITO',
+            lenguaje='es', fecha_ejecucion=timezone.now())
+        publicacion = Publicacion.objects.create(hash_origen=hash_origen,
+            fuente=fuente.nombre, titulo='Noticia sin departamento',
+            contenido='Wanda recibió nuevos equipos y servicios para la comunidad local.',
+            departamento='', id_registro=recibo)
+        AliasURLPublicacion.objects.create(publicacion=publicacion, fuente=fuente.identificador,
+            url_normalizada='https://misionesonline.net/' + hash_origen)
+        return publicacion
+
+    def test_multifuente_no_autorizada_excluida_antes_del_limite_en_aplicar_y_preview(self):
+        noticia = self.crear_multifuente()
+        cliente, generar = cliente_simulado(respuesta(noticia))
+        salida = StringIO()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()), \
+             patch('core.management.commands.revisar_departamentos.cliente_ia', return_value=cliente):
+            call_command('revisar_departamentos', '--aplicar', '--limite=1', f'--despues-de-id={self.noticia.pk}', stdout=salida)
+            call_command('revisar_departamentos', '--previsualizar-ia', '--limite=1', f'--despues-de-id={self.noticia.pk}', stdout=salida)
+        self.assertEqual(generar.call_count, 0)
+        self.assertFalse(RevisionDepartamento.objects.filter(publicacion=noticia).exists())
+        noticia.refresh_from_db()
+        self.assertEqual(noticia.departamento, '')
+        self.assertIn('Excluidas por autorización Gemini: 1', salida.getvalue())
+
+
+    def test_consultar_ia_bloquea_fuente_editorial_sin_recibo_o_con_recibo_inconsistente(self):
+        from core.services.clasificacion_departamentos import consultar_ia
+        cliente, generar = cliente_simulado('[]')
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()):
+            for registro, identidad in ((None, 'sin-recibo'), ('origen-inconsistente', 'recibo-ajeno')):
+                noticia = self.crear_multifuente(registro=registro, hash_origen=identidad)
+                with self.subTest(registro=registro), self.assertRaises(PermissionError):
+                    consultar_ia([noticia], cliente=cliente)
+        generar.assert_not_called()
+
+    def test_revisar_departamentos_excluye_sin_recibo_y_recibo_inconsistente(self):
+        cliente, generar = cliente_simulado('[]')
+        salida = StringIO()
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()), \
+             patch('core.management.commands.revisar_departamentos.cliente_ia', return_value=cliente):
+            for registro, identidad in ((None, 'revision-sin-recibo'),
+                                        ('origen-inconsistente', 'revision-recibo-ajeno')):
+                noticia = self.crear_multifuente(registro=registro, hash_origen=identidad)
+                call_command('revisar_departamentos', '--aplicar', '--limite=1',
+                             f'--despues-de-id={self.noticia.pk}', stdout=salida)
+                call_command('revisar_departamentos', '--previsualizar-ia', '--limite=1',
+                             f'--despues-de-id={self.noticia.pk}', stdout=salida)
+                noticia.refresh_from_db()
+                self.assertEqual(noticia.departamento, '')
+                self.assertFalse(RevisionDepartamento.objects.filter(publicacion=noticia).exists())
+        generar.assert_not_called()
+        self.assertIn('Excluidas por autorización Gemini: 2', salida.getvalue())
+
+    def test_multifuente_autorizada_permite_gemini_en_aplicar_y_preview(self):
+        noticia = self.crear_multifuente()
+        cliente, generar = cliente_simulado(respuesta(noticia))
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=(FUENTES_RSS[0].identificador,)), \
+             patch('core.management.commands.revisar_departamentos.cliente_ia', return_value=cliente):
+            call_command('revisar_departamentos', '--previsualizar-ia', f'--despues-de-id={self.noticia.pk}', stdout=StringIO())
+            self.assertFalse(RevisionDepartamento.objects.filter(publicacion=noticia).exists())
+            call_command('revisar_departamentos', '--aplicar', f'--despues-de-id={self.noticia.pk}', stdout=StringIO())
+        self.assertEqual(generar.call_count, 2)
+        self.assertEqual(RevisionDepartamento.objects.get(publicacion=noticia).metodo, 'ia')
+
+    def test_servicio_departamentos_revalida_y_preserva_el_territorio(self):
+        from core.services.clasificacion_departamentos import consultar_ia
+        multifuente = self.crear_multifuente()
+        cliente, generar = cliente_simulado(respuesta(multifuente))
+        with override_settings(GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS=()):
+            with self.assertRaises(PermissionError):
+                consultar_ia([multifuente], cliente=cliente)
+        self.assertEqual(generar.call_count, 0)
+        cliente_territorio, generar_territorio = cliente_simulado(respuesta(self.noticia))
+        self.assertEqual(consultar_ia([self.noticia], cliente=cliente_territorio)[0][self.noticia.pk]['estado'], 'asignado')
+        self.assertEqual(generar.call_count, 0)
+        self.assertEqual(generar_territorio.call_count, 1)
 
     def test_valida_cita_y_catalogo_sin_aceptar_ubicaciones_inventadas(self):
         validas, errores = validar_respuesta_ia(respuesta(self.noticia), [self.noticia])

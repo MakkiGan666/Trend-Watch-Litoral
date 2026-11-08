@@ -1,17 +1,30 @@
-"""Transporte del medio: HTTPS directo, sin proxies ni resolución posterior al control."""
+"""Transporte por fuente: HTTPS directo, sin proxies ni resolución posterior al control."""
 import http.client
 import ipaddress
 import socket
 import ssl
 import time
 from core.services.parametros import segundos_validos
+from core.services.fuentes_rss import FUENTES_RSS, FuenteRSS
 from urllib.parse import urljoin, urlsplit
 
 HOSTS = frozenset({'elterritorio.com.ar', 'www.elterritorio.com.ar'})
 MAX_BYTES = 8 * 1024 * 1024
 
 
-def validar_url(url):
+def _fuente_canonica(fuente):
+    if type(fuente) is not FuenteRSS:
+        raise ValueError('La política debe ser una FuenteRSS canónica.')
+    for canonica in FUENTES_RSS:
+        if fuente.identificador == canonica.identificador and fuente == canonica:
+            return canonica
+    raise ValueError('Política ajena o alterada respecto del catálogo.')
+
+
+def validar_url(url, *, fuente=None):
+    """Sin fuente conserva la política histórica de El Territorio."""
+    if fuente is not None:
+        return _fuente_canonica(fuente).validar_url(url)
     if not isinstance(url, str) or any(ord(c) <= 32 or ord(c) == 127 for c in url) or '\\' in url:
         raise ValueError('URL inválida')
     partes = urlsplit(url)
@@ -69,30 +82,42 @@ def _restante(limite):
     return restante
 
 
-def _leer_limitado(respuesta, sock, limite):
+def _leer_limitado(respuesta, sock, limite, max_bytes=MAX_BYTES):
     bloques = []
     total = 0
     while True:
         restante = _restante(limite)
         if sock is not None:
             sock.settimeout(restante)
-        bloque = respuesta.read1(min(65536, MAX_BYTES + 1 - total))
+        bloque = respuesta.read1(min(65536, max_bytes + 1 - total))
         _restante(limite)
         if not isinstance(bloque, bytes):
             raise ValueError('Cuerpo HTTP inválido.')
         if not bloque:
             return b''.join(bloques)
         total += len(bloque)
-        if total > MAX_BYTES:
+        if total > max_bytes:
             raise ValueError('Respuesta demasiado grande')
         bloques.append(bloque)
 
 
-def descargar(url, timeout=10):
+def descargar(url, timeout=10, *, fuente=None):
+    """Descarga con hosts fijos por fuente y controles SSRF en cada salto.
+
+    Acepta sólo la configuración canónica de FuenteRSS del catálogo H1.1 (también si está deshabilitada: este
+    transporte no decide la ingesta). El timeout de la fuente actúa como tope.
+    """
+    if fuente is not None:
+        fuente = _fuente_canonica(fuente)
+    validar_url(url, fuente=fuente)
+    max_bytes = fuente.max_bytes if fuente is not None else MAX_BYTES
+    max_redirecciones = fuente.max_redirecciones if fuente is not None else 5
     segundos_validos(timeout, 'timeout')
+    if fuente is not None:
+        timeout = min(timeout, fuente.timeout_segundos)
     limite = time.monotonic() + timeout
-    for salto in range(6):
-        partes = validar_url(url)
+    for salto in range(max_redirecciones + 1):
+        partes = validar_url(url, fuente=fuente)
         destinos = socket.getaddrinfo(partes.hostname, 443, type=socket.SOCK_STREAM)
         if not destinos or any(not _direccion_publica(d[4][0]) for d in destinos):
             raise ValueError('Resolución DNS no pública')
@@ -114,7 +139,7 @@ def descargar(url, timeout=10):
                 continue  # Cada salto vuelve a validar URL y resolución.
             if respuesta.status != 200:
                 raise OSError(f'HTTP {respuesta.status}')
-            return _leer_limitado(respuesta, sock_lectura, limite)
+            return _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
         finally:
             conexion.close()
     raise ValueError('Demasiadas redirecciones')

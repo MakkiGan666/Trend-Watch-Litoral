@@ -1,0 +1,3 @@
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Medio</title><id>urn:medio</id><updated>2026-11-05T10:00:00Z</updated>
+<entry><id>urn:nota</id><title>Noticia Atom</title><link href="https://misionesonline.net/atom" rel="alternate"/><published>2026-11-04T09:00:00Z</published><summary>Resumen Atom</summary><content type="html">&lt;p&gt;Artículo completo&lt;/p&gt;</content><category term="Política"/></entry>
+<entry><id>urn:externo</id><title>Contenido remoto</title><link href="https://misionesonline.net/externo"/><content src="http://169.254.169.254/secret" type="text/plain"/></entry></feed>
