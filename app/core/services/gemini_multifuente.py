@@ -36,7 +36,7 @@ def _sin_transaccion():
 
 
 def _huella(pub):
-    texto = json.dumps([pub.titulo, pub.contenido, pub.fuente, pub.url,
+    texto = json.dumps([pub.titulo, pub.contenido, pub.contenido_completo, pub.fuente, pub.url,
                        pub.hash_origen, pub.id_registro_id], ensure_ascii=False)
     return hashlib.sha256(texto.encode()).hexdigest()
 
@@ -58,12 +58,13 @@ def filtro_cliente_global():
     autorizadas = Q(fuente__in=[f.nombre for f in FUENTES_RSS if fuente_autorizada(f.identificador)])
     # La fuente editorial identifica multifuente incluso si falta o está mal el registro.
     # Un registro inconsistente nunca cae al camino legacy de El Territorio.
-    return ~editorial_multifuente | (editorial_multifuente & registro_multifuente & autorizadas
+    return Q(contenido_completo=True, contenido__regex=r'\S') & (~editorial_multifuente | (editorial_multifuente & registro_multifuente & autorizadas
                                     & listos & sin_resultados & alias)
+                                    )
 
 
 def _elegible(pub, registro_id, hash_origen):
-    if (type(registro_id) is not int or pub.id_registro_id is None
+    if (not pub.tiene_cuerpo_completo or type(registro_id) is not int or pub.id_registro_id is None
             or pub.id_registro_id != registro_id or pub.hash_origen != hash_origen
             or pub.id_registro.fuentes_api != 'RSS multifuente'):
         return False
@@ -126,7 +127,7 @@ def _guardar_resultado(pub, token, data):
         trabajo = ProcesamientoIAMultifuente.objects.select_for_update().get(publicacion=actual)
         if trabajo.estado != 'EN_PROCESO' or trabajo.token_intento != token:
             return False
-        if (_huella(actual) != trabajo.huella_texto or actual.procesado_ia
+        if (not actual.tiene_cuerpo_completo or _huella(actual) != trabajo.huella_texto or actual.procesado_ia
                 or Sentimiento.objects.filter(id_publicacion_api=actual).exists()
                 or Locacion.objects.filter(id_publicacion_api=actual).exists()):
             _error(pub.pk, token, 'texto_o_resultados_modificados')

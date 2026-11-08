@@ -18,7 +18,9 @@ class Command(BaseCommand):
             raise CommandError('El límite debe ser positivo.')
         if options['despues_de_id'] < 0:
             raise CommandError('El cursor no puede ser negativo.')
-        publicaciones = Publicacion.objects.filter(pk__gt=options['despues_de_id'])
+        publicaciones = Publicacion.objects.con_cuerpo_completo().filter(
+            pk__gt=options['despues_de_id'],
+        )
         if options['solo_sin_etiquetas']:
             publicaciones = publicaciones.filter(etiquetas__isnull=True)
         publicaciones = list(publicaciones.order_by('pk')[:limite])
