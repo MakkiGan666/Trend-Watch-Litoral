@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
+import re
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
 from django.urls import reverse
 
@@ -63,8 +65,17 @@ class FichasRSSVisualizacionTests(TestCase):
         self.assertEqual([r['fuente'] for r in por_fuente.context['resultados']], [ficha.fuente])
         api = self.client.get(reverse('buscar_publicaciones'), {'q': 'Diario Litoral'}).json()
         self.assertEqual([r['id_publicacion_api'] for r in api['resultados']], [ficha.pk])
-        self.assertIsNone(api['resultados'][0]['extracto'])
+        self.assertIs(type(api['resultados'][0]['extracto']), str)
+        self.assertEqual(api['resultados'][0]['extracto'], '')
         self.assertNotIn(articulo.pk, [r['id_publicacion_api'] for r in api['resultados']])
+
+        api_articulo = self.client.get(reverse('buscar_publicaciones'), {'q': 'rescatan'}).json()
+        extracto_articulo = next(
+            resultado['extracto'] for resultado in api_articulo['resultados']
+            if resultado['id_publicacion_api'] == articulo.pk
+        )
+        self.assertIs(type(extracto_articulo), str)
+        self.assertIn('El artículo completo describe', extracto_articulo)
 
     def test_detalle_ficha_muestra_titulo_fuente_fecha_y_enlace_original(self):
         ficha = self.crear_ficha(fecha_publicacion=None, imagen_url='')
@@ -116,6 +127,63 @@ class FichasRSSVisualizacionTests(TestCase):
         self.assertEqual(sum(f['total'] for f in dashboard.context['fuentes']), 2)
         self.assertEqual(sum(f['total'] for f in dashboard.context['sentimientos']), 1)
         self.assertContains(dashboard, 'Fichas RSS')
+
+    def test_historica_vacia_se_cuenta_aparte_y_no_aparece_pendiente(self):
+        ficha = self.crear_ficha(hash_origen='ficha-rss-historica-test')
+        analizada = self.crear_articulo(hash_origen='articulo-analizado-test')
+        pendiente = self.crear_articulo(hash_origen='articulo-pendiente-test')
+        historica = self.crear_articulo(hash_origen='articulo-historico-vacio-test')
+        self.vaciar_cuerpo_historico(historica)
+        Sentimiento.objects.create(id_publicacion_api=analizada, polaridad=.4, confianza=.8)
+
+        resumen = resumen_publicaciones(Publicacion.objects.all())
+        self.assertEqual(resumen, {
+            'total': 4, 'articulos_completos': 2, 'fichas_rss': 1,
+            'sin_cuerpo_sin_ficha': 1, 'analizadas': 1, 'pendientes': 1,
+            'inconsistentes': 0,
+        })
+        historica.refresh_from_db()
+        self.assertTrue(historica.contenido_completo)
+        self.assertEqual(historica.contenido, '')
+
+        root = get_user_model().objects.create_superuser('rss_historica_root', 'historica@example.invalid', None)
+        self.client.force_login(root)
+        dashboard = self.client.get(reverse('dashboard'))
+        listado = self.client.get(reverse('publicaciones'))
+        self.assertEqual(dashboard.context['resumen']['sin_cuerpo_sin_ficha'], 1)
+        self.assertContains(dashboard, 'Sin cuerpo — requiere revisión')
+        self.assertEqual(listado.context['resumen']['pendientes'], 1)
+        self.assertContains(listado, 'Ficha RSS: el cuerpo no está almacenado.')
+        self.assertContains(listado, 'Sin cuerpo — requiere revisión')
+        self.assertContains(listado, 'Pendiente de análisis')
+
+        html = listado.content.decode()
+        fila_historica = re.search(
+            rf'<tr data-dashboard-row(?=[^>]*data-analysis="review")[^>]*>.*?{historica.pk}.*?</tr>',
+            html, re.S,
+        )
+        self.assertIsNotNone(fila_historica)
+        self.assertIn('Sin cuerpo — requiere revisión', fila_historica.group())
+        self.assertNotIn('Pendiente de análisis', fila_historica.group())
+        fila_ficha = re.search(
+            rf'<tr data-dashboard-row(?=[^>]*data-analysis="not-applicable")[^>]*>.*?{ficha.pk}.*?</tr>',
+            html, re.S,
+        )
+        self.assertIsNotNone(fila_ficha)
+        fila_pendiente = re.search(
+            rf'<tr data-dashboard-row(?=[^>]*data-analysis="pending")[^>]*>.*?{pendiente.pk}.*?</tr>',
+            html, re.S,
+        )
+        self.assertIsNotNone(fila_pendiente)
+        self.assertIn('Pendiente de análisis', fila_pendiente.group())
+
+    @staticmethod
+    def vaciar_cuerpo_historico(publicacion):
+        tabla = connection.ops.quote_name(Publicacion._meta.db_table)
+        pk = connection.ops.quote_name(Publicacion._meta.pk.column)
+        cuerpo = connection.ops.quote_name(Publicacion._meta.get_field('contenido').column)
+        with connection.cursor() as cursor:
+            cursor.execute(f'UPDATE {tabla} SET {cuerpo} = %s WHERE {pk} = %s', ['', publicacion.pk])
 
     def test_rankings_por_contenido_excluyen_fichas_aunque_el_titulo_tenga_senales(self):
         articulo = self.crear_articulo()

@@ -469,6 +469,9 @@ def publicaciones(request):
         publicacion.dashboard_fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
         publicacion.dashboard_fecha_info = datos_fecha(publicacion)
         publicacion.es_ficha_rss = publicacion.contenido_completo is False
+        publicacion.es_sin_cuerpo_historico = (
+            publicacion.contenido_completo is True and not publicacion.tiene_cuerpo_completo
+        )
         detalles = datos_categorias(publicacion)['categorias_detalle']
         publicacion.dashboard_categorias = [c['id'] for c in detalles]
         publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))

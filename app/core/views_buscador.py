@@ -29,7 +29,7 @@ def buscar_publicaciones(request):
             'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
             'imagen_url': (publicacion.imagen_publica_url or None)
                 if publicacion.tiene_cuerpo_completo else None,
-            'extracto': extracto(publicacion.contenido, terminos) if publicacion.tiene_cuerpo_completo else None,
+            'extracto': extracto(publicacion.contenido, terminos) if publicacion.tiene_cuerpo_completo else '',
         })
     return JsonResponse({
         'consulta': consulta, 'total': pagina.paginator.count,
