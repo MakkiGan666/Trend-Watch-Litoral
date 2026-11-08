@@ -15,18 +15,25 @@
   <div class="news-detail__layout">
   <article class="news-detail__article glass glass--sheen">
     <header>
+      {% if es_ficha_rss %}<p class="news-detail__rss-note" role="note"><strong>Ficha RSS enlazada.</strong> Se muestran metadatos de la fuente; el artículo completo no está almacenado.</p>
+      {% else %}
       <div class="news-detail__tags">
         {% for categoria in categorias_noticia %}<span class="tag">{{ categoria }}</span>{% empty %}<span class="tag tag--soft">Sin categoría asociada</span>{% endfor %}
         {% if seccion_noticia %}<span class="tag tag--soft">Sección: {{ seccion_noticia }}</span>{% endif %}
         {% for localidad in localidades_noticia %}<span class="tag tag--soft">{{ localidad }}</span>{% empty %}<span class="tag tag--soft">Localidad sin identificar</span>{% endfor %}
       </div>
+      {% endif %}
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
+      {% if not es_ficha_rss %}
       {% if etiquetas_noticia %}<nav class="news-keywords" aria-label="Etiquetas de la noticia">{% for relacion in etiquetas_noticia %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}</nav>{% endif %}
       {% if resumen %}<p class="news-detail__summary">{{ resumen }}</p>{% endif %}
+      {% endif %}
       <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if fecha_navegacion.fecha_efectiva %} · {% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_legible }}</time>{% if fecha_navegacion.fecha_precision == 'dia' %} · <span class="news-detail__precision">Hora no verificada</span>{% endif %}{% endif %}</p>
     </header>
 
-    {% if imagen_noticia %}
+    {% if es_ficha_rss %}
+      <div class="news-detail__reading news-detail__reading--rss"><p>El contenido del artículo no se reproduce en TrendWatch. Consultá la publicación en el sitio de {{ publicacion.fuente }}.</p></div>
+    {% elif imagen_noticia %}
       <figure class="news-detail__media"><img src="{{ imagen_noticia }}" alt="Imagen de la noticia: {{ publicacion.titulo }}"><figcaption class="photo-credit">© Foto: {{ credito_imagen }}</figcaption></figure>
     {% else %}
       <div class="news-detail__placeholder" role="img" aria-label="Esta noticia no tiene imagen disponible">
@@ -34,7 +41,7 @@
         <span>Imagen no disponible</span>
       </div>
     {% endif %}
-    <div class="news-detail__reading" data-news-reading>
+    {% if not es_ficha_rss %}<div class="news-detail__reading" data-news-reading>
       <div class="news-detail__content" id="news-full-content" data-news-content>
         {% if primer_parrafo %}{{ primer_parrafo|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
         {% if resto %}
@@ -44,9 +51,9 @@
         </div>
         {% endif %}
       </div>
-    </div>
+    </div>{% endif %}
     <footer class="news-detail__source">
-      <p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>
+      {% if not es_ficha_rss %}<p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>{% endif %}
       {% if enlace_original %}<a class="btn btn--ghost" href="{{ enlace_original }}" target="_blank" rel="noopener noreferrer">Consultar publicación original ↗</a>{% endif %}
       <div class="news-save-action">
         {% if request.user.is_authenticated %}

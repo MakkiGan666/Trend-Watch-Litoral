@@ -70,6 +70,21 @@
                         {% for grupo in categorias_inicio %}
                             {% include "partials/_inicio_categoria.html" with grupo=grupo %}
                         {% endfor %}
+                        {% if fichas_rss_inicio %}
+                        <section class="rss-cards" aria-labelledby="rss-cards-title">
+                            <div class="regional-news__head"><div><p>Metadatos de fuentes RSS</p><h2 id="rss-cards-title">Fichas enlazadas</h2></div></div>
+                            <p class="rss-cards__note">Estas fichas muestran metadatos y enlazan al medio original; no incluyen el cuerpo del artículo.</p>
+                            <ul class="rss-cards__list">
+                                {% for ficha in fichas_rss_inicio %}
+                                <li class="glass rss-cards__item">
+                                    <span class="tag tag--soft">Ficha RSS · sin cuerpo completo</span>
+                                    <h3><a href="{% url 'noticia' ficha.pk %}">{{ ficha.titulo }}</a></h3>
+                                    <p>{{ ficha.fuente }}{% if ficha.fecha_publicacion %} · <time datetime="{{ ficha.fecha_publicacion|date:'c' }}">{{ ficha.fecha_publicacion|date:'j M Y' }}</time>{% endif %}</p>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </section>
+                        {% endif %}
                     </div>
                     <div class="news-sidebar">
                     <aside class="news-trends glass glass--sheen" aria-labelledby="news-trends-title">

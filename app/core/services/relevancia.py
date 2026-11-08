@@ -45,7 +45,7 @@ def _puntaje(publicacion):
 
 def _candidatas_destacadas(categoria=None):
     desde = timezone.now() - timedelta(days=7)
-    publicaciones = publicaciones_provinciales()
+    publicaciones = publicaciones_provinciales().con_cuerpo_completo()
     if categoria:
         publicaciones = publicaciones.filter(temas__id_categoria__nombre_categoria=categoria)
     return publicaciones.defer('contenido').annotate(
@@ -150,7 +150,7 @@ def _cobertura_creciente(limite):
     ahora = timezone.now()
     desde_24h = ahora - timedelta(hours=24)
     desde_7d = ahora - timedelta(days=7)
-    publicaciones = publicaciones_provinciales().filter(
+    publicaciones = publicaciones_provinciales().con_cuerpo_completo().filter(
         Q(fecha_publicacion__gte=desde_7d)
         | Q(fecha_publicacion__isnull=True, fecha_captura__gte=desde_7d)
     ).prefetch_related('etiquetas__etiqueta').order_by(Coalesce('fecha_publicacion', 'fecha_captura').desc(), '-pk')
@@ -303,7 +303,9 @@ def ejemplos_rankings(limite=15):
     """Vista previa por contenido; nunca atribuye votos o reacciones inexistentes."""
     # Leemos primero sólo títulos: el texto completo se consulta para las
     # candidatas, evitando cargar miles de artículos en cada visita.
-    titulos = Publicacion.objects.values_list('pk', 'titulo', 'fecha_publicacion', 'fecha_captura')
+    titulos = Publicacion.objects.con_cuerpo_completo().values_list(
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura'
+    )
     candidatas = {'positivo': [], 'polemico': []}
     for pk, titulo, fecha_publicacion, fecha_captura in titulos.iterator(chunk_size=500):
         palabras = _palabras_normales(titulo)

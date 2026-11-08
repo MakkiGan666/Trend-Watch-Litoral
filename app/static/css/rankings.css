@@ -8,6 +8,7 @@
 .ranking-card{min-width:0;padding:10px;border:1px solid var(--edge);border-radius:16px;background:rgba(255,255,255,.035);transition:background .2s,border-color .2s,transform .2s,box-shadow .2s}
 .ranking-card:hover{background:var(--aqua-soft);border-color:var(--aqua-line);transform:translateY(-2px);box-shadow:0 12px 26px rgba(0,0,0,.13)}
 .ranking-card__layout{display:grid;grid-template-columns:minmax(0,38%) minmax(0,1fr);gap:14px;min-height:146px}
+.ranking-card__layout--metadata{grid-template-columns:minmax(0,1fr);min-height:0}
 .ranking-card__media{display:grid;place-items:center;min-width:0;overflow:hidden;min-height:140px;border-radius:11px;background:var(--ink-800)}
 .ranking-card__media img{width:100%;height:100%;max-height:180px;object-fit:cover}
 .ranking-card__fallback{color:var(--sage);font-size:12px}

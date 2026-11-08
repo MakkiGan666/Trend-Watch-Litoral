@@ -27,8 +27,9 @@ def buscar_publicaciones(request):
             'fuente': publicacion.fuente,
             **datos_fecha(publicacion),
             'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
-            'imagen_url': publicacion.imagen_publica_url or None,
-            'extracto': extracto(publicacion.contenido, terminos),
+            'imagen_url': (publicacion.imagen_publica_url or None)
+                if publicacion.tiene_cuerpo_completo else None,
+            'extracto': extracto(publicacion.contenido, terminos) if publicacion.tiene_cuerpo_completo else None,
         })
     return JsonResponse({
         'consulta': consulta, 'total': pagina.paginator.count,
@@ -68,10 +69,13 @@ def buscar_noticias(request):
                               else datetime.fromisoformat(valor_fecha)) if valor_fecha else None
         resultados.append({
             'titulo': segmentos_resaltados(publicacion.titulo, terminos),
-            'extracto': segmentos_resaltados(extracto(publicacion.contenido, terminos), terminos),
+            'es_ficha_rss': publicacion.contenido_completo is False,
+            'extracto': (segmentos_resaltados(extracto(publicacion.contenido, terminos), terminos)
+                         if publicacion.tiene_cuerpo_completo else None),
             'fuente': publicacion.fuente,
             'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
-            'imagen_url': imagen_segura(publicacion.imagen_publica_url),
+            'imagen_url': (imagen_segura(publicacion.imagen_publica_url)
+                           if publicacion.tiene_cuerpo_completo else None),
             'fecha': presentacion_fecha, **fecha,
         })
 

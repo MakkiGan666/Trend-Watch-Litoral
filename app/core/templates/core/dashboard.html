@@ -29,11 +29,12 @@
   </form>
   <section class="analytics-kpis" aria-label="Indicadores de las publicaciones filtradas">
     <article class="glass"><span>Publicaciones</span><strong {% if not resumen.total %}class="analytics-kpi-empty"{% endif %}>{% if resumen.total %}{{ resumen.total }}{% else %}Sin registros{% endif %}</strong></article>
-    <article class="glass"><span>Con análisis de sentimiento</span><strong {% if not resumen.analizadas %}class="analytics-kpi-empty"{% endif %}>{% if resumen.analizadas %}{{ resumen.analizadas }}{% else %}Aún sin análisis{% endif %}</strong></article>
-    <article class="glass"><span>Pendientes de análisis</span><strong {% if not resumen.pendientes %}class="analytics-kpi-empty"{% endif %}>{% if resumen.pendientes %}{{ resumen.pendientes }}{% else %}Sin pendientes{% endif %}</strong></article>
+    <article class="glass"><span>Con análisis · cuerpo completo</span><strong {% if not resumen.analizadas %}class="analytics-kpi-empty"{% endif %}>{% if resumen.analizadas %}{{ resumen.analizadas }}{% else %}Aún sin análisis{% endif %}</strong></article>
+    <article class="glass"><span>Pendientes · cuerpo completo</span><strong {% if not resumen.pendientes %}class="analytics-kpi-empty"{% endif %}>{% if resumen.pendientes %}{{ resumen.pendientes }}{% else %}Sin pendientes{% endif %}</strong></article>
+    <article class="glass"><span>Fichas RSS</span><strong>{{ resumen.fichas_rss }}</strong></article>
     <article class="glass"><span>Análisis a revisar</span><strong {% if not resumen.inconsistentes %}class="analytics-kpi-empty"{% endif %}>{% if resumen.inconsistentes %}{{ resumen.inconsistentes }}{% else %}Sin casos{% endif %}</strong></article>
   </section>
-  <p class="analytics-note">Se cuenta el sentimiento almacenado, no sólo la marca de procesamiento. «A revisar» identifica registros múltiples o valores fuera de rango. Consultar este panel no ejecuta IA ni modifica noticias.</p>
+  <p class="analytics-note">Publicaciones y gráficos de evolución, fuente, categoría y departamento abarcan todos los registros. Los conteos de análisis y sentimiento incluyen solo artículos con cuerpo completo. Las fichas RSS no cuentan como pendientes de IA; «A revisar» identifica análisis inconsistentes de artículos completos. Consultar este panel no ejecuta IA ni modifica noticias.</p>
   {% if resumen.pendientes %}<aside class="analytics-pending glass"><strong>{{ resumen.pendientes }} publicación{{ resumen.pendientes|pluralize:'es' }} sin análisis disponible</strong><p>Estado informativo, sin alertas automáticas. El procesamiento se realiza mediante las herramientas administrativas existentes.</p><a href="{% url 'publicaciones' %}">Ir a Publicaciones →</a></aside>{% endif %}
   {% if resumen.total %}
   <section class="analytics-chart glass glass--sheen" aria-labelledby="timeline-title">
@@ -43,7 +44,7 @@
     <details><summary>Ver fechas y cantidades</summary><table><thead><tr><th>Período</th><th>Publicaciones</th></tr></thead><tbody>{% for fila in serie %}<tr><td>{{ fila.fecha }}</td><td>{{ fila.total }}</td></tr>{% endfor %}</tbody></table></details>
   </section>
   <div class="analytics-grid">
-    {% include 'partials/_analytics_bars.html' with titulo='Por categoría' filas=categorias nota='Una noticia puede aparecer en varias categorías. Sin categoría indica ausencia de asociaciones.' %}
+    {% include 'partials/_analytics_bars.html' with titulo='Por categoría' filas=categorias nota='Cuenta todas las publicaciones; las fichas sin categoría aparecen como Sin categoría asociada.' %}
     {% include 'partials/_analytics_bars.html' with titulo='Por fuente' filas=fuentes nota='Las secciones de El Territorio se cuentan como una sola fuente. Otras fuentes aparecen por separado.' %}
     {% include 'partials/_analytics_bars.html' with titulo='Por departamento' filas=departamentos nota='Departamento de ingesta y ubicaciones reconocidas. Una noticia puede aparecer en varios departamentos.' %}
     {% if resumen.analizadas %}{% include 'partials/_analytics_bars.html' with titulo='Sentimiento automático registrado' filas=sentimientos nota='Positivo: polaridad mayor que cero; neutral: cero; negativo: menor que cero. Excluye pendientes, conflictos y valoraciones de lectores.' %}{% else %}<section class="analytics-chart glass glass--sheen"><h2>Sentimiento automático registrado</h2><p>Aún no hay análisis válidos para las publicaciones filtradas.</p></section>{% endif %}

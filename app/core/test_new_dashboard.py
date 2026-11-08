@@ -62,7 +62,11 @@ class DashboardAnaliticoTests(TestCase):
         Sentimiento.objects.create(id_publicacion_api=invalida, polaridad=2, confianza=.8)
         self.client.force_login(self.root)
         response = self.client.get(reverse('dashboard'))
-        self.assertEqual(response.context['resumen'], {'total': 4, 'analizadas': 1, 'pendientes': 1, 'inconsistentes': 2})
+        self.assertEqual(response.context['resumen'], {
+            'total': 4, 'articulos_completos': 4, 'fichas_rss': 0,
+            'sin_cuerpo_sin_ficha': 0, 'analizadas': 1, 'pendientes': 1,
+            'inconsistentes': 2,
+        })
         self.assertEqual({f['nombre']: f['total'] for f in response.context['sentimientos']}, {'Positivo': 0, 'Neutral': 1, 'Negativo': 0})
         self.assertEqual(Sentimiento.objects.count(), 4)
 

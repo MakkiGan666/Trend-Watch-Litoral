@@ -434,7 +434,9 @@ class RegresionesUIMultifuenteTests(TestCase):
                                     ('Noticias del 6', self.noticias_del_6)):
             Sentimiento.objects.create(id_publicacion_api=publicacion, polaridad=.4, confianza=.8)
         self.assertEqual(resumen_publicaciones(Publicacion.objects.all()), {
-            'total': 24, 'analizadas': 2, 'pendientes': 22, 'inconsistentes': 0,
+            'total': 24, 'articulos_completos': 24, 'fichas_rss': 0,
+            'sin_cuerpo_sin_ficha': 0, 'analizadas': 2, 'pendientes': 22,
+            'inconsistentes': 0,
         })
         self.assertEqual(self.territorio.fuente, 'El Territorio (Misiones)')
         for fuente, (nombre_almacenado, cantidad) in {
