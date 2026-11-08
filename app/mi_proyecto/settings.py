@@ -193,3 +193,9 @@ SIMPLE_JWT = {
 GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS = tuple(filter(None, (
     valor.strip() for valor in os.getenv('GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS', '').split(',')
 )))
+
+# H5.4: autorización separada para persistir fichas desde metadatos RSS.
+# Vacía por defecto y sin relación con las banderas H1.1 de ingesta completa.
+RSS_METADATOS_FUENTES_AUTORIZADAS = tuple(filter(None, (
+    valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_AUTORIZADAS', '').split(',')
+)))

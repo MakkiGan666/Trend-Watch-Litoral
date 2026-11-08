@@ -110,6 +110,11 @@ def _hash_identidad(fuente, url):
     return generar_hash(serializada)
 
 
+def hash_identidad_fuente_url(fuente, url_normalizada):
+    """Hash compartido por el pipeline completo y las fichas RSS H5.4."""
+    return _hash_identidad(fuente, url_normalizada)
+
+
 def buscar_publicacion_por_url(noticia):
     """Preconsulta sin escrituras ni necesidad de HTML; no oculta conflictos históricos."""
     if type(noticia) is not NoticiaRSS:
@@ -148,6 +153,11 @@ def _existente(fuente, datos, aliases):
     return next(iter(ids), None)
 
 
+def resolver_publicacion_por_identidad(fuente, hash_origen, aliases):
+    """Resuelve alias/hash/URLs históricas sin fusionar ni editar publicaciones."""
+    return _existente(fuente, {'hash_origen': hash_origen}, set(aliases))
+
+
 def _bloquear_fuente(fuente):
     """PostgreSQL serializa decisiones y alta de alias, incluso sin filas previas.
 
@@ -168,12 +178,22 @@ def _bloquear_fuente(fuente):
             cursor.execute('SELECT pg_advisory_xact_lock(%s)', [clave])
 
 
+def bloquear_fuente_rss(fuente):
+    """Comparte el lock transaccional de identidad con H3.1/H4.1."""
+    return _bloquear_fuente(fuente)
+
+
 def _vincular_aliases(fuente, aliases, pk):
     for url in sorted(aliases):
         alias, _ = AliasURLPublicacion.objects.get_or_create(
             fuente=fuente.identificador, url_normalizada=url, defaults={'publicacion_id': pk})
         if alias.publicacion_id != pk:
             raise ConflictoIdentidad('El alias ya pertenece a otra publicación.')
+
+
+def vincular_aliases_rss(fuente, aliases, publicacion_id):
+    """Vincula aliases normalizados bajo la restricción UNIQUE existente."""
+    return _vincular_aliases(fuente, aliases, publicacion_id)
 
 
 def _clasificar_y_validar(datos, seccion):

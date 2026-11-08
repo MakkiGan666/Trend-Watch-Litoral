@@ -154,9 +154,18 @@ class _XMLSinDTD(ET.TreeBuilder):
         raise ValueError('DTD y entidades no permitidos en feeds.')
 
 
-def analizar_rss(datos, fuente):
+def _limite_entradas(fuente, limite_entradas):
+    if limite_entradas is None:
+        return fuente.limite_noticias
+    if type(limite_entradas) is not int or limite_entradas < 1:
+        raise ValueError('El límite de entradas debe ser un entero positivo.')
+    return min(limite_entradas, fuente.limite_noticias)
+
+
+def analizar_rss(datos, fuente, *, limite_entradas=None):
     """Procesa bytes ya descargados, con la política canónica y su límite."""
     descarga_segura.validar_url(fuente.feed, fuente=fuente)
+    limite = _limite_entradas(fuente, limite_entradas)
     if not isinstance(datos, bytes) or len(datos) > fuente.max_bytes:
         raise ValueError('Feed inválido o demasiado grande.')
     try:
@@ -181,7 +190,7 @@ def analizar_rss(datos, fuente):
     if feed.get('bozo') or not feed.get('version') or len(nodos) != len(feed.entries):
         raise ValueError('Feed malformado o formato no reconocido.')
     noticias, rechazos = [], []
-    for indice, entrada in enumerate(feed.entries[:fuente.limite_noticias]):
+    for indice, entrada in enumerate(feed.entries[:limite]):
         try:
             noticias.append(_normalizar(entrada, fuente, nodos[indice].find(campo_resumen) is not None, nodos[indice]))
         except (ValueError, TypeError, AttributeError) as exc:
@@ -189,8 +198,9 @@ def analizar_rss(datos, fuente):
     return ResultadoRSS(tuple(noticias), tuple(rechazos))
 
 
-def leer_rss(fuente):
+def leer_rss(fuente, *, limite_entradas=None):
     """Una sola descarga mediante H2.1; no extrae artículos ni contenido externo."""
     descarga_segura.validar_url(fuente.feed, fuente=fuente)
+    limite = _limite_entradas(fuente, limite_entradas)
     datos = descarga_segura.descargar(fuente.feed, fuente=fuente)
-    return analizar_rss(datos, fuente)
+    return analizar_rss(datos, fuente, limite_entradas=limite)
