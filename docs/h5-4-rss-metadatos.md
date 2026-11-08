@@ -1,0 +1,82 @@
+# H5.4: persistencia acotada de metadatos RSS
+
+## Alcance
+
+`ingestar_rss_metadatos` ofrece un circuito separado del orquestador H4.1 y de
+`ingestar_multifuente`. Lee una sola vez el feed seleccionado mediante H2.1 y
+H2.2; no descarga HTML, no solicita imágenes y no ejecuta extracción H2.3.
+El cambio no agrega modelos ni migraciones.
+
+Cada ficha nueva guarda únicamente el nombre editorial del catálogo, título
+normalizado del RSS, URL del enlace normalizada por H2.2, fecha RSS interpretable
+(o `NULL` si no existe), `contenido=''` y `contenido_completo=False`. El ID
+canónico se persiste como fuente del alias H3.1. No se guardan descripción,
+contenido RSS, sección, imagen, localidad, categoría, etiquetas, sentimiento ni
+resultado de IA. Los valores técnicos `hash_origen`, `fecha_captura`,
+`id_registro` y `procesado_ia=False` sostienen identidad, auditoría y modelo.
+
+## Activación independiente
+
+La configuración `RSS_METADATOS_FUENTES_AUTORIZADAS` lee IDs desde el entorno y
+está vacía por defecto. Es independiente de `FuenteRSS.habilitada` y de la
+autorización Gemini. Además, cada ejecución exige `--confirmar-persistencia`;
+esa opción confirma una sola invocación y no modifica la allowlist. Un ID
+desconocido, duplicado o ausente se rechaza antes de leer el feed. Ninguna fuente
+se habilitó en el catálogo ni en la configuración habitual.
+
+La cantidad visible y persistible se limita a cinco entradas por ejecución
+(default: una). El lector recibe ese límite antes de llamar a H2.1 y H2.2; los
+rechazos fuera del límite no se cuentan en el resumen.
+
+## Uso futuro, sólo después de autorización por fuente
+
+```sh
+RSS_METADATOS_FUENTES_AUTORIZADAS=ID_AUTORIZADO \
+python manage.py ingestar_rss_metadatos \
+  --fuente ID_AUTORIZADO --limite 1 --confirmar-persistencia
+```
+
+El ejemplo es documentación del contrato, no una habilitación ni permiso para
+ejecutarlo contra un medio. Antes de configurar cada ID, H5.6 debe registrar la
+política de acceso, frecuencia, retención y exhibición que corresponda al medio.
+Las fuentes no autorizadas permanecen rechazadas aunque estén en el catálogo.
+
+La salida JSON contiene estado, `fuente_id`, `registro_id`, `nuevas`,
+`duplicadas`, `rechazadas`, `errores` y códigos de causa por índice. No incluye
+títulos, URLs, resúmenes ni mensajes de excepción. Un fallo de consulta no crea
+registro ni publicación; después de leer el feed, cada ficha usa una transacción
+independiente. Una fila fallida se revierte sin descartar las anteriores.
+
+## Identidad e idempotencia
+
+La identidad es SHA-256 compatible con H3.1 sobre `['rss:v1', fuente_id,
+URL_normalizada]`. El alias usa la restricción única existente
+`(fuente, url_normalizada)`. H3.1 y H5.4 comparten el advisory transaction lock
+por fuente, de modo que una carrera entre el modo de cuerpo completo y el modo
+de metadatos se resuelve antes de insertar. PostgreSQL debe operar en
+`Read Committed`.
+
+Si una identidad ya pertenece a un artículo completo, la ficha se informa como
+duplicada y sólo se puede añadir su alias técnico; título, fecha, cuerpo, imagen,
+hash e indicadores del artículo no se sobrescriben. Si la identidad pertenece
+a una ficha, el pipeline completo actual también la tratará como duplicada; no
+hay promoción automática. H5.5/H5.6 deberán definir una transición explícita,
+autorizada y transaccional para una futura promoción.
+
+## Validaciones
+
+- Persistencia sólo para un ID canónico H1.1 y autorización H5.4 explícita.
+- Título no vacío, sin controles inválidos y sin truncamiento; URL HTTPS validada
+  contra los hosts exactos de la fuente; fecha ausente admitida, fecha inválida
+  rechazada.
+- `Publicacion` valida el par de campos cuerpo/disponibilidad; el CHECK 0023
+  conserva la garantía en PostgreSQL.
+- No se crea reserva `ProcesamientoIAMultifuente`, sentimiento, categoría ni
+  etiqueta. Las señales H5.3 también excluyen las fichas vacías.
+- `RegistroDatos` audita cada ejecución autorizada que logró leer el feed. La
+  identidad del feed no habilita automatización ni derechos de reutilización.
+
+Las pruebas usan RSS sintético en memoria y mocks del transporte. Deben correrse
+con PostgreSQL/PostGIS efímero, almacenamiento temporal y red externa bloqueada;
+nunca apuntarse al PostgreSQL habitual. Este cambio no autoriza lecturas reales,
+no habilita los cinco medios y no resuelve sus condiciones particulares.
