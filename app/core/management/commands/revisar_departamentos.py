@@ -18,7 +18,8 @@ from core.services.fuentes_rss import FUENTES_RSS
 def _huella_contenido(publicacion):
     # No normalizar ni truncar: cualquier edición del texto analizado invalida
     # la decisión, aunque la cita aún aparezca en la versión nueva.
-    datos = json.dumps([publicacion.titulo, publicacion.contenido], ensure_ascii=False)
+    datos = json.dumps([publicacion.titulo, publicacion.contenido,
+                        publicacion.contenido_completo], ensure_ascii=False)
     return hashlib.sha256(datos.encode('utf-8')).hexdigest()
 
 
@@ -40,7 +41,7 @@ class Command(BaseCommand):
     def _guardar(publicacion, decision, metodo, modelo, revisar, *, contenido_hash):
         with transaction.atomic():
             actual = Publicacion.objects.select_for_update().get(pk=publicacion.pk)
-            if _huella_contenido(actual) != contenido_hash:
+            if not actual.tiene_cuerpo_completo or _huella_contenido(actual) != contenido_hash:
                 return False
             anterior = RevisionDepartamento.objects.filter(publicacion=actual).first()
             if actual.departamento or (not revisar and anterior is not None):
@@ -83,7 +84,9 @@ class Command(BaseCommand):
         if options['sin_ia'] and options['previsualizar_ia']:
             raise CommandError('--sin-ia y --previsualizar-ia son excluyentes.')
 
-        pendientes = Publicacion.objects.filter(departamento='', pk__gt=cursor_inicial).order_by('pk')
+        pendientes = Publicacion.objects.filter(
+            departamento='', contenido_completo=True, pk__gt=cursor_inicial,
+        ).order_by('pk')
         excluidas_autorizacion = 0
         consulta_ia_solicitada = (options['aplicar'] or options['previsualizar_ia']) and not options['sin_ia']
         if consulta_ia_solicitada:
@@ -142,8 +145,10 @@ class Command(BaseCommand):
             for inicio in range(0, len(requieren_ia), tamano_lote_ia):
                 parte = requieren_ia[inicio:inicio + tamano_lote_ia]
                 # Revalidar cada publicación inmediatamente antes del lote externo.
-                parte_autorizada = [p for p in parte if not es_publicacion_multifuente(p)
-                                    or publicacion_multifuente_autorizada(p)]
+                parte_autorizada = [p for p in parte
+                                    if Publicacion.objects.filter(pk=p.pk, contenido_completo=True).exists()
+                                    and (not es_publicacion_multifuente(p)
+                                         or publicacion_multifuente_autorizada(p))]
                 excluidas_autorizacion += len(parte) - len(parte_autorizada)
                 if not parte_autorizada:
                     continue

@@ -40,7 +40,7 @@ class Command(BaseCommand):
         if cursor < 0:
             raise CommandError('--despues-de-id debe ser mayor o igual a cero.')
         pendientes = Publicacion.objects.filter(
-            fuente__icontains='Policiales', imagen_url='', pk__gt=cursor,
+            fuente__icontains='Policiales', imagen_url='', contenido_completo=True, pk__gt=cursor,
         ).filter(Q(imagen_archivo='') | Q(imagen_archivo__isnull=True)).order_by('pk')
         lote = list(pendientes[:options['limite'] + 1])
         hay_mas = len(lote) > options['limite']

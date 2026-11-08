@@ -157,6 +157,8 @@ def consultar_ia(publicaciones, cliente=None):
     # Protección central también para invocaciones fuera del comando.
     from core.services.autorizacion_gemini import es_publicacion_multifuente, publicacion_multifuente_autorizada
     for publicacion in publicaciones:
+        if not getattr(publicacion, 'tiene_cuerpo_completo', False):
+            raise ValueError('La clasificación territorial requiere un cuerpo completo.')
         if (es_publicacion_multifuente(publicacion)
                 and not publicacion_multifuente_autorizada(publicacion)):
             raise PermissionError('Fuente multifuente no autorizada para Gemini.')

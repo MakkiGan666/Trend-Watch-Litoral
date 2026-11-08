@@ -110,7 +110,9 @@ class GeminiCliente:
         entero_positivo(batch_size, 'batch_size')
         # Evaluar antes de comprobar disponibilidad: un fallo de consulta se propaga.
         from core.services.gemini_multifuente import filtro_cliente_global
-        pendientes = list(Publicacion.objects.filter(filtro_cliente_global(), procesado_ia=False)[:batch_size])
+        pendientes = list(Publicacion.objects.filter(
+            filtro_cliente_global(), procesado_ia=False,
+        ).order_by('pk')[:batch_size])
         resultado = {
             'estado': 'SIN_PENDIENTES', 'seleccionadas': len(pendientes),
             'procesadas': 0, 'omitidas': 0, 'fallidas': 0, 'errores': [],
@@ -148,6 +150,10 @@ class GeminiCliente:
                         time.sleep(12)
                     except Exception:
                         pass
+                continue
+            # Revalidar antes del envío por si el lote quedó obsoleto.
+            if not Publicacion.objects.filter(pk=pub.pk, contenido_completo=True).exists():
+                resultado['omitidas'] += 1
                 continue
             prompt = f"Título: {pub.titulo}\nContenido: {pub.contenido}"
 

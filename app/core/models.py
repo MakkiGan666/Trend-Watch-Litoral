@@ -5,6 +5,7 @@ from django.db import models, router, transaction
 from django.utils import timezone
 from uuid import uuid4
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 
 def ruta_imagen_publicacion(instance, filename):
@@ -94,7 +95,10 @@ class Publicacion(models.Model):
     hash_origen = models.CharField(max_length=64, unique=True, default="")
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
     titulo = models.CharField(max_length=255, default="")
-    contenido = models.TextField()
+    contenido = models.TextField(blank=True)
+    # Los registros existentes y el pipeline completo mantienen el valor True.
+    # Sólo una ficha declarada sin cuerpo puede guardar contenido vacío.
+    contenido_completo = models.BooleanField(default=True)
     titulo_busqueda = models.GeneratedField(
         expression=TextoComparableV1('titulo'), output_field=models.TextField(), db_persist=True, serialize=False,
     )
@@ -115,6 +119,12 @@ class Publicacion(models.Model):
 
     class Meta:
         db_table = 'Publicacion'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(contenido_completo=True) | models.Q(contenido=''),
+                name='publicacion_sin_cuerpo_vacio',
+            ),
+        ]
         permissions = [
             ('ejecutar_scraping', 'Puede ejecutar scraping'),
             ('procesar_ia', 'Puede ejecutar procesamiento IA'),
@@ -123,11 +133,45 @@ class Publicacion(models.Model):
     def __str__(self):
         return self.titulo
 
+    @property
+    def tiene_cuerpo_completo(self):
+        return self.contenido_completo is True and bool((self.contenido or '').strip())
+
+    def clean(self):
+        super().clean()
+        errores = {}
+        tiene_texto = bool((self.contenido or '').strip())
+        if self.contenido_completo and not tiene_texto:
+            errores['contenido'] = 'Una publicación con cuerpo completo requiere contenido.'
+        elif not self.contenido_completo and tiene_texto:
+            errores['contenido'] = 'Una ficha sin cuerpo completo no puede guardar contenido.'
+        if errores:
+            raise ValidationError(errores)
+
     def save(self, *args, **kwargs):
         # Incluir pre_save/post_save en la misma transacción que el texto.
         # Así un fallo de etiquetas no deja el artículo guardado sin sincronizar.
         using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
         kwargs['using'] = using
+        campos_cuerpo = {'contenido', 'contenido_completo'}
+        update_fields = kwargs.get('update_fields')
+        validar_cuerpo = self._state.adding or update_fields is None or bool(campos_cuerpo & set(update_fields))
+        if validar_cuerpo:
+            errores = {}
+            tiene_texto = bool((self.contenido or '').strip())
+            if self.contenido_completo and not tiene_texto:
+                errores['contenido'] = 'Una publicación con cuerpo completo requiere contenido.'
+            elif not self.contenido_completo and tiene_texto:
+                errores['contenido'] = 'Una ficha sin cuerpo completo no puede guardar contenido.'
+            if errores and not self._state.adding:
+                # No bloquear escrituras ajenas al contenido de filas históricas
+                # que pudieran haber quedado vacías antes de este indicador.
+                anterior = (type(self).objects.using(using).filter(pk=self.pk)
+                            .values('contenido', 'contenido_completo').first())
+                if anterior == {'contenido': self.contenido, 'contenido_completo': self.contenido_completo}:
+                    errores = {}
+            if errores:
+                raise ValidationError(errores)
         with transaction.atomic(using=using):
             return super().save(*args, **kwargs)
 
@@ -314,6 +358,17 @@ class Sentimiento(models.Model):
     id_publicacion_api = models.ForeignKey(
         Publicacion, on_delete=models.CASCADE, db_column='id_publicacion_api'
     )
+
+    def save(self, *args, **kwargs):
+        using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
+        kwargs['using'] = using
+        with transaction.atomic(using=using):
+            publicacion = (Publicacion.objects.using(using).select_for_update()
+                           .only('contenido', 'contenido_completo')
+                           .get(pk=self.id_publicacion_api_id))
+            if not publicacion.tiene_cuerpo_completo:
+                raise ValidationError('No se puede crear un sentimiento sin cuerpo completo.')
+            return super().save(*args, **kwargs)
 
     class Meta:
         db_table = 'Sentimiento'

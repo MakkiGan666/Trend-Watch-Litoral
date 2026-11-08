@@ -125,8 +125,13 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
     using = using or publicacion._state.db or 'default'
     with transaction.atomic(using=using):
         actual = (Publicacion.objects.using(using).select_for_update()
-                  .only('titulo', 'contenido').get(pk=publicacion.pk))
+                  .only('titulo', 'contenido', 'contenido_completo').get(pk=publicacion.pk))
         vinculadas = PublicacionEtiqueta.objects.using(using).filter(publicacion_id=actual.pk)
+        if not actual.contenido_completo:
+            # Las fichas RSS no producen etiquetas inferidas. También quitamos
+            # relaciones previas si una publicación se convierte explícitamente.
+            vinculadas.delete()
+            return 0
         if solo_sin_etiquetas and vinculadas.exists():
             return 0
         propuestas = sugerir_etiquetas(actual.titulo, actual.contenido)

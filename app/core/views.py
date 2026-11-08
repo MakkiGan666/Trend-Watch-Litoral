@@ -542,6 +542,8 @@ class PublicacionDuplicada(Exception):
 
 def _analizar_y_guardar_sentimiento(publicacion):
     """Sentimiento local de título y contenido; el llamador mantiene la transacción y el bloqueo."""
+    if not publicacion.tiene_cuerpo_completo:
+        raise ValueError('El análisis de sentimiento requiere un cuerpo completo.')
     sentimiento_unico(publicacion)
     texto_analizar = f"{publicacion.titulo} {publicacion.contenido}"
     polaridad = float(analyze_sentiment_lexicon(texto_analizar))
@@ -800,6 +802,11 @@ class ProcesarSentimientoPublicacionView(APIView):
                 'status': 'error', 'codigo': 'sentimientos_multiples',
                 'mensaje': 'La publicación tiene múltiples sentimientos; requiere revisión.',
             }, status=status.HTTP_409_CONFLICT)
+        except ValueError:
+            return Response({
+                'status': 'error', 'codigo': 'cuerpo_completo_requerido',
+                'mensaje': 'La publicación no tiene un cuerpo completo para analizar.',
+            }, status=status.HTTP_409_CONFLICT)
 
         return Response({
             "id_publicacion": publicacion.id_publicacion_api,
@@ -877,7 +884,7 @@ def editar_publicacion_view(request, pk):
                 # El hash representa el origen: editar título o URL no lo regenera.
                 # La instancia se leyó antes del bloqueo: guardar sólo los campos del formulario.
                 form.save(commit=False).save(update_fields=form._meta.fields)
-                if {'titulo', 'contenido'} & set(form.changed_data):
+                if publicacion.tiene_cuerpo_completo and {'titulo', 'contenido'} & set(form.changed_data):
                     _analizar_y_guardar_sentimiento(publicacion)
                 if 'categorias' in form.changed_data:
                     _actualizar_categorias(publicacion, form.cleaned_data['categorias'])
