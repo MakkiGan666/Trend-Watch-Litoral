@@ -5,7 +5,6 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q, prefetch_related_objects
-from django.db.models import Exists, OuterRef
 from django.db.models.functions import Coalesce, TruncDate
 from django.core.paginator import Paginator
 from .fechas import ZONA_LOCAL, datos_fecha
@@ -81,6 +80,8 @@ def _contexto_inicio(request):
     return {
         'categorias_inicio': categorias_inicio,
         'tendencias_inicio': tendencias_inicio,
+        'fichas_rss_inicio': Publicacion.objects.filter(contenido_completo=False)
+            .order_by(*_orden_por_publicacion())[:10],
         'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
     }
 
@@ -196,12 +197,14 @@ def noticia(request, pk):
     ))
     fecha_navegacion = datos_fecha(publicacion)
     fecha_legible = date.fromisoformat(fecha_navegacion['fecha_dia']).strftime('%d/%m/%Y') if fecha_navegacion['fecha_dia'] else None
+    es_ficha_rss = publicacion.contenido_completo is False
 
     def enlace_seguro(valor):
         try:
             url = (valor or '').strip()
             partes = urlsplit(url)
-            return url if partes.scheme in ('http', 'https') and partes.netloc else None
+            return (url if partes.scheme in ('http', 'https') and partes.hostname
+                    and partes.username is None and partes.password is None else None)
         except (TypeError, ValueError, AttributeError):
             return None
 
@@ -209,12 +212,13 @@ def noticia(request, pk):
         'publicacion': publicacion,
         'fecha_navegacion': fecha_navegacion,
         'fecha_legible': fecha_legible,
-        'categorias_noticia': categorias_noticia,
-        'etiquetas_noticia': publicacion.etiquetas.all(),
-        'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
-        'localidades_noticia': localidades_noticia,
-        **preparar_lectura(publicacion.contenido),
-        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_publica_url),
+        'es_ficha_rss': es_ficha_rss,
+        'categorias_noticia': [] if es_ficha_rss else categorias_noticia,
+        'etiquetas_noticia': [] if es_ficha_rss else publicacion.etiquetas.all(),
+        'seccion_noticia': None if es_ficha_rss else datos_categorias(publicacion)['seccion_origen'],
+        'localidades_noticia': [] if es_ficha_rss else localidades_noticia,
+        **(preparar_lectura(publicacion.contenido) if not es_ficha_rss else {'primer_parrafo': '', 'resto': '', 'resumen': ''}),
+        'imagen_noticia': None if es_ficha_rss else (publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_publica_url)),
         'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
@@ -442,17 +446,13 @@ def publicaciones(request):
                     Q(departamento=slug) | Q(locacion__location__in=ubicaciones[slug])
                 )
     ids = publicaciones_filtradas.order_by().values('pk').distinct()
-    base = Publicacion.objects.filter(pk__in=ids).annotate(
-        tiene_analisis=Exists(Sentimiento.objects.filter(id_publicacion_api=OuterRef('pk')))
-    )
+    base = Publicacion.objects.filter(pk__in=ids)
     pagina = Paginator(
         base.select_related('id_registro')
         .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')
         .order_by(*_orden_por_publicacion()), 25,
     ).get_page(request.GET.get('page'))
-    analizadas = base.filter(tiene_analisis=True).count()
-    resumen = {'total': pagina.paginator.count, 'analizadas': analizadas,
-               'pendientes': pagina.paginator.count - analizadas}
+    resumen = resumen_publicaciones(base)
 
     def enlace_pagina(numero):
         parametros = request.GET.copy()
@@ -468,6 +468,10 @@ def publicaciones(request):
     for publicacion in pagina.object_list:
         publicacion.dashboard_fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
         publicacion.dashboard_fecha_info = datos_fecha(publicacion)
+        publicacion.es_ficha_rss = publicacion.contenido_completo is False
+        publicacion.es_sin_cuerpo_historico = (
+            publicacion.contenido_completo is True and not publicacion.tiene_cuerpo_completo
+        )
         detalles = datos_categorias(publicacion)['categorias_detalle']
         publicacion.dashboard_categorias = [c['id'] for c in detalles]
         publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))

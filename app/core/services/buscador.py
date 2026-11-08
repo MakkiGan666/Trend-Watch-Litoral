@@ -51,7 +51,11 @@ def publicaciones_coincidentes(terminos):
     """QuerySet sin evaluar, compartido con el diagnóstico SQL."""
     noticias = Publicacion.objects.all()
     for termino in terminos:
-        noticias = noticias.filter(Q(titulo_busqueda__contains=termino) | Q(contenido_busqueda__contains=termino))
+        noticias = noticias.filter(
+            Q(titulo_busqueda__contains=termino)
+            | Q(contenido_busqueda__contains=termino)
+            | Q(fuente__icontains=termino)
+        )
     return noticias.order_by(Coalesce('fecha_publicacion', 'fecha_captura').desc(nulls_last=True), '-pk')
 
 

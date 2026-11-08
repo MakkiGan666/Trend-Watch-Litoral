@@ -6,6 +6,8 @@
 .news-detail__summary{max-width:760px;margin-top:18px;color:var(--mist);font-size:clamp(16px,2vw,20px);line-height:1.6}
 .news-detail__meta{margin:20px 0 28px;color:var(--tx-2);font-size:14px;line-height:1.7}
 .news-detail__meta strong{color:var(--tx)}
+.news-detail__rss-note{padding:14px 16px;border:1px solid var(--edge);border-radius:14px;background:rgba(142,182,155,.09);color:var(--mist);line-height:1.6}
+.news-detail__reading--rss{padding:18px 0;color:var(--tx-2);line-height:1.7}
 .news-detail__media{position:relative;width:fit-content;max-width:100%;margin:0 auto 32px}
 .news-detail__media img{display:block;width:auto;height:auto;max-width:100%;max-height:520px;object-fit:contain;border-radius:18px}
 .news-detail__media .photo-credit{position:absolute;right:10px;bottom:10px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.62);color:#fff;font-size:12px;font-weight:600;pointer-events:none}

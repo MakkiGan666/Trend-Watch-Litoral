@@ -5,7 +5,7 @@
   <header class="search-heading">
     <p class="search-eyebrow">Archivo de noticias</p>
     <h1 id="search-title">{% if busqueda_realizada %}Resultados de búsqueda{% else %}Buscá en las noticias del Litoral{% endif %}</h1>
-    <p class="search-intro">Encontrá las palabras que te interesan en el título y el contenido de todas las noticias.</p>
+  <p class="search-intro">Encontrá las palabras que te interesan en el título, la fuente y el contenido disponible.</p>
   </header>
   <div class="search-page-form glass glass--sheen">
     {% include "partials/_search_form.html" with search_prefix="page-search" %}
@@ -21,7 +21,8 @@
         <div class="search-result__body">
           <div class="search-result__meta"><span>{{ resultado.fuente }}</span>{% if resultado.fecha %}<span>{% if resultado.fecha_origen == 'captura' %}Capturada el{% else %}Publicada el{% endif %} <time datetime="{{ resultado.fecha_efectiva }}">{{ resultado.fecha|date:"j M Y" }}{% if resultado.fecha_precision == 'instante' %} · {{ resultado.fecha|date:"H:i" }}{% endif %}</time></span>{% endif %}</div>
           <h3><a href="{{ resultado.detalle_url }}">{% include "partials/_search_segments.html" with segmentos=resultado.titulo %}</a></h3>
-          <p class="search-result__excerpt">{% include "partials/_search_segments.html" with segmentos=resultado.extracto %}</p>
+          {% if not resultado.es_ficha_rss %}<p class="search-result__excerpt">{% include "partials/_search_segments.html" with segmentos=resultado.extracto %}</p>
+          {% else %}<p class="search-result__excerpt"><span class="tag tag--soft">Ficha RSS · sin cuerpo completo</span></p>{% endif %}
         </div>
       </article></li>
       {% endfor %}

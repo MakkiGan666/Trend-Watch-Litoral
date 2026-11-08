@@ -44,7 +44,9 @@ class PublicacionesPaginacionTestCase(TestCase):
         respuesta = self.client.get('/publicaciones/')
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(respuesta.context['resumen'], {
-            'total': 31, 'analizadas': 1, 'pendientes': 30,
+            'total': 31, 'articulos_completos': 31, 'fichas_rss': 0,
+            'sin_cuerpo_sin_ficha': 0, 'analizadas': 1, 'pendientes': 30,
+            'inconsistentes': 0,
         })
         self.assertEqual(respuesta.context['total_global'], 31)
         self.assertEqual(len(respuesta.context['publicaciones']), 25)
