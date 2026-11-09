@@ -24,7 +24,7 @@ MAXIMO_POR_EJECUCION = 5
 
 
 class AutorizacionMetadatosError(ValueError):
-    """La fuente no está autorizada en configuración o falta confirmación puntual."""
+    """Falta una barrera operativa; no declara permiso del titular del contenido."""
 
 
 class FuenteRSSEnEspera(ValueError):
@@ -75,13 +75,17 @@ def _mapa_configurado(nombre, *, maximo=None):
 def _politica_fuente(fuente):
     habilitadas = _ids_configurados('RSS_METADATOS_FUENTES_HABILITADAS')
     revisadas = _ids_configurados('RSS_METADATOS_FUENTES_REVISADAS')
-    autorizadas = _ids_configurados('RSS_METADATOS_FUENTES_AUTORIZADAS')
+    aprobadas_equipo = _ids_configurados('RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO')
+    # El marcador de permiso expreso es documental y no participa de esta
+    # decisión: ni satisface la aprobación interna ni se deduce de ella.
     if fuente.identificador not in habilitadas:
         raise AutorizacionMetadatosError('La fuente no está habilitada para ingesta RSS de metadatos.')
     if fuente.identificador not in revisadas:
         raise AutorizacionMetadatosError('Falta revisión documentada de acceso para esta fuente.')
-    if fuente.identificador not in autorizadas:
-        raise AutorizacionMetadatosError('La fuente no está autorizada para persistencia RSS de metadatos.')
+    if fuente.identificador not in aprobadas_equipo:
+        raise AutorizacionMetadatosError(
+            'Falta la aprobación operativa del equipo para persistir metadatos RSS.'
+        )
     limites = _mapa_configurado('RSS_METADATOS_LIMITES_POR_FUENTE', maximo=MAXIMO_POR_EJECUCION)
     intervalos = _mapa_configurado('RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE')
     if fuente.identificador not in limites:
@@ -297,8 +301,10 @@ def _resultado_base(fuente_id, limite):
 def persistir_metadatos_rss(fuente_id, *, limite=1, confirmar_persistencia=False, lector=None):
     """Lee un feed vía H2.1/H2.2 y persiste sólo fuente, título, fecha y enlace.
 
-    Habilitación, revisión de acceso, autorización de persistencia, límite,
-    intervalo y confirmación puntual son barreras independientes. La bandera
+    Habilitación técnica, revisión de acceso, aprobación operativa del equipo,
+    límite, intervalo y confirmación puntual son barreras independientes. Una
+    autorización expresa verificada del titular se registra aparte y no se
+    presume ni se deduce de la aprobación interna. La bandera
     H1.1 `habilitada` no se modifica ni activa el pipeline de cuerpo completo.
     """
     fuente = _fuente_canonica(fuente_id)

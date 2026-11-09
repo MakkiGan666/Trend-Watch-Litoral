@@ -195,14 +195,24 @@ GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS = tuple(filter(None, (
     valor.strip() for valor in os.getenv('GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS', '').split(',')
 )))
 
-# H5.4: autorización separada para persistir fichas desde metadatos RSS.
-# Vacía por defecto y sin relación con las banderas H1.1 de ingesta completa.
-RSS_METADATOS_FUENTES_AUTORIZADAS = tuple(filter(None, (
-    valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_AUTORIZADAS', '').split(',')
+# H5.7: decisión operativa interna, separada de los hechos de acceso y derechos.
+# Estar aprobada por el equipo no afirma que el titular haya concedido permiso.
+RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO = tuple(filter(None, (
+    valor.strip() for valor in os.getenv(
+        'RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO', ''
+    ).split(',')
+)))
+# Registro factual opcional: sólo incluir IDs con autorización expresa del
+# titular verificada. Es documental; no habilita la fuente ni sustituye la
+# aprobación interna y no participa del gate de ejecución.
+RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO = tuple(filter(None, (
+    valor.strip() for valor in os.getenv(
+        'RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO', ''
+    ).split(',')
 )))
 
-# H5.6: habilitación operativa y revisión de acceso son barreras separadas de
-# la autorización de persistencia H5.4. Todas deniegan por defecto.
+# H5.6: habilitación técnica y revisión de acceso independientes. Todas
+# las listas deniegan por defecto.
 RSS_METADATOS_FUENTES_HABILITADAS = tuple(filter(None, (
     valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_HABILITADAS', '').split(',')
 )))
