@@ -4,12 +4,45 @@ import ipaddress
 import socket
 import ssl
 import time
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from core.services.parametros import segundos_validos
 from core.services.fuentes_rss import FUENTES_RSS, FuenteRSS
 from urllib.parse import urljoin, urlsplit
 
 HOSTS = frozenset({'elterritorio.com.ar', 'www.elterritorio.com.ar'})
 MAX_BYTES = 8 * 1024 * 1024
+MAX_RETRY_AFTER_SEGUNDOS = 365 * 24 * 60 * 60
+
+
+class RespuestaHTTPError(OSError):
+    """Respuesta HTTP no exitosa con estado y Retry-After sanitizados."""
+
+    def __init__(self, estado, retry_after_segundos=None):
+        self.estado = int(estado)
+        self.retry_after_segundos = retry_after_segundos
+        super().__init__(f'HTTP {self.estado}')
+
+
+def _retry_after_segundos(valor, *, ahora=None):
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+    valor = valor.strip()
+    if valor.isascii() and valor.isdecimal():
+        try:
+            segundos = int(valor)
+        except ValueError:
+            return MAX_RETRY_AFTER_SEGUNDOS
+        return min(segundos, MAX_RETRY_AFTER_SEGUNDOS)
+    try:
+        fecha = parsedate_to_datetime(valor)
+        if fecha.tzinfo is None:
+            return None
+        ahora = ahora or datetime.now(timezone.utc)
+        restante = max(0, int((fecha.astimezone(timezone.utc) - ahora).total_seconds()))
+        return min(restante, MAX_RETRY_AFTER_SEGUNDOS)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _fuente_canonica(fuente):
@@ -138,7 +171,10 @@ def descargar(url, timeout=10, *, fuente=None):
                 url = urljoin(url, ubicacion)
                 continue  # Cada salto vuelve a validar URL y resolución.
             if respuesta.status != 200:
-                raise OSError(f'HTTP {respuesta.status}')
+                raise RespuestaHTTPError(
+                    respuesta.status,
+                    _retry_after_segundos(respuesta.getheader('Retry-After')),
+                )
             return _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
         finally:
             conexion.close()

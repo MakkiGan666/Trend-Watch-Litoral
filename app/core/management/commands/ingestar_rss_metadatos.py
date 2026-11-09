@@ -28,7 +28,7 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
 
         self.stdout.write(json.dumps(resultado, ensure_ascii=False, sort_keys=True))
-        if resultado['estado'] == 'ERROR':
+        if resultado['estado'] in ('ERROR', 'BLOQUEADA'):
             raise CommandError('No se pudo completar la consulta RSS; revisar las causas del resumen.')
         if resultado['estado'] == 'PARCIAL':
             raise CommandError('La ejecución fue parcial; revisar las causas del resumen.')

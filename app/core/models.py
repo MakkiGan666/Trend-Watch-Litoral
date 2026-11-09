@@ -87,6 +87,21 @@ class RegistroDatos(models.Model):
         return f"Registro {self.id_registro} - {self.fuentes_api}"
 
 
+class ControlSolicitudRSSMetadatos(models.Model):
+    """Última solicitud y pausa impuesta por el servidor para cada feed opt-in."""
+
+    fuente_id = models.CharField(max_length=64, unique=True)
+    ultimo_intento = models.DateTimeField(null=True, blank=True)
+    retry_after_hasta = models.DateTimeField(null=True, blank=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'core_control_solicitud_rss_metadatos'
+
+    def __str__(self):
+        return f'Control RSS metadatos: {self.fuente_id}'
+
+
 class PublicacionQuerySet(models.QuerySet):
     def con_cuerpo_completo(self):
         """Sólo artículos con bandera y texto no blanco; excluye legacy vacíos."""

@@ -1,19 +1,20 @@
 """H5.4: persistencia RSS simulada, sin red ni procesamiento de contenido."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import timedelta
 from io import StringIO
-from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import Mock, patch
 
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, CommandError
 from django.db import close_old_connections, connection
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 
 from core.models import (
     AliasURLPublicacion,
     Categoria,
+    ControlSolicitudRSSMetadatos,
     ProcesamientoIAMultifuente,
     Publicacion,
     PublicacionEtiqueta,
@@ -25,6 +26,8 @@ from core.services import persistencia_rss_metadatos as servicio
 from core.services.fuentes_rss import FUENTES_RSS
 from core.services.lector_rss import NoticiaRSS, ResultadoRSS
 from core.services.persistencia_multifuente import hash_identidad_fuente_url
+from core.services.descarga_segura import RespuestaHTTPError, _retry_after_segundos
+from django.utils import timezone
 
 
 def _noticia(fuente, *, url=None, titulo='Titular real del feed', fecha=None, resumen='', cuerpo=''):
@@ -60,11 +63,44 @@ def _feed(fuente):
     </rss>'''.encode('utf-8')
 
 
+class RetryAfterParserTests(SimpleTestCase):
+    def test_acepta_delta_y_fecha_http_y_rechaza_valores_invalidos(self):
+        ahora = timezone.now()
+        fecha = (ahora + timedelta(seconds=120)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+        self.assertEqual(_retry_after_segundos('45', ahora=ahora), 45)
+        self.assertGreaterEqual(_retry_after_segundos(fecha, ahora=ahora), 119)
+        self.assertLessEqual(_retry_after_segundos(fecha, ahora=ahora), 120)
+        self.assertIsNone(_retry_after_segundos('no es una fecha', ahora=ahora))
+        self.assertIsNone(_retry_after_segundos(None, ahora=ahora))
+
+    @patch('core.services.descarga_segura.socket.getaddrinfo', return_value=[
+        (2, 1, 6, '', ('8.8.8.8', 443)),
+    ])
+    @patch('core.services.descarga_segura._Conexion')
+    def test_transporte_entrega_429_y_retry_after_sin_leer_cuerpo(self, conexion_cls, _dns):
+        from core.services import descarga_segura
+
+        conexion = conexion_cls.return_value
+        conexion.getresponse.return_value.status = 429
+        conexion.getresponse.return_value.getheader.return_value = '37'
+        with self.assertRaises(RespuestaHTTPError) as capturado:
+            descarga_segura.descargar('https://www.elterritorio.com.ar/rss/misiones')
+        self.assertEqual(capturado.exception.estado, 429)
+        self.assertEqual(capturado.exception.retry_after_segundos, 37)
+        conexion.getresponse.return_value.read1.assert_not_called()
+        conexion.close.assert_called_once()
+
+
 class PersistenciaRSSMetadatosTests(TestCase):
     def setUp(self):
         self.fuente = FUENTES_RSS[0]
         self.autorizacion = override_settings(
             RSS_METADATOS_FUENTES_AUTORIZADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={self.fuente.identificador: 60},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
         )
         self.autorizacion.enable()
         self.addCleanup(self.autorizacion.disable)
@@ -73,6 +109,10 @@ class PersistenciaRSSMetadatosTests(TestCase):
         return ResultadoRSS(tuple(noticias), tuple(rechazos))
 
     def _persistir(self, *noticias, limite=5, lector=None, rechazos=()):
+        # Las pruebas de idempotencia de H5.4 no miden espera temporal.
+        ControlSolicitudRSSMetadatos.objects.filter(fuente_id=self.fuente.identificador).update(
+            ultimo_intento=timezone.now() - timedelta(seconds=61), retry_after_hasta=None,
+        )
         lector = lector or (lambda fuente, *, limite_entradas: self._resultado(*noticias, rechazos=rechazos))
         return servicio.persistir_metadatos_rss(
             self.fuente.identificador,
@@ -115,7 +155,13 @@ class PersistenciaRSSMetadatosTests(TestCase):
 
     def test_deniega_por_defecto_o_sin_confirmacion_antes_de_leer_y_escribir(self):
         lector = Mock()
-        with override_settings(RSS_METADATOS_FUENTES_AUTORIZADAS=()):
+        with override_settings(
+            RSS_METADATOS_FUENTES_AUTORIZADAS=(),
+            RSS_METADATOS_FUENTES_HABILITADAS=(),
+            RSS_METADATOS_FUENTES_REVISADAS=(),
+            RSS_METADATOS_LIMITES_POR_FUENTE={},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={},
+        ):
             with self.assertRaises(servicio.AutorizacionMetadatosError):
                 servicio.persistir_metadatos_rss(
                     self.fuente.identificador, confirmar_persistencia=True, lector=lector,
@@ -125,6 +171,95 @@ class PersistenciaRSSMetadatosTests(TestCase):
         lector.assert_not_called()
         self.assertFalse(Publicacion.objects.exists())
         self.assertFalse(RegistroDatos.objects.exists())
+
+    def test_exige_habilitacion_y_revision_independientes_antes_de_la_peticion(self):
+        lector = Mock()
+        escenarios = (
+            {'RSS_METADATOS_FUENTES_HABILITADAS': ()},
+            {'RSS_METADATOS_FUENTES_REVISADAS': ()},
+        )
+        for politica in escenarios:
+            with self.subTest(politica=politica), override_settings(**politica):
+                with self.assertRaises(servicio.AutorizacionMetadatosError):
+                    servicio.persistir_metadatos_rss(
+                        self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+                    )
+        lector.assert_not_called()
+        self.assertFalse(ControlSolicitudRSSMetadatos.objects.exists())
+        self.assertFalse(RegistroDatos.objects.exists())
+
+    def test_limite_por_fuente_es_obligatorio_y_no_se_puede_superar(self):
+        lector = Mock()
+        with override_settings(RSS_METADATOS_LIMITES_POR_FUENTE={}):
+            with self.assertRaises(servicio.AutorizacionMetadatosError):
+                servicio.persistir_metadatos_rss(
+                    self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+                )
+        with override_settings(RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 1}):
+            with self.assertRaises(ValueError):
+                servicio.persistir_metadatos_rss(
+                    self.fuente.identificador, limite=2,
+                    confirmar_persistencia=True, lector=lector,
+                )
+        lector.assert_not_called()
+
+    def test_intervalo_minimo_bloquea_una_segunda_solicitud_y_es_por_fuente(self):
+        lector = Mock(return_value=self._resultado())
+        primero = servicio.persistir_metadatos_rss(
+            self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+        )
+        segundo = servicio.persistir_metadatos_rss(
+            self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+        )
+        otra = FUENTES_RSS[1]
+        autorizaciones_otra = override_settings(
+            RSS_METADATOS_FUENTES_AUTORIZADAS=(self.fuente.identificador, otra.identificador),
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador, otra.identificador),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador, otra.identificador),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5, otra.identificador: 1},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={
+                self.fuente.identificador: 60, otra.identificador: 60,
+            },
+        )
+        with autorizaciones_otra:
+            independiente = servicio.persistir_metadatos_rss(
+                otra.identificador, limite=1, confirmar_persistencia=True, lector=lector,
+            )
+        self.assertEqual(primero['estado'], 'EXITO')
+        self.assertEqual(segundo['estado'], 'BLOQUEADA')
+        self.assertGreater(segundo['espera_segundos'], 0)
+        self.assertEqual(independiente['estado'], 'EXITO')
+        self.assertEqual(lector.call_count, 2)
+
+    def test_http_429_persiste_retry_after_y_no_reintenta(self):
+        lector = Mock(side_effect=RespuestaHTTPError(429, 3600))
+        primer = servicio.persistir_metadatos_rss(
+            self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+        )
+        segundo = servicio.persistir_metadatos_rss(
+            self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+        )
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(primer['estado'], 'ERROR')
+        self.assertEqual(primer['causas'][0]['codigo'], 'http_429')
+        self.assertEqual(primer['causas'][0]['http_status'], 429)
+        self.assertEqual(primer['espera_segundos'], 3600)
+        self.assertGreater(control.retry_after_hasta, timezone.now())
+        self.assertEqual(segundo['estado'], 'BLOQUEADA')
+        self.assertEqual(lector.call_count, 1)
+
+    def test_429_sin_header_aplica_espera_conservadora_configurada(self):
+        lector = Mock(side_effect=RespuestaHTTPError(429))
+        with override_settings(RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=7200):
+            resultado = servicio.persistir_metadatos_rss(
+                self.fuente.identificador, confirmar_persistencia=True, lector=lector,
+            )
+        self.assertEqual(resultado['espera_segundos'], 7200)
+        restante = (
+            ControlSolicitudRSSMetadatos.objects.get().retry_after_hasta - timezone.now()
+        ).total_seconds()
+        self.assertGreater(restante, 7190)
+        self.assertLessEqual(restante, 7200)
 
     def test_rechaza_fuentes_no_catalogadas_o_configuracion_invalida(self):
         with self.assertRaises(ValueError):
@@ -264,11 +399,7 @@ class PersistenciaRSSMetadatosConcurrenciaTests(TransactionTestCase):
     def test_dos_procesos_mismo_alias_crean_una_sola_publicacion(self):
         fuente = FUENTES_RSS[0]
         noticia = _noticia(fuente, url=f'https://{fuente.hosts_permitidos[0]}/concurrente')
-        barrera = Barrier(2)
-
-        def lector(_fuente, *, limite_entradas):
-            barrera.wait(timeout=10)
-            return ResultadoRSS((noticia,), ())
+        lector = Mock(return_value=ResultadoRSS((noticia,), ()))
 
         def ejecutar():
             close_old_connections()
@@ -282,12 +413,19 @@ class PersistenciaRSSMetadatosConcurrenciaTests(TransactionTestCase):
             finally:
                 close_old_connections()
 
-        with override_settings(RSS_METADATOS_FUENTES_AUTORIZADAS=(fuente.identificador,)):
+        with override_settings(
+            RSS_METADATOS_FUENTES_AUTORIZADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_HABILITADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={fuente.identificador: 1},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={fuente.identificador: 60},
+        ):
             with ThreadPoolExecutor(max_workers=2) as ejecutor:
                 resultados = list(ejecutor.map(lambda _: ejecutar(), range(2)))
         self.assertEqual(sum(r['nuevas'] for r in resultados), 1)
-        self.assertEqual(sum(r['duplicadas'] for r in resultados), 1)
+        self.assertEqual(sum(r['estado'] == 'BLOQUEADA' for r in resultados), 1)
+        lector.assert_called_once()
         self.assertEqual(Publicacion.objects.count(), 1)
         self.assertEqual(AliasURLPublicacion.objects.count(), 1)
-        self.assertEqual(RegistroDatos.objects.count(), 2)
+        self.assertEqual(RegistroDatos.objects.count(), 1)
         self.assertFalse(ProcesamientoIAMultifuente.objects.exists())
