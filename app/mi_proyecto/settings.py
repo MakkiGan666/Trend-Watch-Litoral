@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 import os
+import json
 from dotenv import load_dotenv 
 from pathlib import Path
 from datetime import timedelta  
@@ -199,3 +200,49 @@ GEMINI_MULTIFUENTE_FUENTES_AUTORIZADAS = tuple(filter(None, (
 RSS_METADATOS_FUENTES_AUTORIZADAS = tuple(filter(None, (
     valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_AUTORIZADAS', '').split(',')
 )))
+
+# H5.6: habilitación operativa y revisión de acceso son barreras separadas de
+# la autorización de persistencia H5.4. Todas deniegan por defecto.
+RSS_METADATOS_FUENTES_HABILITADAS = tuple(filter(None, (
+    valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_HABILITADAS', '').split(',')
+)))
+RSS_METADATOS_FUENTES_REVISADAS = tuple(filter(None, (
+    valor.strip() for valor in os.getenv('RSS_METADATOS_FUENTES_REVISADAS', '').split(',')
+)))
+
+
+def _mapa_rss_positivo(variable):
+    valor = os.getenv(variable, '{}')
+
+    def sin_duplicados(pares):
+        resultado = {}
+        for clave, numero in pares:
+            if clave in resultado:
+                raise ValueError('clave duplicada')
+            resultado[clave] = numero
+        return resultado
+
+    try:
+        mapa = json.loads(valor, object_pairs_hook=sin_duplicados)
+    except (TypeError, ValueError) as exc:
+        raise ImproperlyConfigured(f'{variable} debe ser un objeto JSON de IDs a enteros positivos.') from exc
+    if (not isinstance(mapa, dict)
+            or any(not isinstance(clave, str) or not clave
+                   or type(numero) is not int or numero <= 0
+                   for clave, numero in mapa.items())):
+        raise ImproperlyConfigured(f'{variable} debe ser un objeto JSON de IDs a enteros positivos.')
+    return mapa
+
+
+RSS_METADATOS_LIMITES_POR_FUENTE = _mapa_rss_positivo('RSS_METADATOS_LIMITES_POR_FUENTE')
+RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE = _mapa_rss_positivo(
+    'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE'
+)
+try:
+    RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS = int(
+        os.getenv('RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS', '86400')
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured('RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS debe ser positivo.') from exc
+if RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS <= 0:
+    raise ImproperlyConfigured('RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS debe ser positivo.')

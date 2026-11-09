@@ -12,7 +12,7 @@ import json
 import hashlib
 
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.utils import timezone
 
 from core.models import AliasURLPublicacion, ProcesamientoIAMultifuente, Publicacion, RegistroDatos
@@ -158,7 +158,7 @@ def resolver_publicacion_por_identidad(fuente, hash_origen, aliases):
     return _existente(fuente, {'hash_origen': hash_origen}, set(aliases))
 
 
-def _bloquear_fuente(fuente):
+def _bloquear_fuente(fuente, using='default'):
     """PostgreSQL serializa decisiones y alta de alias, incluso sin filas previas.
 
     Bloqueo de transacción por fuente: no depende de procesos Python ni de que
@@ -167,20 +167,21 @@ def _bloquear_fuente(fuente):
     SQLite se protege con su bloqueo de escritura y el UNIQUE de alias; ante
     contención puede informar un error reintentable, nunca guardar media noticia.
     """
-    if connection.vendor == 'postgresql':
+    db = connections[using]
+    if db.vendor == 'postgresql':
         clave = int.from_bytes(hashlib.sha256(
             ('trendwatch:rss:fuente:v1:' + fuente.identificador).encode()
         ).digest()[:8], 'big', signed=True)
-        with connection.cursor() as cursor:
+        with db.cursor() as cursor:
             cursor.execute('SHOW transaction_isolation')
             if cursor.fetchone()[0] != 'read committed':
                 raise ValueError('La persistencia RSS requiere Read Committed en PostgreSQL.')
             cursor.execute('SELECT pg_advisory_xact_lock(%s)', [clave])
 
 
-def bloquear_fuente_rss(fuente):
+def bloquear_fuente_rss(fuente, using='default'):
     """Comparte el lock transaccional de identidad con H3.1/H4.1."""
-    return _bloquear_fuente(fuente)
+    return _bloquear_fuente(fuente, using=using)
 
 
 def _vincular_aliases(fuente, aliases, pk):

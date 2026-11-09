@@ -18,33 +18,47 @@ resultado de IA. Los valores técnicos `hash_origen`, `fecha_captura`,
 ## Activación independiente
 
 La configuración `RSS_METADATOS_FUENTES_AUTORIZADAS` lee IDs desde el entorno y
-está vacía por defecto. Es independiente de `FuenteRSS.habilitada` y de la
-autorización Gemini. Además, cada ejecución exige `--confirmar-persistencia`;
-esa opción confirma una sola invocación y no modifica la allowlist. Un ID
-desconocido, duplicado o ausente se rechaza antes de leer el feed. Ninguna fuente
-se habilitó en el catálogo ni en la configuración habitual.
+está vacía por defecto. H5.6 agrega dos barreras independientes, también vacías:
+`RSS_METADATOS_FUENTES_HABILITADAS` y
+`RSS_METADATOS_FUENTES_REVISADAS`. Cada ejecución requiere que el ID figure en
+las tres listas, tenga límite e intervalo mínimo explícitos y reciba
+`--confirmar-persistencia`. La confirmación sólo cubre una invocación; no cambia
+allowlists ni `FuenteRSS.habilitada`. Toda condición se valida antes del GET.
+Gemini sigue siendo independiente y no participa en este comando.
 
 La cantidad visible y persistible se limita a cinco entradas por ejecución
-(default: una). El lector recibe ese límite antes de llamar a H2.1 y H2.2; los
-rechazos fuera del límite no se cuentan en el resumen.
+(default: una) y al máximo por fuente configurado en
+`RSS_METADATOS_LIMITES_POR_FUENTE`. El intervalo mínimo se configura por fuente
+en `RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE`. El lector recibe el límite
+antes de llamar a H2.1/H2.2; los rechazos posteriores al límite no se cuentan.
+Los intentos se reservan en una tabla de control separada antes del GET y bajo
+el mismo advisory lock por fuente, evitando solicitudes simultáneas, incluso
+si aún no existe fila de control. El cooldown sobrevive reinicios.
 
 ## Uso futuro, sólo después de autorización por fuente
 
 ```sh
+RSS_METADATOS_FUENTES_HABILITADAS=ID_AUTORIZADO \
+RSS_METADATOS_FUENTES_REVISADAS=ID_AUTORIZADO \
 RSS_METADATOS_FUENTES_AUTORIZADAS=ID_AUTORIZADO \
+RSS_METADATOS_LIMITES_POR_FUENTE='{"ID_AUTORIZADO":1}' \
+RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE='{"ID_AUTORIZADO":1800}' \
 python manage.py ingestar_rss_metadatos \
   --fuente ID_AUTORIZADO --limite 1 --confirmar-persistencia
 ```
 
 El ejemplo es documentación del contrato, no una habilitación ni permiso para
-ejecutarlo contra un medio. Antes de configurar cada ID, H5.6 debe registrar la
-política de acceso, frecuencia, retención y exhibición que corresponda al medio.
-Las fuentes no autorizadas permanecen rechazadas aunque estén en el catálogo.
+ejecutarlo contra un medio. Antes de configurar cada ID, el responsable debe
+documentar la revisión de acceso y los términos aplicables; la lista de
+autorización debe cubrir el almacenamiento/exhibición de los campos RSS
+persistidos. Los valores aquí son ilustrativos, no una autorización. Las listas
+y mapas son opt-in y permanecen vacíos por defecto.
 
 La salida JSON contiene estado, `fuente_id`, `registro_id`, `nuevas`,
 `duplicadas`, `rechazadas`, `errores` y códigos de causa por índice. No incluye
 títulos, URLs, resúmenes ni mensajes de excepción. Un fallo de consulta no crea
-registro ni publicación; después de leer el feed, cada ficha usa una transacción
+registro de auditoría ni publicación; el intento queda en el control de
+frecuencia. Después de leer el feed, cada ficha usa una transacción
 independiente. Una fila fallida se revierte sin descartar las anteriores.
 
 ## Identidad e idempotencia
@@ -65,7 +79,8 @@ autorizada y transaccional para una futura promoción.
 
 ## Validaciones
 
-- Persistencia sólo para un ID canónico H1.1 y autorización H5.4 explícita.
+- Persistencia sólo para un ID canónico H1.1 y las barreras H5.6/H5.4
+  independientes, con confirmación puntual.
 - Título no vacío, sin controles inválidos y sin truncamiento; URL HTTPS validada
   contra los hosts exactos de la fuente; fecha ausente admitida, fecha inválida
   rechazada.
@@ -75,6 +90,16 @@ autorizada y transaccional para una futura promoción.
   etiqueta. Las señales H5.3 también excluyen las fichas vacías.
 - `RegistroDatos` audita cada ejecución autorizada que logró leer el feed. La
   identidad del feed no habilita automatización ni derechos de reutilización.
+
+HTTP 429 no genera reintentos automáticos. La reserva persistente `EN_CURSO` se
+confirma antes del GET y permanece bloqueada si el proceso se interrumpe o la
+base no puede guardar el resultado. Un `Retry-After` válido se conserva junto
+con el intervalo mínimo; si falta o es inválido, se aplica la pausa conservadora
+configurada (24 horas por defecto). Valores superiores a 365 días pasan a
+`REVISION_MANUAL`, sin acortarse. Ambos estados requieren revisión explícita;
+`resolver_bloqueo_rss_metadatos --fuente ID --confirmar-revision-manual` no hace
+una petición y añade otro intervalo completo antes de permitir un nuevo GET.
+No se debe borrar ni editar el control directamente en la base.
 
 Las pruebas usan RSS sintético en memoria y mocks del transporte. Deben correrse
 con PostgreSQL/PostGIS efímero, almacenamiento temporal y red externa bloqueada;
