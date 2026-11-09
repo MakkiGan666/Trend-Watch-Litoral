@@ -17,14 +17,23 @@ resultado de IA. Los valores técnicos `hash_origen`, `fecha_captura`,
 
 ## Activación independiente
 
-La configuración `RSS_METADATOS_FUENTES_AUTORIZADAS` lee IDs desde el entorno y
-está vacía por defecto. H5.6 agrega dos barreras independientes, también vacías:
-`RSS_METADATOS_FUENTES_HABILITADAS` y
-`RSS_METADATOS_FUENTES_REVISADAS`. Cada ejecución requiere que el ID figure en
-las tres listas, tenga límite e intervalo mínimo explícitos y reciba
-`--confirmar-persistencia`. La confirmación sólo cubre una invocación; no cambia
-allowlists ni `FuenteRSS.habilitada`. Toda condición se valida antes del GET.
-Gemini sigue siendo independiente y no participa en este comando.
+H5.7 separa los controles antes mezclados bajo
+`RSS_METADATOS_FUENTES_AUTORIZADAS`. Cada ejecución exige que el ID esté en
+`RSS_METADATOS_FUENTES_HABILITADAS` (habilitación técnica),
+`RSS_METADATOS_FUENTES_REVISADAS` (revisión de condiciones de acceso) y
+`RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO` (decisión interna de usar
+metadatos), además de límite/intervalo y `--confirmar-persistencia`. Todos
+deniegan por defecto. La aprobación del equipo no afirma que el medio concedió
+derechos ni convierte un RSS público en licencia.
+
+`RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO`, también vacío por
+defecto, registra por separado los IDs con evidencia comprobable de autorización
+expresa del titular. Es documental, no un gate operativo; no se infiere desde la
+aprobación interna y su ausencia no demuestra ni prohibición ni permiso. Si la
+revisión determina que hace falta autorización del titular, la fuente no debe
+recibir aprobación operativa hasta resolverlo. La confirmación por comando sólo
+cubre una invocación; no cambia allowlists ni `FuenteRSS.habilitada`. Gemini es
+independiente.
 
 La cantidad visible y persistible se limita a cinco entradas por ejecución
 (default: una) y al máximo por fuente configurado en
@@ -40,19 +49,21 @@ si aún no existe fila de control. El cooldown sobrevive reinicios.
 ```sh
 RSS_METADATOS_FUENTES_HABILITADAS=ID_AUTORIZADO \
 RSS_METADATOS_FUENTES_REVISADAS=ID_AUTORIZADO \
-RSS_METADATOS_FUENTES_AUTORIZADAS=ID_AUTORIZADO \
+RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=ID_AUTORIZADO \
+RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO= \
 RSS_METADATOS_LIMITES_POR_FUENTE='{"ID_AUTORIZADO":1}' \
 RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE='{"ID_AUTORIZADO":1800}' \
 python manage.py ingestar_rss_metadatos \
   --fuente ID_AUTORIZADO --limite 1 --confirmar-persistencia
 ```
 
-El ejemplo es documentación del contrato, no una habilitación ni permiso para
-ejecutarlo contra un medio. Antes de configurar cada ID, el responsable debe
-documentar la revisión de acceso y los términos aplicables; la lista de
-autorización debe cubrir el almacenamiento/exhibición de los campos RSS
-persistidos. Los valores aquí son ilustrativos, no una autorización. Las listas
-y mapas son opt-in y permanecen vacíos por defecto.
+El ejemplo documenta el contrato, no habilita ni autoriza ejecutar contra un
+medio. Antes de configurar cada ID, el responsable debe documentar las
+condiciones de acceso y decidir operativamente si el uso concreto de metadatos
+es adecuado. La variable de permiso expreso sólo se llena con evidencia del
+titular; vacía significa que el proyecto no registra una autorización expresa,
+no que se haya demostrado permiso o prohibición. Los valores son ilustrativos
+y todas las listas/mapas permanecen vacíos por defecto.
 
 La salida JSON contiene estado, `fuente_id`, `registro_id`, `nuevas`,
 `duplicadas`, `rechazadas`, `errores` y códigos de causa por índice. No incluye

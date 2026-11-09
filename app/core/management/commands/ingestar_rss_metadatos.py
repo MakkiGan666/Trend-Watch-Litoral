@@ -7,14 +7,14 @@ from core.services.persistencia_rss_metadatos import persistir_metadatos_rss
 
 
 class Command(BaseCommand):
-    help = 'Persiste únicamente metadatos RSS de una fuente autorizada; no descarga artículos.'
+    help = 'Persiste metadatos RSS de una fuente aprobada operativamente; no descarga artículos.'
 
     def add_arguments(self, parser):
         parser.add_argument('--fuente', required=True, help='ID exacto de una fuente del catálogo H1.1.')
         parser.add_argument('--limite', type=int, default=1, help='Máximo de entradas (1 a 5).')
         parser.add_argument(
             '--confirmar-persistencia', action='store_true',
-            help='Confirma esta ejecución; no habilita fuentes ni el pipeline completo.',
+            help='Confirma esta ejecución; no habilita fuentes ni implica permiso del titular.',
         )
 
     def handle(self, *args, **options):

@@ -7,6 +7,7 @@ from threading import Event
 from unittest import skipUnless
 from unittest.mock import Mock, patch
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command, CommandError
 from django.db import close_old_connections, connection, DatabaseError
@@ -113,7 +114,8 @@ class PersistenciaRSSMetadatosTests(TestCase):
     def setUp(self):
         self.fuente = FUENTES_RSS[0]
         self.autorizacion = override_settings(
-            RSS_METADATOS_FUENTES_AUTORIZADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
             RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
             RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
             RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
@@ -177,7 +179,8 @@ class PersistenciaRSSMetadatosTests(TestCase):
     def test_deniega_por_defecto_o_sin_confirmacion_antes_de_leer_y_escribir(self):
         lector = Mock()
         with override_settings(
-            RSS_METADATOS_FUENTES_AUTORIZADAS=(),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
             RSS_METADATOS_FUENTES_HABILITADAS=(),
             RSS_METADATOS_FUENTES_REVISADAS=(),
             RSS_METADATOS_LIMITES_POR_FUENTE={},
@@ -209,6 +212,58 @@ class PersistenciaRSSMetadatosTests(TestCase):
         self.assertFalse(ControlSolicitudRSSMetadatos.objects.exists())
         self.assertFalse(RegistroDatos.objects.exists())
 
+    def test_permiso_titular_registrado_no_sustituye_aprobacion_operativa(self):
+        lector = Mock()
+        with override_settings(
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(
+                self.fuente.identificador,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                servicio.AutorizacionMetadatosError, 'aprobación operativa del equipo'
+            ):
+                servicio.persistir_metadatos_rss(
+                    self.fuente.identificador,
+                    confirmar_persistencia=True,
+                    lector=lector,
+                )
+        lector.assert_not_called()
+        self.assertFalse(ControlSolicitudRSSMetadatos.objects.exists())
+        self.assertFalse(Publicacion.objects.exists())
+
+    def test_variable_legacy_autorizadas_no_satisface_la_aprobacion_del_equipo(self):
+        lector = Mock()
+        with override_settings(
+            RSS_METADATOS_FUENTES_AUTORIZADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(),
+        ):
+            with self.assertRaisesRegex(
+                servicio.AutorizacionMetadatosError, 'aprobación operativa del equipo'
+            ):
+                servicio.persistir_metadatos_rss(
+                    self.fuente.identificador,
+                    confirmar_persistencia=True,
+                    lector=lector,
+                )
+        lector.assert_not_called()
+
+    def test_aprobacion_operativa_no_registra_permiso_expreso_del_titular(self):
+        lector = Mock(return_value=self._resultado(_noticia(self.fuente)))
+        with override_settings(
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
+        ):
+            resultado = servicio.persistir_metadatos_rss(
+                self.fuente.identificador,
+                confirmar_persistencia=True,
+                lector=lector,
+            )
+            self.assertEqual(resultado['nuevas'], 1)
+            self.assertEqual(
+                settings.RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO, ()
+            )
+
     def test_limite_por_fuente_es_obligatorio_y_no_se_puede_superar(self):
         lector = Mock()
         with override_settings(RSS_METADATOS_LIMITES_POR_FUENTE={}):
@@ -234,7 +289,10 @@ class PersistenciaRSSMetadatosTests(TestCase):
         )
         otra = FUENTES_RSS[1]
         autorizaciones_otra = override_settings(
-            RSS_METADATOS_FUENTES_AUTORIZADAS=(self.fuente.identificador, otra.identificador),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(
+                self.fuente.identificador, otra.identificador,
+            ),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
             RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador, otra.identificador),
             RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador, otra.identificador),
             RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5, otra.identificador: 1},
@@ -285,7 +343,7 @@ class PersistenciaRSSMetadatosTests(TestCase):
     def test_rechaza_fuentes_no_catalogadas_o_configuracion_invalida(self):
         with self.assertRaises(ValueError):
             servicio.persistir_metadatos_rss('desconocida', confirmar_persistencia=True)
-        with override_settings(RSS_METADATOS_FUENTES_AUTORIZADAS=('fuente_inventada',)):
+        with override_settings(RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=('fuente_inventada',)):
             with self.assertRaises(ImproperlyConfigured):
                 servicio.persistir_metadatos_rss(
                     self.fuente.identificador, confirmar_persistencia=True,
@@ -389,10 +447,10 @@ class PersistenciaRSSMetadatosTests(TestCase):
         self.assertFalse(RegistroDatos.objects.exists())
         self.assertFalse(Publicacion.objects.exists())
 
-    def test_comando_exige_autorizacion_configurada_y_confirmacion_por_ejecucion(self):
+    def test_comando_exige_aprobacion_operativa_y_confirmacion_por_ejecucion(self):
         salida = StringIO()
         lector = Mock(return_value=self._resultado(_noticia(self.fuente)))
-        with override_settings(RSS_METADATOS_FUENTES_AUTORIZADAS=()):
+        with override_settings(RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=()):
             with self.assertRaises(CommandError):
                 call_command(
                     'ingestar_rss_metadatos', '--fuente', self.fuente.identificador,
@@ -422,7 +480,8 @@ class ControlSolicitudRSSMetadatosDurableTests(TransactionTestCase):
     def _politica(self, fuentes=None, intervalo=60):
         fuentes = tuple(fuentes or (self.fuente.identificador,))
         return override_settings(
-            RSS_METADATOS_FUENTES_AUTORIZADAS=fuentes,
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=fuentes,
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
             RSS_METADATOS_FUENTES_HABILITADAS=fuentes,
             RSS_METADATOS_FUENTES_REVISADAS=fuentes,
             RSS_METADATOS_LIMITES_POR_FUENTE={id_fuente: 1 for id_fuente in fuentes},
@@ -618,7 +677,8 @@ class PersistenciaRSSMetadatosConcurrenciaTests(TransactionTestCase):
                 close_old_connections()
 
         with override_settings(
-            RSS_METADATOS_FUENTES_AUTORIZADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
             RSS_METADATOS_FUENTES_HABILITADAS=(fuente.identificador,),
             RSS_METADATOS_FUENTES_REVISADAS=(fuente.identificador,),
             RSS_METADATOS_LIMITES_POR_FUENTE={fuente.identificador: 1},
