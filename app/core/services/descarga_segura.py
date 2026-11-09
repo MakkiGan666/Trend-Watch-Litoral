@@ -18,31 +18,38 @@ MAX_RETRY_AFTER_SEGUNDOS = 365 * 24 * 60 * 60
 class RespuestaHTTPError(OSError):
     """Respuesta HTTP no exitosa con estado y Retry-After sanitizados."""
 
-    def __init__(self, estado, retry_after_segundos=None):
+    def __init__(self, estado, retry_after_segundos=None, retry_after_excesivo=False):
         self.estado = int(estado)
         self.retry_after_segundos = retry_after_segundos
+        self.retry_after_excesivo = bool(retry_after_excesivo)
         super().__init__(f'HTTP {self.estado}')
 
 
-def _retry_after_segundos(valor, *, ahora=None):
+def _interpretar_retry_after(valor, *, ahora=None):
     if not isinstance(valor, str) or not valor.strip():
-        return None
+        return None, False
     valor = valor.strip()
     if valor.isascii() and valor.isdecimal():
         try:
             segundos = int(valor)
         except ValueError:
-            return MAX_RETRY_AFTER_SEGUNDOS
-        return min(segundos, MAX_RETRY_AFTER_SEGUNDOS)
+            return None, True
+        return (None, True) if segundos > MAX_RETRY_AFTER_SEGUNDOS else (segundos, False)
     try:
         fecha = parsedate_to_datetime(valor)
         if fecha.tzinfo is None:
-            return None
+            return None, False
         ahora = ahora or datetime.now(timezone.utc)
         restante = max(0, int((fecha.astimezone(timezone.utc) - ahora).total_seconds()))
-        return min(restante, MAX_RETRY_AFTER_SEGUNDOS)
+        return (None, True) if restante > MAX_RETRY_AFTER_SEGUNDOS else (restante, False)
     except (TypeError, ValueError, OverflowError):
-        return None
+        return None, False
+
+
+def _retry_after_segundos(valor, *, ahora=None):
+    """Compatibilidad del helper: valores excesivos no se acortan, se omiten."""
+    segundos, excesivo = _interpretar_retry_after(valor, ahora=ahora)
+    return None if excesivo else segundos
 
 
 def _fuente_canonica(fuente):
@@ -171,9 +178,13 @@ def descargar(url, timeout=10, *, fuente=None):
                 url = urljoin(url, ubicacion)
                 continue  # Cada salto vuelve a validar URL y resolución.
             if respuesta.status != 200:
+                retry_after, retry_after_excesivo = _interpretar_retry_after(
+                    respuesta.getheader('Retry-After'),
+                )
                 raise RespuestaHTTPError(
                     respuesta.status,
-                    _retry_after_segundos(respuesta.getheader('Retry-After')),
+                    retry_after,
+                    retry_after_excesivo,
                 )
             return _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
         finally:

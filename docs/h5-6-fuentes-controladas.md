@@ -13,11 +13,31 @@ H1.1 ni Gemini.
 Los mapas se expresan como JSON de ID a entero positivo. El límite no puede
 superar cinco. El intervalo se mide entre intentos y se registra antes del GET
 en `ControlSolicitudRSSMetadatos`, bajo el advisory lock H3.1 compartido por
-fuente; una caída después de reservar mantiene el cooldown. El transporte H2.1
-no reintenta. HTTP 429 conserva el `Retry-After` parseable; si falta o es
-inválido, el bloqueo conservador es 24 horas (configurable con
-`RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS`). Una repetición prematura retorna
-`BLOQUEADA`, muestra segundos de espera y el comando termina con error sin GET.
+fuente. Antes del GET se confirma `EN_CURSO`; la transacción termina antes de la
+red. Al guardar el resultado se cambia a `ESPERA` con el mayor entre el intervalo
+mínimo y el `Retry-After`. Un HTTP 429 sin valor válido usa 24 horas
+(configurable con `RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS`). H2.1 no reintenta.
+Una repetición prematura devuelve `BLOQUEADA` y no hace GET.
+
+Si el proceso se interrumpe o la base falla al cerrar el resultado/bloqueo, la
+reserva queda durable en `EN_CURSO`; no vence automáticamente. Si `Retry-After`
+excede 365 días, el estado pasa a `REVISION_MANUAL`, nunca se acorta el plazo.
+Ambos estados bloquean nuevos GET. La recuperación requiere revisión humana del
+estado del proceso, la respuesta del servidor y las condiciones de acceso; luego
+se ejecuta explícitamente:
+
+```sh
+python manage.py resolver_bloqueo_rss_metadatos --fuente ID --confirmar-revision-manual
+# Sólo si el estado es REVISION_MANUAL por Retry-After > 365 días, y tras comprobar
+# que venció el plazo original, agregar también:
+# --confirmar-retry-after-vencido
+```
+
+Este comando no consulta la fuente. Sólo cambia el estado a `ESPERA` y añade un
+intervalo completo desde la resolución; no permite una consulta inmediata. Para
+un `Retry-After` excesivo, antes debe haber vencido el plazo original y se exige
+además `--confirmar-retry-after-vencido`. La confirmación es una operación
+manual del responsable después de verificar la restricción del servidor.
 
 Ejemplo de **contrato futuro**, no autorización ni fuente habilitada:
 
@@ -76,9 +96,12 @@ del catálogo H1.1 permanecen con `habilitada=False`.
    comprobar una ficha `contenido_completo=False`, cuerpo vacío, fecha RSS o
    NULL, título/fuente/enlace y alias únicos. Verificar que no haya reserva IA,
    análisis, etiquetas ni solicitudes al HTML del artículo.
-5. Volver a ejecutar antes del intervalo: debe resultar `BLOQUEADA` sin GET;
-   un HTTP 429 debe bloquear hasta `Retry-After`, o 24 horas si no se entregó.
-   Confirmar portada, búsqueda y detalle por el enlace original.
+5. Volver a ejecutar antes del intervalo: debe resultar `BLOQUEADA` sin GET.
+   Si hay una interrupción o un fallo de base al guardar el resultado, conservar
+   `EN_CURSO` y seguir el procedimiento explícito de revisión; no borrar ni
+   editar el control manualmente. Para `Retry-After` mayor a 365 días, dejar la
+   fuente en revisión manual hasta confirmar el plazo y acceso. Confirmar
+   portada, búsqueda y detalle por el enlace original.
 
 H5.8 no debe reconstruir historia desde feeds actuales. Antes de cualquier
 retrospectiva se necesita evidencia de endpoints/archivos históricos, límites y

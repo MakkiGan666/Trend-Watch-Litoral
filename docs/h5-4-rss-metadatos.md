@@ -91,13 +91,15 @@ autorizada y transaccional para una futura promoción.
 - `RegistroDatos` audita cada ejecución autorizada que logró leer el feed. La
   identidad del feed no habilita automatización ni derechos de reutilización.
 
-HTTP 429 no genera reintentos automáticos. Un `Retry-After` válido se guarda y
-bloquea solicitudes posteriores; si falta o no se interpreta, se aplica la
-pausa conservadora configurada (24 horas por defecto). El resumen devuelve
-`BLOQUEADA` y segundos restantes cuando todavía no se puede volver a consultar.
-Si la base no permite persistir el `Retry-After`, el resultado informa
-`http_429_retry_after_no_persistido` y exige una pausa manual; no se debe repetir
-el comando hasta que venza el tiempo indicado por la respuesta del servidor.
+HTTP 429 no genera reintentos automáticos. La reserva persistente `EN_CURSO` se
+confirma antes del GET y permanece bloqueada si el proceso se interrumpe o la
+base no puede guardar el resultado. Un `Retry-After` válido se conserva junto
+con el intervalo mínimo; si falta o es inválido, se aplica la pausa conservadora
+configurada (24 horas por defecto). Valores superiores a 365 días pasan a
+`REVISION_MANUAL`, sin acortarse. Ambos estados requieren revisión explícita;
+`resolver_bloqueo_rss_metadatos --fuente ID --confirmar-revision-manual` no hace
+una petición y añade otro intervalo completo antes de permitir un nuevo GET.
+No se debe borrar ni editar el control directamente en la base.
 
 Las pruebas usan RSS sintético en memoria y mocks del transporte. Deben correrse
 con PostgreSQL/PostGIS efímero, almacenamiento temporal y red externa bloqueada;

@@ -35,6 +35,10 @@ class FuenteRSSEnEspera(ValueError):
         super().__init__('La fuente está dentro de su intervalo de espera.')
 
 
+class FuenteBloqueada(ValueError):
+    """La solicitud anterior quedó pendiente o requiere revisión explícita."""
+
+
 def _fuente_canonica(fuente_id):
     if not isinstance(fuente_id, str):
         raise ValueError('ID de fuente inválido.')
@@ -100,7 +104,7 @@ def _validar_limite(limite, fuente, limite_fuente):
 
 
 def _reservar_solicitud(fuente, intervalo_segundos):
-    """Persiste el intento antes del GET y serializa por fuente entre procesos."""
+    """Confirma EN_CURSO antes del GET y serializa la reserva entre procesos."""
     # El flujo H5.4 escribe también Publicacion/RegistroDatos en la base default.
     using = 'default'
     with transaction.atomic(using=using):
@@ -112,6 +116,18 @@ def _reservar_solicitud(fuente, intervalo_segundos):
             control = ControlSolicitudRSSMetadatos.objects.using(using).create(
                 fuente_id=fuente.identificador,
             )
+        if control.estado in (
+            ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+            ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
+        ):
+            raise FuenteBloqueada('La solicitud anterior requiere resolución manual.')
+        if control.estado not in (
+            ControlSolicitudRSSMetadatos.Estado.LIBRE,
+            ControlSolicitudRSSMetadatos.Estado.ESPERA,
+        ):
+            raise FuenteBloqueada('El estado del control RSS es desconocido; requiere revisión manual.')
+        if control.estado == ControlSolicitudRSSMetadatos.Estado.ESPERA and not control.retry_after_hasta:
+            raise FuenteBloqueada('El bloqueo no tiene fecha de liberación; requiere revisión manual.')
         hasta = control.retry_after_hasta
         if hasta and hasta > ahora:
             raise FuenteRSSEnEspera(math.ceil((hasta - ahora).total_seconds()))
@@ -120,20 +136,75 @@ def _reservar_solicitud(fuente, intervalo_segundos):
         if siguiente and siguiente > ahora:
             raise FuenteRSSEnEspera(math.ceil((siguiente - ahora).total_seconds()))
         control.ultimo_intento = ahora
+        control.estado = ControlSolicitudRSSMetadatos.Estado.EN_CURSO
         control.retry_after_hasta = None
-        control.save(update_fields=['ultimo_intento', 'retry_after_hasta', 'actualizado'], using=using)
+        control.save(update_fields=['estado', 'ultimo_intento', 'retry_after_hasta', 'actualizado'], using=using)
         return control.pk
 
 
-def _guardar_retry_after(fuente, control_id, segundos):
+def _finalizar_solicitud(fuente, control_id, intervalo_segundos, *, retry_after_segundos=None,
+                         revision_manual=False):
+    """Guarda la espera/revisión y libera EN_CURSO en una única transacción."""
     using = 'default'
     with transaction.atomic(using=using):
         bloquear_fuente_rss(fuente, using=using)
         control = ControlSolicitudRSSMetadatos.objects.using(using).select_for_update().get(pk=control_id)
-        hasta = timezone.now() + timedelta(seconds=segundos)
-        if control.retry_after_hasta is None or control.retry_after_hasta < hasta:
-            control.retry_after_hasta = hasta
-            control.save(update_fields=['retry_after_hasta', 'actualizado'], using=using)
+        if control.estado != ControlSolicitudRSSMetadatos.Estado.EN_CURSO:
+            raise FuenteBloqueada('La reserva no está en curso; no se puede liberar automáticamente.')
+        if revision_manual:
+            control.estado = ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL
+            control.retry_after_hasta = None
+        else:
+            ahora = timezone.now()
+            minimo = control.ultimo_intento + timedelta(seconds=intervalo_segundos)
+            solicitado = (ahora + timedelta(seconds=retry_after_segundos)
+                          if retry_after_segundos is not None else ahora)
+            control.estado = ControlSolicitudRSSMetadatos.Estado.ESPERA
+            control.retry_after_hasta = max(minimo, solicitado)
+        control.save(update_fields=['estado', 'retry_after_hasta', 'actualizado'], using=using)
+        return control.estado, control.retry_after_hasta
+
+
+def resolver_bloqueo_pendiente(fuente_id, *, confirmar_revision_manual=False,
+                                confirmar_retry_after_vencido=False):
+    """Resuelve EN_CURSO/REVISION_MANUAL sólo tras confirmación humana explícita.
+
+    Nunca hace un GET. La nueva disponibilidad se difiere al menos un intervalo
+    completo desde la resolución; la persona debe verificar Retry-After y acceso.
+    """
+    fuente = _fuente_canonica(fuente_id)
+    if confirmar_revision_manual is not True:
+        raise AutorizacionMetadatosError('Falta --confirmar-revision-manual.')
+    intervalos = _mapa_configurado('RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE')
+    if fuente.identificador not in intervalos:
+        raise AutorizacionMetadatosError('Falta un intervalo mínimo configurado para esta fuente.')
+    using = 'default'
+    with transaction.atomic(using=using):
+        bloquear_fuente_rss(fuente, using=using)
+        control = (ControlSolicitudRSSMetadatos.objects.using(using)
+                   .select_for_update().get(fuente_id=fuente.identificador))
+        if control.estado not in (
+            ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+            ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
+        ):
+            raise ValueError('La fuente no tiene un bloqueo pendiente de resolución manual.')
+        if (control.estado == ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL
+                and confirmar_retry_after_vencido is not True):
+            raise AutorizacionMetadatosError(
+                'Falta confirmar que venció el Retry-After excesivo antes de recuperar la fuente.'
+            )
+        if control.retry_after_hasta and control.retry_after_hasta > timezone.now():
+            raise ValueError('El Retry-After registrado todavía no venció.')
+        control.estado = ControlSolicitudRSSMetadatos.Estado.ESPERA
+        control.retry_after_hasta = timezone.now() + timedelta(
+            seconds=intervalos[fuente.identificador],
+        )
+        control.save(update_fields=['estado', 'retry_after_hasta', 'actualizado'], using=using)
+        return {
+            'fuente_id': fuente.identificador,
+            'estado': control.estado,
+            'reintentar_despues': control.retry_after_hasta.isoformat(),
+        }
 
 
 def _validar_item(item, fuente):
@@ -217,6 +288,7 @@ def _resultado_base(fuente_id, limite):
         'rechazadas': 0,
         'errores': 0,
         'espera_segundos': None,
+        'revision_manual_requerida': False,
         'causas': [],
         'noticias': [],
     }
@@ -245,6 +317,10 @@ def persistir_metadatos_rss(fuente_id, *, limite=1, confirmar_persistencia=False
         resultado['causas'].append({'codigo': 'intervalo_minimo_no_vencido',
                                     'reintentar_en_segundos': exc.segundos})
         return resultado
+    except FuenteBloqueada:
+        resultado.update(estado='BLOQUEADA', errores=1, revision_manual_requerida=True)
+        resultado['causas'].append({'codigo': 'solicitud_pendiente_revision_manual'})
+        return resultado
     except DatabaseError as exc:
         resultado.update(estado='ERROR', errores=1)
         resultado['causas'].append({'codigo': 'control_de_frecuencia_no_disponible',
@@ -257,23 +333,37 @@ def persistir_metadatos_rss(fuente_id, *, limite=1, confirmar_persistencia=False
             raise ValueError('El lector RSS devolvió un resultado inválido.')
     except Exception as exc:
         resultado.update(estado='ERROR', errores=1)
-        resultado['causas'].append({'codigo': 'consulta_rss_fallida', 'tipo': type(exc).__name__})
+        causa = {'codigo': 'consulta_rss_fallida', 'tipo': type(exc).__name__}
+        resultado['causas'].append(causa)
+        retry_after_segundos = None
+        revision_manual = False
         if isinstance(exc, RespuestaHTTPError):
-            causa = resultado['causas'][-1]
             causa['http_status'] = exc.estado
             if exc.estado == 429:
-                espera = exc.retry_after_segundos
-                if espera is None:
-                    espera = fallback_429
-                try:
-                    _guardar_retry_after(fuente, control_id, espera)
-                except DatabaseError:
-                    causa['codigo'] = 'http_429_retry_after_no_persistido'
-                    causa['bloqueo_operativo_manual_requerido'] = True
-                resultado['espera_segundos'] = espera
-                if causa['codigo'] != 'http_429_retry_after_no_persistido':
-                    causa['codigo'] = 'http_429'
-                causa['reintentar_en_segundos'] = espera
+                causa['codigo'] = 'http_429'
+                if exc.retry_after_excesivo:
+                    revision_manual = True
+                    causa['codigo'] = 'http_429_retry_after_excesivo'
+                else:
+                    retry_after_segundos = exc.retry_after_segundos
+                    if retry_after_segundos is None:
+                        retry_after_segundos = fallback_429
+                    resultado['espera_segundos'] = retry_after_segundos
+                    causa['reintentar_en_segundos'] = retry_after_segundos
+        try:
+            _finalizar_solicitud(
+                fuente, control_id, intervalo_segundos,
+                retry_after_segundos=retry_after_segundos,
+                revision_manual=revision_manual,
+            )
+        except (DatabaseError, FuenteBloqueada):
+            # La transacción de finalización revierte y deja EN_CURSO durable.
+            # Ninguna nueva ejecución puede hacer GET hasta resolución explícita.
+            causa['codigo'] = 'solicitud_pendiente_revision_manual'
+            resultado['revision_manual_requerida'] = True
+            resultado['espera_segundos'] = None
+        else:
+            resultado['revision_manual_requerida'] = revision_manual
         return resultado
 
     # H2.2 limita por índice original. No contar rechazos de entradas posteriores
@@ -319,4 +409,12 @@ def persistir_metadatos_rss(fuente_id, *, limite=1, confirmar_persistencia=False
     registro.estado = estado
     registro.save(update_fields=['estado'])
     resultado['estado'] = estado
+    try:
+        _finalizar_solicitud(fuente, control_id, intervalo_segundos)
+    except (DatabaseError, FuenteBloqueada):
+        # La reserva sigue EN_CURSO si no se pudo guardar el resultado completo.
+        # Las publicaciones ya insertadas son idempotentes ante una resolución manual.
+        resultado.update(estado='ERROR', errores=resultado['errores'] + 1,
+                        revision_manual_requerida=True)
+        resultado['causas'].append({'codigo': 'solicitud_pendiente_revision_manual'})
     return resultado

@@ -90,13 +90,30 @@ class RegistroDatos(models.Model):
 class ControlSolicitudRSSMetadatos(models.Model):
     """Última solicitud y pausa impuesta por el servidor para cada feed opt-in."""
 
+    class Estado(models.TextChoices):
+        LIBRE = 'LIBRE', 'Libre'
+        EN_CURSO = 'EN_CURSO', 'Solicitud en curso'
+        ESPERA = 'ESPERA', 'Espera activa'
+        REVISION_MANUAL = 'REVISION_MANUAL', 'Revisión manual requerida'
+
     fuente_id = models.CharField(max_length=64, unique=True)
+    estado = models.CharField(max_length=20, choices=Estado.choices, default=Estado.LIBRE)
     ultimo_intento = models.DateTimeField(null=True, blank=True)
     retry_after_hasta = models.DateTimeField(null=True, blank=True)
     actualizado = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'core_control_solicitud_rss_metadatos'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(estado__in=['LIBRE', 'EN_CURSO', 'ESPERA', 'REVISION_MANUAL']),
+                name='control_rss_estado_valido',
+            ),
+            models.CheckConstraint(
+                condition=(~models.Q(estado='ESPERA') | models.Q(retry_after_hasta__isnull=False)),
+                name='control_rss_espera_con_fecha',
+            ),
+        ]
 
     def __str__(self):
         return f'Control RSS metadatos: {self.fuente_id}'
