@@ -75,13 +75,30 @@ mantiene fuera del catálogo de feeds y cuenta con una configuración histórica
 sin URL de feed, deshabilitada por defecto. No se puede usar para una solicitud
 RSS ni para el transporte H2.1.
 
-H5.10-F añade `lotes_rss_metadatos.iniciar_lote_historico()`, que acepta
-únicamente `EntradaHistoricaProcesable`, aplica las barreras de fuente y crea
-un snapshot durable sin GET. El trabajo conserva `origen=HISTORICO` y la
-procedencia por separado. La creación de trabajo, auditoría y snapshot es
-atómica; el procesamiento reutiliza los checkpoints, fencing, pausa,
+H5.10-F añade `lotes_rss_metadatos.iniciar_lote_historico()`. H5.10-H cambia
+su frontera para recibir el documento de descubrimiento y los registros de
+verificación por separado, y volver a ejecutar `adaptar_candidatas()` antes de
+persistir. No acepta como evidencia un `EntradaHistoricaProcesable` construido
+por el llamador. El adaptador exige correspondencia exacta entre URL candidata
+y URL verificada, fuente, título, fecha editorial con zona y procedencia
+permitida. El paquete está limitado a 30 entradas y 256 KiB; las cadenas de
+procedencia tienen longitudes máximas y no se admiten claves o estructuras
+anidadas arbitrarias.
+
+Estas validaciones son estructurales y auditables, pero no autentican la fuente
+ni las declaraciones de verificación. Por eso
+`HISTORICO_IMPORTACION_HABILITADA` queda falso por defecto; las pruebas lo
+sobrescriben únicamente dentro de PostgreSQL temporal con fixtures sintéticos.
+No habilitarlo para datos reales hasta contar con un proceso permitido de
+verificación de evidencia y resolver las condiciones de uso del medio.
+
+Cuando ese gate y las barreras de fuente se satisfacen, el trabajo conserva
+`origen=HISTORICO` y la procedencia separada. La creación de trabajo, auditoría y
+snapshot es atómica; el procesamiento reutiliza checkpoints, fencing, pausa,
 reanudación y deduplicación H5.8/H5.4. No se modifica el control de frecuencia
-H5.6 porque no hubo solicitud.
+H5.6 porque no hubo solicitud. Los reportes informan cero `entradas_feed` para
+históricos y exponen `entradas_historicas`; los reportes RSS conservan su
+contador previo.
 
 ## Límites operativos y de uso
 

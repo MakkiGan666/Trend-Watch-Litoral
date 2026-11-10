@@ -5,6 +5,7 @@ No contiene transporte ni persistencia. Una coincidencia de ruta o un
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 
 from core.services.descarga_segura import clave_identidad_url, validar_url
 from core.services.descubrimiento_historico_sitemap import PATRON_RUTA_NOTICIA
@@ -14,6 +15,16 @@ from core.services.lector_rss import NoticiaRSS
 FORMATO_DESCUBRIMIENTO = 'trendwatch.historico-descubrimiento.v1'
 FUENTE_ID = 'el_territorio'
 MAX_TITULO = 255
+MAX_ENTRADAS_HISTORICAS = 30
+MAX_BYTES_PAQUETE = 256 * 1024
+MAX_URL = 500
+MAX_FECHA = 64
+MAX_PROCEDENCIA = {
+    'metodo': 64,
+    'titulo_origen': 128,
+    'fecha_publicacion_origen': 128,
+    'referencia': 512,
+}
 
 
 class MetadatosHistoricosInvalidos(ValueError):
@@ -48,13 +59,18 @@ def _fecha_editorial(valor):
 
 def _procedencia_verificada(registro):
     procedencia = registro.get('procedencia')
-    if not isinstance(procedencia, dict):
+    if (not isinstance(procedencia, dict)
+            or set(procedencia) - set(MAX_PROCEDENCIA)
+            or not {'metodo', 'titulo_origen', 'fecha_publicacion_origen'} <= set(procedencia)):
         raise MetadatosHistoricosInvalidos('procedencia_ausente')
     metodo = procedencia.get('metodo')
     titulo_origen = procedencia.get('titulo_origen')
     fecha_origen = procedencia.get('fecha_publicacion_origen')
     if not all(isinstance(v, str) and v.strip() for v in (metodo, titulo_origen, fecha_origen)):
         raise MetadatosHistoricosInvalidos('procedencia_incompleta')
+    if any(len(procedencia[campo]) > maximo for campo, maximo in MAX_PROCEDENCIA.items()
+           if campo in procedencia):
+        raise MetadatosHistoricosInvalidos('procedencia_demasiado_larga')
     if fecha_origen.strip().lower() in {'lastmod', 'sitemap_lastmod'}:
         raise MetadatosHistoricosInvalidos('lastmod_no_es_fecha_editorial')
     # Sólo se conserva procedencia declarativa, no texto editorial adicional.
@@ -76,40 +92,106 @@ def adaptar_candidatas(descubrimiento, verificaciones):
     permitida. No confía en flags del candidato ni transforma candidatos solos.
     El resultado es una representación de datos; no crea ni inicia trabajos H5.8.
     """
+    campos_descubrimiento = {
+        'formato', 'fuente_id', 'tipo_documento', 'limite', 'candidatas',
+        'sitemaps_pendientes', 'no_candidatas', 'rechazadas', 'duplicadas', 'fuera_limite',
+    }
     if (not isinstance(descubrimiento, dict)
+            or set(descubrimiento) != campos_descubrimiento
             or descubrimiento.get('formato') != FORMATO_DESCUBRIMIENTO
             or descubrimiento.get('fuente_id') != FUENTE_ID
-            or not isinstance(descubrimiento.get('candidatas'), list)):
+            or descubrimiento.get('tipo_documento') != 'urlset'
+            or type(descubrimiento.get('limite')) is not int
+            or not 1 <= descubrimiento['limite'] <= MAX_ENTRADAS_HISTORICAS
+            or not isinstance(descubrimiento.get('candidatas'), list)
+            or not 1 <= len(descubrimiento['candidatas']) <= MAX_ENTRADAS_HISTORICAS
+            or not isinstance(descubrimiento.get('sitemaps_pendientes'), list)
+            or descubrimiento.get('sitemaps_pendientes') != []):
         raise MetadatosHistoricosInvalidos('descubrimiento_invalido')
-    if not isinstance(verificaciones, (list, tuple)):
+    for campo in ('no_candidatas', 'rechazadas'):
+        if not isinstance(descubrimiento.get(campo), list) or len(descubrimiento[campo]) > 100:
+            raise MetadatosHistoricosInvalidos('descubrimiento_invalido')
+    if (type(descubrimiento.get('duplicadas')) is not int
+            or not 0 <= descubrimiento['duplicadas'] <= 100
+            or type(descubrimiento.get('fuera_limite')) is not int
+            or not 0 <= descubrimiento['fuera_limite'] <= 100):
+        raise MetadatosHistoricosInvalidos('descubrimiento_invalido')
+    for elemento in descubrimiento['no_candidatas']:
+        if (not isinstance(elemento, dict) or set(elemento) != {'indice', 'url', 'codigo'}
+                or type(elemento['indice']) is not int or not 0 <= elemento['indice'] < 100
+                or not isinstance(elemento['url'], str)
+                or len(elemento['url']) > MAX_URL or not isinstance(elemento['codigo'], str)
+                or len(elemento['codigo']) > 64):
+            raise MetadatosHistoricosInvalidos('descubrimiento_invalido')
+    for elemento in descubrimiento['rechazadas']:
+        if (not isinstance(elemento, dict) or set(elemento) != {'indice', 'codigo'}
+                or type(elemento['indice']) is not int or not 0 <= elemento['indice'] < 100
+                or not isinstance(elemento['codigo'], str)
+                or len(elemento['codigo']) > 64):
+            raise MetadatosHistoricosInvalidos('descubrimiento_invalido')
+    if (not isinstance(verificaciones, (list, tuple))
+            or len(verificaciones) > MAX_ENTRADAS_HISTORICAS):
         raise MetadatosHistoricosInvalidos('verificaciones_invalidas')
+
+    paquete = {'descubrimiento': descubrimiento, 'verificaciones': verificaciones}
+    try:
+        serializado = json.dumps(
+            paquete, ensure_ascii=False, separators=(',', ':'), allow_nan=False,
+        ).encode('utf-8')
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise MetadatosHistoricosInvalidos('paquete_no_serializable') from exc
+    if len(serializado) > MAX_BYTES_PAQUETE:
+        raise MetadatosHistoricosInvalidos('paquete_demasiado_grande')
 
     por_url = {}
     for registro in verificaciones:
-        if not isinstance(registro, dict):
-            continue
+        campos_verificacion = {
+            'url', 'url_verificada', 'estado_validacion', 'tipo', 'titulo',
+            'fecha_publicacion', 'procedencia',
+        }
+        if (not isinstance(registro, dict)
+                or set(registro) != campos_verificacion):
+            raise MetadatosHistoricosInvalidos('verificacion_estructura_invalida')
         url = registro.get('url')
+        if not isinstance(url, str) or len(url) > MAX_URL:
+            raise MetadatosHistoricosInvalidos('url_verificacion_invalida')
         try:
             validar_url(url)
             clave = clave_identidad_url(url)
-        except (TypeError, ValueError):
-            continue
+        except (TypeError, ValueError) as exc:
+            raise MetadatosHistoricosInvalidos('url_verificacion_invalida') from exc
         if clave in por_url:
             raise MetadatosHistoricosInvalidos('verificacion_duplicada')
         por_url[clave] = registro
 
     resultado = {'entradas': [], 'rechazadas': [], 'duplicadas': 0}
     vistas = set()
+    indices_vistos = set()
     for candidato in descubrimiento['candidatas']:
         indice = candidato.get('indice') if isinstance(candidato, dict) else None
         try:
             if not isinstance(candidato, dict):
                 raise MetadatosHistoricosInvalidos('candidato_invalido')
+            if set(candidato) != {
+                'indice', 'url', 'lastmod', 'lastmod_estado', 'estado',
+                'verificada_como_noticia', 'fecha_publicacion',
+            }:
+                raise MetadatosHistoricosInvalidos('candidato_estructura_invalida')
             if (candidato.get('estado') != 'CANDIDATA_NO_VERIFICADA'
                     or candidato.get('verificada_como_noticia') is not False
                     or type(indice) is not int or indice < 0):
                 raise MetadatosHistoricosInvalidos('estado_candidato_invalido')
+            if (indice in indices_vistos or indice >= 100
+                    or candidato.get('lastmod_estado') not in {'AUSENTE', 'VALIDO', 'INVALIDO'}
+                    or (candidato.get('lastmod') is not None
+                        and (not isinstance(candidato['lastmod'], str)
+                             or len(candidato['lastmod']) > 64))
+                    or candidato.get('fecha_publicacion') is not None):
+                raise MetadatosHistoricosInvalidos('candidato_estructura_invalida')
+            indices_vistos.add(indice)
             url = candidato.get('url')
+            if not isinstance(url, str) or len(url) > MAX_URL:
+                raise MetadatosHistoricosInvalidos('url_candidata_invalida')
             partes = validar_url(url)
             if not PATRON_RUTA_NOTICIA.fullmatch(partes.path):
                 raise MetadatosHistoricosInvalidos('ruta_no_candidata')
@@ -123,10 +205,19 @@ def adaptar_candidatas(descubrimiento, verificaciones):
                     or registro.get('tipo') != 'NOTICIA'
                     or registro.get('url_verificada') is not True):
                 raise MetadatosHistoricosInvalidos('url_no_verificada_como_noticia')
+            if (registro.get('url') != url
+                    or registro.get('url_verificada') is not True):
+                raise MetadatosHistoricosInvalidos('url_no_corresponde_al_descubrimiento')
             titulo = registro.get('titulo')
-            if not isinstance(titulo, str) or not titulo.strip() or len(titulo.strip()) > MAX_TITULO:
+            if not isinstance(titulo, str) or not titulo.strip() or len(titulo) > MAX_TITULO:
                 raise MetadatosHistoricosInvalidos('titulo_ausente_o_invalido')
-            fecha = _fecha_editorial(registro.get('fecha_publicacion'))
+            if (not isinstance(registro.get('tipo'), str)
+                    or not isinstance(registro.get('estado_validacion'), str)):
+                raise MetadatosHistoricosInvalidos('verificacion_estructura_invalida')
+            fecha_bruta = registro.get('fecha_publicacion')
+            if not isinstance(fecha_bruta, str) or len(fecha_bruta) > MAX_FECHA:
+                raise MetadatosHistoricosInvalidos('fecha_publicacion_invalida')
+            fecha = _fecha_editorial(fecha_bruta)
             procedencia = _procedencia_verificada(registro)
             noticia = NoticiaRSS(
                 'El Territorio', FUENTE_ID, titulo.strip(), url, fecha,

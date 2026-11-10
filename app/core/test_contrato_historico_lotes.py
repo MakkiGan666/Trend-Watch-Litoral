@@ -61,7 +61,7 @@ class ContratoHistoricoLotesTests(unittest.TestCase):
 
     def test_lastmod_no_se_acepta_como_fecha_editorial(self):
         registro = verificacion()
-        registro['fecha_publicacion'] = registro['lastmod'] = '2026-10-02T10:30:00Z'
+        registro['fecha_publicacion'] = '2026-10-02T10:30:00Z'
         registro['procedencia']['fecha_publicacion_origen'] = 'sitemap_lastmod'
         resultado = adaptar_candidatas(candidato(), [registro])
         self.assertEqual(resultado['rechazadas'][0]['codigo'], 'lastmod_no_es_fecha_editorial')
