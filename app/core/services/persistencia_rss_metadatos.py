@@ -8,7 +8,7 @@ from django.db import DatabaseError, IntegrityError, transaction
 from django.utils import timezone
 
 from core.models import ControlSolicitudRSSMetadatos, Publicacion, RegistroDatos
-from core.services.fuentes_rss import FUENTES_RSS, FuenteRSS
+from core.services.fuentes_rss import FUENTES_HISTORICAS, FUENTES_RSS, FuenteRSS
 from core.services.lector_rss import NoticiaRSS, ResultadoRSS, leer_rss, normalizar_url
 from core.services.persistencia_multifuente import (
     ConflictoIdentidad,
@@ -42,7 +42,8 @@ class FuenteBloqueada(ValueError):
 def _fuente_canonica(fuente_id):
     if not isinstance(fuente_id, str):
         raise ValueError('ID de fuente inválido.')
-    fuente = next((f for f in FUENTES_RSS if f.identificador == fuente_id), None)
+    fuente = next((f for f in (*FUENTES_RSS, *FUENTES_HISTORICAS)
+                   if f.identificador == fuente_id), None)
     if type(fuente) is not FuenteRSS:
         raise ValueError('Fuente desconocida.')
     return fuente
@@ -54,7 +55,7 @@ def _ids_configurados(nombre):
         not isinstance(valor, str) or not valor for valor in autorizadas
     ):
         raise ImproperlyConfigured(f'{nombre} debe ser una lista de IDs.')
-    ids = {fuente.identificador for fuente in FUENTES_RSS}
+    ids = {fuente.identificador for fuente in (*FUENTES_RSS, *FUENTES_HISTORICAS)}
     if len(set(autorizadas)) != len(autorizadas) or not set(autorizadas) <= ids:
         raise ImproperlyConfigured(f'{nombre} contiene IDs inválidos o duplicados.')
     return frozenset(autorizadas)
@@ -62,7 +63,7 @@ def _ids_configurados(nombre):
 
 def _mapa_configurado(nombre, *, maximo=None):
     mapa = getattr(settings, nombre, {})
-    ids = {fuente.identificador for fuente in FUENTES_RSS}
+    ids = {fuente.identificador for fuente in (*FUENTES_RSS, *FUENTES_HISTORICAS)}
     if (not isinstance(mapa, dict)
             or any(not isinstance(clave, str) or clave not in ids
                    or type(valor) is not int or valor <= 0
@@ -177,6 +178,10 @@ def resolver_bloqueo_pendiente(fuente_id, *, confirmar_revision_manual=False,
     completo desde la resolución; la persona debe verificar Retry-After y acceso.
     """
     fuente = _fuente_canonica(fuente_id)
+    if fuente.solo_importacion_historica:
+        raise AutorizacionMetadatosError(
+            'La fuente sólo admite importación histórica verificada; no consulta RSS.'
+        )
     if confirmar_revision_manual is not True:
         raise AutorizacionMetadatosError('Falta --confirmar-revision-manual.')
     intervalos = _mapa_configurado('RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE')
@@ -308,6 +313,10 @@ def persistir_metadatos_rss(fuente_id, *, limite=1, confirmar_persistencia=False
     H1.1 `habilitada` no se modifica ni activa el pipeline de cuerpo completo.
     """
     fuente = _fuente_canonica(fuente_id)
+    if fuente.solo_importacion_historica:
+        raise AutorizacionMetadatosError(
+            'La fuente sólo admite importación histórica verificada; no consulta RSS.'
+        )
     if type(limite) is not int or not 1 <= limite <= MAXIMO_POR_EJECUCION:
         raise ValueError(f'El límite debe estar entre 1 y {MAXIMO_POR_EJECUCION}.')
     if confirmar_persistencia is not True:

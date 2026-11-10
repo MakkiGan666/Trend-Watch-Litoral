@@ -100,6 +100,12 @@ Los trabajos y sus resúmenes se retienen como auditoría; la purga administrati
 de trabajos históricos queda fuera de H5.8-A y deberá diseñarse sin borrar
 trabajos abiertos.
 
+H5.10-F agrega `origen` y `procedencia` al trabajo. Los trabajos existentes se
+clasifican como `RSS` por valor predeterminado. La importación histórica guarda
+un snapshot verificado y usa este mismo procesador sin solicitar el feed ni
+modificar el control de frecuencia H5.6. La procedencia persiste por separado
+cuando se limpia el snapshot editorial al completar.
+
 ## Despliegue seguro
 
 1. Crear respaldo verificable y aplicar la migración 0025 sólo en el entorno

@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from core.services.parametros import segundos_validos
-from core.services.fuentes_rss import FUENTES_RSS, FuenteRSS
+from core.services.fuentes_rss import FUENTES_HISTORICAS, FUENTES_RSS, FuenteRSS
 from urllib.parse import urljoin, urlsplit
 
 HOSTS = frozenset({'elterritorio.com.ar', 'www.elterritorio.com.ar'})
@@ -55,7 +55,7 @@ def _retry_after_segundos(valor, *, ahora=None):
 def _fuente_canonica(fuente):
     if type(fuente) is not FuenteRSS:
         raise ValueError('La política debe ser una FuenteRSS canónica.')
-    for canonica in FUENTES_RSS:
+    for canonica in (*FUENTES_RSS, *FUENTES_HISTORICAS):
         if fuente.identificador == canonica.identificador and fuente == canonica:
             return canonica
     raise ValueError('Política ajena o alterada respecto del catálogo.')
@@ -149,6 +149,8 @@ def descargar(url, timeout=10, *, fuente=None):
     """
     if fuente is not None:
         fuente = _fuente_canonica(fuente)
+        if fuente.solo_importacion_historica:
+            raise ValueError('La fuente está reservada para importación histórica sin transporte.')
     validar_url(url, fuente=fuente)
     max_bytes = fuente.max_bytes if fuente is not None else MAX_BYTES
     max_redirecciones = fuente.max_redirecciones if fuente is not None else 5

@@ -120,7 +120,11 @@ class ControlSolicitudRSSMetadatos(models.Model):
 
 
 class TrabajoLoteRSSMetadatos(models.Model):
-    """Trabajo reanudable; el snapshot contiene sólo título, URL y fecha RSS."""
+    """Trabajo reanudable para snapshots RSS o históricos verificados."""
+
+    class Origen(models.TextChoices):
+        RSS = 'RSS', 'RSS'
+        HISTORICO = 'HISTORICO', 'Histórico'
 
     class Estado(models.TextChoices):
         PENDIENTE = 'PENDIENTE', 'Pendiente'
@@ -130,6 +134,8 @@ class TrabajoLoteRSSMetadatos(models.Model):
         FALLIDO = 'FALLIDO', 'Fallido'
 
     fuente_id = models.CharField(max_length=64)
+    origen = models.CharField(max_length=12, choices=Origen.choices, default=Origen.RSS)
+    procedencia = models.JSONField(default=dict, blank=True)
     estado = models.CharField(max_length=16, choices=Estado.choices, default=Estado.PENDIENTE)
     tamano_lote = models.PositiveSmallIntegerField()
     snapshot = models.JSONField(default=list)
@@ -166,6 +172,10 @@ class TrabajoLoteRSSMetadatos(models.Model):
             models.CheckConstraint(
                 condition=models.Q(tamano_lote__gte=1, tamano_lote__lte=5),
                 name='trabajo_rss_tamano_valido',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(origen__in=['RSS', 'HISTORICO']),
+                name='trabajo_lote_origen_valido',
             ),
             models.UniqueConstraint(
                 fields=['fuente_id'],
