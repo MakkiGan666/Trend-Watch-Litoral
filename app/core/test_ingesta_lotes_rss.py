@@ -5,7 +5,7 @@ from threading import Event
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
-from django.db import close_old_connections
+from django.db import close_old_connections, OperationalError
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
@@ -74,6 +74,31 @@ class LotesRSSMetadatosTests(TestCase):
         self.assertTrue(all(set(item) <= {'indice', 'estado', 'titulo', 'url', 'fecha', 'codigo'}
                             for item in trabajo.snapshot))
 
+    def test_limpia_snapshot_vacio_y_completa_el_trabajo(self):
+        resultado = self._iniciar(ResultadoRSS((), (), 0, 0, ()), tamano=1)
+        trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=resultado['trabajo_id'])
+        self.assertEqual(resultado['estado'], 'COMPLETADO')
+        self.assertEqual(resultado['entradas_snapshot'], 0)
+        self.assertEqual(trabajo.snapshot, [])
+        self.assertEqual(trabajo.finalizado is not None, True)
+
+    def test_excedente_sobre_30_entradas_queda_contabilizado(self):
+        lectura = ResultadoRSS(noticias(self.fuente, 30).noticias, (), 33, 3, tuple(range(30)))
+        resultado = self._iniciar(lectura, tamano=1)
+        trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=resultado['trabajo_id'])
+        self.assertEqual(resultado['entradas_feed'], 33)
+        self.assertEqual(resultado['entradas_snapshot'], 30)
+        self.assertEqual(resultado['entradas_fuera_snapshot'], 3)
+        self.assertEqual(len(trabajo.snapshot), 30)
+
+    def test_rechazo_entre_indices_validos_no_desplaza_las_entradas(self):
+        primero, tercero = noticias(self.fuente, 2).noticias
+        lectura = ResultadoRSS((primero, tercero), ((1, 'Fecha inválida'),), 3, 0, (0, 2))
+        resultado = self._iniciar(lectura, tamano=3)
+        indices = [item['indice'] for item in resultado['resultados']]
+        self.assertEqual((resultado['nuevas'], resultado['rechazadas']), (2, 1))
+        self.assertEqual(indices, [1, 0, 2])
+
     def test_reanudar_usa_snapshot_sin_get_y_no_duplica(self):
         resultado = self._iniciar(noticias(self.fuente, 3), tamano=1)
         with patch('core.services.lotes_rss_metadatos.leer_rss', side_effect=AssertionError('GET no permitido')) as lector:
@@ -97,6 +122,31 @@ class LotesRSSMetadatosTests(TestCase):
         self.assertEqual((resultado['nuevas'], resultado['rechazadas']), (2, 1))
         self.assertEqual(Publicacion.objects.count(), 2)
         self.assertIn('RECHAZADA', [r['estado'] for r in resultado['resultados']])
+
+    def test_fallo_de_postgres_deja_entrada_pendiente_y_reanudable(self):
+        ids = {}
+
+        def lector(fuente, *, limite_entradas):
+            ids['trabajo'] = TrabajoLoteRSSMetadatos.objects.get(
+                fuente_id=fuente.identificador,
+                estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
+            ).pk
+            return noticias(fuente, 1)
+
+        with patch('core.services.lotes_rss_metadatos._persistir_item', side_effect=OperationalError):
+            with self.assertRaises(OperationalError):
+                lotes.iniciar_lote(
+                    self.fuente.identificador, tamano_lote=1,
+                    confirmar_persistencia=True, lector=lector,
+                )
+        trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=ids['trabajo'])
+        self.assertEqual(trabajo.estado, TrabajoLoteRSSMetadatos.Estado.PAUSADO)
+        self.assertEqual(trabajo.procesadas, 0)
+        self.assertEqual(trabajo.snapshot[0]['estado'], 'PENDIENTE')
+        self.assertFalse(Publicacion.objects.exists())
+        with patch('core.services.lotes_rss_metadatos.leer_rss', side_effect=AssertionError('No GET')):
+            final = lotes.reanudar_trabajo(trabajo.pk, confirmar_persistencia=True)
+        self.assertEqual((final['estado'], final['nuevas']), ('COMPLETADO', 1))
 
     def test_ficha_no_guarda_cuerpo_y_no_crea_trabajo_ia(self):
         resultado = self._iniciar(noticias(self.fuente, 1), tamano=1)
@@ -186,6 +236,29 @@ class LotesRSSMetadatosTests(TestCase):
         self.assertEqual(final['estado'], 'PAUSADO')
         self.assertEqual(final['nuevas'], 2)
 
+    def test_pausa_solicitada_durante_el_get_se_conserva_al_guardar_snapshot(self):
+        trabajo_ids = []
+
+        def lector(fuente, *, limite_entradas):
+            trabajo = TrabajoLoteRSSMetadatos.objects.get(
+                fuente_id=fuente.identificador,
+                estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
+            )
+            trabajo_ids.append(trabajo.pk)
+            pausado = lotes.pausar_trabajo(trabajo.pk)
+            self.assertTrue(TrabajoLoteRSSMetadatos.objects.get(pk=trabajo.pk).pausa_solicitada)
+            return noticias(fuente, 2)
+
+        resultado = self._iniciar(noticias(self.fuente, 2), tamano=2, lector=lector)
+        trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=trabajo_ids[0])
+        self.assertEqual(resultado['estado'], 'PAUSADO')
+        self.assertEqual(resultado['nuevas'], 0)
+        self.assertEqual(len(trabajo.snapshot), 2)
+        self.assertTrue(all(item['estado'] == 'PENDIENTE' for item in trabajo.snapshot))
+        self.assertEqual(Publicacion.objects.count(), 0)
+        final = lotes.reanudar_trabajo(trabajo.pk, confirmar_persistencia=True)
+        self.assertEqual((final['estado'], final['nuevas']), ('COMPLETADO', 2))
+
 
 class LotesRSSConcurrenciaTests(TransactionTestCase):
     reset_sequences = True
@@ -234,6 +307,110 @@ class LotesRSSConcurrenciaTests(TransactionTestCase):
                 final = primero.result(timeout=15)
         self.assertEqual(final['estado'], 'COMPLETADO')
         self.assertEqual(Publicacion.objects.count(), 2)
+
+    def test_recuperar_ejecutor_de_descarga_activo_lo_cerca_y_conserva_h56(self):
+        entrando, continuar = Event(), Event()
+        ids = {}
+
+        def lector(fuente, *, limite_entradas):
+            ids['trabajo'] = TrabajoLoteRSSMetadatos.objects.get(
+                fuente_id=fuente.identificador,
+                estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
+            ).pk
+            entrando.set()
+            if not continuar.wait(timeout=10):
+                raise TimeoutError('fin de espera sintética')
+            return noticias(fuente, 2)
+
+        def iniciar():
+            close_old_connections()
+            try:
+                return lotes.iniciar_lote(
+                    self.fuente.identificador, tamano_lote=1,
+                    confirmar_persistencia=True, lector=lector,
+                )
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            futuro = pool.submit(iniciar)
+            self.assertTrue(entrando.wait(timeout=10))
+            recuperado = lotes.recuperar_trabajo(
+                ids['trabajo'], confirmar_ejecutor_detenido=True,
+            )
+            self.assertEqual(recuperado['estado'], 'FALLIDO')
+            continuar.set()
+            resultado = futuro.result(timeout=15)
+
+        self.assertEqual(resultado['estado'], 'FALLIDO')
+        self.assertEqual(Publicacion.objects.count(), 0)
+        self.assertEqual(
+            ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador).estado,
+            ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+        )
+
+    def test_recovery_cerca_ejecutor_activo_con_snapshot_sin_doble_checkpoint(self):
+        inicial = lotes.iniciar_lote(
+            self.fuente.identificador, tamano_lote=1, confirmar_persistencia=True,
+            lector=lambda fuente, *, limite_entradas: noticias(fuente, 3),
+        )
+        entrando, continuar = Event(), Event()
+        original = lotes._procesar_item
+        llamadas = {'n': 0}
+
+        def bloquear_primera(*args, **kwargs):
+            llamadas['n'] += 1
+            if llamadas['n'] == 1:
+                entrando.set()
+                continuar.wait(timeout=10)
+            return original(*args, **kwargs)
+
+        def ejecutar_antiguo():
+            close_old_connections()
+            try:
+                return lotes.reanudar_trabajo(inicial['trabajo_id'], confirmar_persistencia=True)
+            finally:
+                close_old_connections()
+
+        with patch('core.services.lotes_rss_metadatos._procesar_item', side_effect=bloquear_primera):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                viejo = pool.submit(ejecutar_antiguo)
+                self.assertTrue(entrando.wait(timeout=10))
+                recuperado = lotes.recuperar_trabajo(
+                    inicial['trabajo_id'], confirmar_ejecutor_detenido=True,
+                )
+                self.assertEqual(recuperado['estado'], 'PAUSADO')
+                intermedio_nuevo = lotes.reanudar_trabajo(
+                    inicial['trabajo_id'], confirmar_persistencia=True,
+                )
+                final_nuevo = lotes.reanudar_trabajo(
+                    inicial['trabajo_id'], confirmar_persistencia=True,
+                )
+                continuar.set()
+                final_viejo = viejo.result(timeout=15)
+
+        self.assertEqual(final_nuevo['estado'], 'COMPLETADO')
+        self.assertEqual(intermedio_nuevo['estado'], 'PAUSADO')
+        self.assertEqual(final_viejo['estado'], 'COMPLETADO')
+        self.assertEqual(Publicacion.objects.count(), 3)
+
+    def test_no_crea_un_segundo_trabajo_para_fuente_con_ejecucion_activa(self):
+        segunda_lectura = []
+
+        def lector(fuente, *, limite_entradas):
+            with self.assertRaises(ValueError):
+                lotes.iniciar_lote(
+                    fuente.identificador, tamano_lote=1, confirmar_persistencia=True,
+                    lector=lambda *_a, **_kw: segunda_lectura.append(True),
+                )
+            return noticias(fuente, 1)
+
+        resultado = lotes.iniciar_lote(
+            self.fuente.identificador, tamano_lote=1,
+            confirmar_persistencia=True, lector=lector,
+        )
+        self.assertEqual(resultado['estado'], 'COMPLETADO')
+        self.assertEqual(segunda_lectura, [])
 
     def test_interrupcion_despues_de_checkpoint_preserva_el_resto(self):
         resultado = lotes.iniciar_lote(

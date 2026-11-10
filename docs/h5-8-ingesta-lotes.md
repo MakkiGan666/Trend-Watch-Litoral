@@ -36,12 +36,16 @@ código sanitizado, sin guardar el texto del error. La identidad y deduplicació
 son las de H5.4 (fuente + URL normalizada); reanudar una entrada tras una
 interrupción entre persistencia y confirmación no duplica la ficha.
 
-Una restricción única permite un trabajo abierto por fuente y un token evita
-dos procesadores simultáneos del mismo trabajo. `--pausar` establece una pausa
-solicitada que se atiende entre elementos. Una interrupción normal libera el
-token al dejar el checkpoint; si el proceso recibió SIGKILL o el host cayó,
-queda `EN_PROGRESO`. Sólo `--recuperar ... --confirmar-ejecutor-detenido`
-permite retirar ese token, después de comprobar que el proceso ya no existe.
+Una restricción única permite un trabajo abierto por fuente. El token se asigna
+antes de reservar frecuencia y hacer el GET, y se verifica al guardar el snapshot
+y en cada checkpoint. Una pausa solicitada durante el GET se conserva y se
+aplica antes de procesar la primera entrada. `--pausar` durante el procesamiento
+se atiende entre elementos. Si el ejecutor muere abruptamente, el token queda
+en `EN_PROGRESO`; sólo `--recuperar ... --confirmar-ejecutor-detenido` permite
+retirarlo después de verificar que el proceso terminó. La recuperación invalida
+el token anterior: un ejecutor que todavía reaparezca no puede escribir ni
+avanzar el checkpoint. Si no hay snapshot durable, el trabajo termina `FALLIDO`
+y el bloqueo H5.6 de la fuente sigue intacto para revisión manual.
 Un trabajo sin snapshot no se vuelve a consultar automáticamente: se marca
 fallido y cualquier nueva solicitud debe pasar de nuevo por el bloqueo H5.6.
 

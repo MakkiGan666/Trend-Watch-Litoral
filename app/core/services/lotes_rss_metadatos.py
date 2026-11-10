@@ -33,6 +33,10 @@ ESTADOS_ABIERTOS = (
 )
 
 
+class TokenEjecutorPerdido(ValueError):
+    """Un ejecutor antiguo fue cercado por una recuperación explícita."""
+
+
 def _reporte(trabajo):
     return {
         'trabajo_id': trabajo.pk,
@@ -67,6 +71,7 @@ def _validar_barreras(fuente_id, tamano_lote, confirmar_persistencia):
 
 
 def _crear_trabajo(fuente, tamano_lote):
+    token = uuid4()
     try:
         with transaction.atomic():
             bloquear_fuente_rss(fuente)
@@ -77,22 +82,27 @@ def _crear_trabajo(fuente, tamano_lote):
             return TrabajoLoteRSSMetadatos.objects.create(
                 fuente_id=fuente.identificador,
                 tamano_lote=tamano_lote,
+                estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
+                token_ejecutor=token,
             )
     except IntegrityError as exc:
         raise ValueError('Ya existe un trabajo abierto para esta fuente.') from exc
 
 
-def _estado_fallido(trabajo_id, codigo):
+def _estado_fallido(trabajo_id, codigo, *, token=None):
     with transaction.atomic():
         trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo_id)
+        if token is not None and trabajo.token_ejecutor != token:
+            return _reporte(trabajo)
         trabajo.estado = TrabajoLoteRSSMetadatos.Estado.FALLIDO
         trabajo.codigo_error = codigo
+        trabajo.token_ejecutor = None
         trabajo.finalizado = timezone.now()
-        trabajo.save(update_fields=['estado', 'codigo_error', 'finalizado', 'actualizado'])
+        trabajo.save(update_fields=['estado', 'codigo_error', 'token_ejecutor', 'finalizado', 'actualizado'])
         return _reporte(trabajo)
 
 
-def _registrar_snapshot(trabajo_id, lectura, fuente):
+def _registrar_snapshot(trabajo_id, lectura, fuente, token):
     if type(lectura) is not ResultadoRSS:
         raise ValueError('El lector RSS devolvió un resultado inválido.')
     limite = min(fuente.limite_noticias, MAXIMO_SNAPSHOT)
@@ -134,11 +144,13 @@ def _registrar_snapshot(trabajo_id, lectura, fuente):
     truncadas = max(lectura.truncadas, max(0, total - limite))
     with transaction.atomic():
         trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo_id)
+        if (trabajo.token_ejecutor != token
+                or trabajo.estado != TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO):
+            raise TokenEjecutorPerdido('La solicitud terminó después de perder su reserva de trabajo.')
         trabajo.snapshot = elementos
         trabajo.entradas_feed = total
         trabajo.entradas_snapshot = len(elementos)
         trabajo.entradas_fuera_snapshot = truncadas
-        trabajo.estado = TrabajoLoteRSSMetadatos.Estado.PAUSADO
         trabajo.rechazadas = sum(1 for item in elementos if item['estado'] == 'RECHAZADA')
         trabajo.procesadas = trabajo.rechazadas
         trabajo.resultados = [
@@ -154,7 +166,7 @@ def _registrar_snapshot(trabajo_id, lectura, fuente):
         trabajo.registro = registro
         trabajo.save(update_fields=[
             'snapshot', 'entradas_feed', 'entradas_snapshot', 'entradas_fuera_snapshot',
-            'estado', 'rechazadas', 'procesadas', 'resultados', 'registro', 'actualizado',
+            'rechazadas', 'procesadas', 'resultados', 'registro', 'actualizado',
         ])
     return total, truncadas
 
@@ -165,19 +177,23 @@ def iniciar_lote(fuente_id, *, tamano_lote=1, confirmar_persistencia=False, lect
         fuente_id, tamano_lote, confirmar_persistencia,
     )
     trabajo = _crear_trabajo(fuente, tamano_lote)
+    token = trabajo.token_ejecutor
     try:
         control_id = _reservar_solicitud(fuente, intervalo)
     except FuenteRSSEnEspera:
-        return _estado_fallido(trabajo.pk, 'intervalo_minimo_no_vencido')
+        return _estado_fallido(trabajo.pk, 'intervalo_minimo_no_vencido', token=token)
     except FuenteBloqueada:
-        return _estado_fallido(trabajo.pk, 'solicitud_previa_pendiente')
+        return _estado_fallido(trabajo.pk, 'solicitud_previa_pendiente', token=token)
     except DatabaseError:
-        return _estado_fallido(trabajo.pk, 'control_frecuencia_no_disponible')
+        return _estado_fallido(trabajo.pk, 'control_frecuencia_no_disponible', token=token)
 
     try:
         lector = lector or leer_rss
         lectura = lector(fuente, limite_entradas=min(fuente.limite_noticias, MAXIMO_SNAPSHOT))
-        total, truncadas = _registrar_snapshot(trabajo.pk, lectura, fuente)
+        _registrar_snapshot(trabajo.pk, lectura, fuente, token)
+    except TokenEjecutorPerdido:
+        # La recuperación cercó este proceso; nunca debe reactivar el trabajo.
+        return consultar_trabajo(trabajo.pk)
     except Exception as exc:
         codigo = 'http_429' if isinstance(exc, RespuestaHTTPError) and exc.estado == 429 else 'consulta_rss_fallida'
         retry_after = None
@@ -197,28 +213,20 @@ def iniciar_lote(fuente_id, *, tamano_lote=1, confirmar_persistencia=False, lect
             )
         except (DatabaseError, FuenteBloqueada):
             codigo = 'solicitud_fuente_pendiente_revision'
-        return _estado_fallido(trabajo.pk, codigo)
+        return _estado_fallido(trabajo.pk, codigo, token=token)
 
     try:
         _finalizar_solicitud(fuente, control_id, intervalo)
     except (DatabaseError, FuenteBloqueada):
         # El snapshot ya es durable; puede procesarse sin otro GET, pero H5.6
         # mantiene la fuente bloqueada para cualquier solicitud posterior.
-        TrabajoLoteRSSMetadatos.objects.filter(pk=trabajo.pk).update(
+        TrabajoLoteRSSMetadatos.objects.filter(pk=trabajo.pk, token_ejecutor=token).update(
             codigo_error='control_fuente_pendiente_revision',
         )
-    trabajo.refresh_from_db()
-    if not trabajo.snapshot:
-        with transaction.atomic():
-            trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo.pk)
-            trabajo.estado = TrabajoLoteRSSMetadatos.Estado.COMPLETADO
-            trabajo.finalizado = timezone.now()
-            trabajo.save(update_fields=['estado', 'finalizado', 'actualizado'])
-            if trabajo.registro_id:
-                trabajo.registro.estado = 'EXITO'
-                trabajo.registro.save(update_fields=['estado'])
-        return _reporte(trabajo)
-    return procesar_lote(trabajo.pk, confirmar_persistencia=True)
+    try:
+        return _procesar_con_token(trabajo.pk, token, fuente)
+    except TokenEjecutorPerdido:
+        return consultar_trabajo(trabajo.pk)
 
 
 def _reclamar(trabajo_id):
@@ -266,7 +274,7 @@ def _guardar_error_item(trabajo_id, token, item_index, codigo):
     with transaction.atomic():
         trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo_id)
         if trabajo.token_ejecutor != token:
-            raise ValueError('Se perdió la reserva de procesamiento del trabajo.')
+            raise TokenEjecutorPerdido('Se perdió la reserva de procesamiento del trabajo.')
         _marcar_item(trabajo, item_index, estado='ERROR', codigo=codigo)
         trabajo.save(update_fields=['snapshot', 'resultados', 'procesadas', 'errores', 'actualizado'])
 
@@ -275,7 +283,7 @@ def _procesar_item(trabajo_id, token, item_index, fuente):
     with transaction.atomic():
         trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo_id)
         if trabajo.token_ejecutor != token or trabajo.estado != TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO:
-            raise ValueError('La reserva de procesamiento cambió.')
+            raise TokenEjecutorPerdido('La reserva de procesamiento cambió.')
         item = trabajo.snapshot[item_index]
         if item['estado'] != 'PENDIENTE':
             return False
@@ -313,6 +321,14 @@ def procesar_lote(trabajo_id, *, confirmar_persistencia=False):
     trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=trabajo_id)
     _validar_barreras(trabajo.fuente_id, trabajo.tamano_lote, confirmar_persistencia)
     token, fuente = _reclamar(trabajo_id)
+    return _procesar_con_token(trabajo_id, token, fuente)
+
+
+def _procesar_con_token(trabajo_id, token, fuente):
+    trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=trabajo_id)
+    if (trabajo.token_ejecutor != token
+            or trabajo.estado != TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO):
+        raise TokenEjecutorPerdido('El trabajo ya no pertenece a este ejecutor.')
     procesadas_chunk = 0
     try:
         while procesadas_chunk < trabajo.tamano_lote:
@@ -325,6 +341,8 @@ def procesar_lote(trabajo_id, *, confirmar_persistencia=False):
                 break
             try:
                 _procesar_item(trabajo_id, token, indice, fuente)
+            except TokenEjecutorPerdido:
+                return consultar_trabajo(trabajo_id)
             except (ValueError, ValidationError, TypeError):
                 _guardar_error_item(trabajo_id, token, indice, 'metadatos_invalidos')
             except DatabaseError:
@@ -342,7 +360,7 @@ def procesar_lote(trabajo_id, *, confirmar_persistencia=False):
         with transaction.atomic():
             trabajo = TrabajoLoteRSSMetadatos.objects.select_for_update().get(pk=trabajo_id)
             if trabajo.token_ejecutor != token:
-                raise ValueError('Se perdió la reserva de procesamiento del trabajo.')
+                raise TokenEjecutorPerdido('Se perdió la reserva de procesamiento del trabajo.')
             quedan = any(item['estado'] == 'PENDIENTE' for item in trabajo.snapshot)
             trabajo.token_ejecutor = None
             trabajo.pausa_solicitada = False
@@ -363,6 +381,8 @@ def procesar_lote(trabajo_id, *, confirmar_persistencia=False):
                 )
                 trabajo.registro.save(update_fields=['estado'])
         return _reporte(trabajo)
+    except TokenEjecutorPerdido:
+        return consultar_trabajo(trabajo_id)
     except BaseException:
         # Excepciones normales/interrupciones cooperativas dejan el cursor
         # durable; SIGKILL conserva token y exige recuperación manual.
@@ -402,10 +422,24 @@ def recuperar_trabajo(trabajo_id, *, confirmar_ejecutor_detenido=False):
             raise ValueError('El trabajo no requiere recuperación de un ejecutor interrumpido.')
         if trabajo.token_ejecutor is None:
             raise ValueError('No hay token de ejecutor pendiente.')
-        trabajo.estado = TrabajoLoteRSSMetadatos.Estado.PAUSADO
         trabajo.token_ejecutor = None
         trabajo.pausa_solicitada = False
-        trabajo.save(update_fields=['estado', 'token_ejecutor', 'pausa_solicitada', 'actualizado'])
+        if trabajo.snapshot:
+            trabajo.estado = TrabajoLoteRSSMetadatos.Estado.PAUSADO
+            trabajo.codigo_error = ''
+            trabajo.save(update_fields=[
+                'estado', 'token_ejecutor', 'pausa_solicitada', 'codigo_error', 'actualizado',
+            ])
+        else:
+            # No hay datos durables que reanudar. El control H5.6 queda intacto
+            # y requerirá su resolución manual antes de cualquier nuevo GET.
+            trabajo.estado = TrabajoLoteRSSMetadatos.Estado.FALLIDO
+            trabajo.codigo_error = 'interrupcion_sin_snapshot_revisar_control_h5_6'
+            trabajo.finalizado = timezone.now()
+            trabajo.save(update_fields=[
+                'estado', 'token_ejecutor', 'pausa_solicitada', 'codigo_error',
+                'finalizado', 'actualizado',
+            ])
         return _reporte(trabajo)
 
 
