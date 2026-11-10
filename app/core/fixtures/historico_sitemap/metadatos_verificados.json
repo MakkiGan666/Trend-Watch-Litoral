@@ -1,0 +1,14 @@
+{
+  "estado_validacion": "VERIFICADA",
+  "fecha_publicacion": "2026-10-01T09:15:00-03:00",
+  "procedencia": {
+    "metodo": "fixture_sintetica",
+    "referencia": "indice_editorial_sintetico",
+    "fecha_publicacion_origen": "fecha_publicacion_del_indice",
+    "titulo_origen": "titulo_del_indice"
+  },
+  "tipo": "NOTICIA",
+  "titulo": "Titular sintético para prueba",
+  "url": "https://www.elterritorio.com.ar/noticias/2026/10/01/12345-titular-de-prueba",
+  "url_verificada": true
+}

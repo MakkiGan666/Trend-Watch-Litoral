@@ -50,16 +50,35 @@ duplicados también se informan aparte. El XML completo se analiza dentro del
 límite de bytes para que el recuento no dependa de truncar silenciosamente el
 documento.
 
-## Relación con H5.8
+## Contrato offline con H5.8 (H5.10-D)
 
-El resultado **no se puede entregar directamente** a H5.8: el trabajo por lotes
-requiere metadatos de publicación, en particular un título RSS auténtico. Antes
-de construir una entrada para H5.8, cada URL tendría que verificarse como una
-noticia mediante una fuente de índice autorizada que proporcione título y fecha,
-o mediante una futura revisión permitida del artículo. Una fecha de ruta o
-`lastmod` no sustituye por sí sola a la fecha editorial. La capa de integración
-futura debería convertir únicamente candidatos revisados a un snapshot H5.8 y
-reutilizar sus checkpoints, alias, deduplicación y límites por fuente.
+El descubridor sigue entregando **URLs candidatas**, no publicaciones ni
+entradas aprobadas. H5.10-D añade
+`core.services.contrato_historico_lotes.adaptar_candidatas()`, una conversión
+pura sin HTTP ni base de datos. Acepta, para cada URL, una verificación separada
+que declare `url_verificada`, `tipo=NOTICIA`, `estado_validacion=VERIFICADA`,
+título, fecha editorial con zona horaria y procedencia explícita del título y
+de la fecha. Registros sin verificación, título o fecha confiable se rechazan.
+`lastmod` permanece identificado como dato del sitemap y nunca satisface el
+campo editorial.
+
+El resultado es `EntradaHistoricaProcesable`: incluye un `NoticiaRSS` con
+fuente, URL validada, título y fecha normalizada a UTC; resumen, contenido y
+sección quedan vacíos. Conserva aparte el estado de validación, el índice de
+descubrimiento, `lastmod` y la procedencia declarativa. Deduplica por la clave de
+identidad URL de H2.1 y aplica la validación de host existente. No obtiene ni
+autentica evidencia: la marca de verificación debe provenir de una futura capa
+permitida y revisable.
+
+Esta representación tiene la forma de los metadatos H2.2/H5.4, pero **todavía
+no puede iniciar un trabajo H5.8**. El Territorio no está en el catálogo
+canónico `FUENTES_RSS`, y H5.8 solo crea snapshots al leer el feed por su flujo
+normal; aún no ofrece una API para importar candidatos históricos verificados
+ni registrar su procedencia en un trabajo. La integración posterior requiere
+resolver la política de uso, incorporar un adaptador de fuente con barreras
+H5.6 y añadir un punto de entrada que acepte solo entradas verificadas para el
+snapshot existente. Debe reutilizar checkpoints, deduplicación e idempotencia
+H5.8, sin crear un procesador paralelo.
 
 ## Límites operativos y de uso
 
@@ -71,14 +90,16 @@ cuerpo, clasificar y persistir.
 Los términos públicos de El Territorio indican que la reproducción de sus
 contenidos requiere autorización previa por escrito. Este prototipo offline no
 consulta sitemaps reales ni determina si las URLs, títulos o metadatos pueden
-almacenarse o exhibirse. No debe conectarse a un proveedor real ni integrarse
-con H5.8 hasta resolver esa condición y definir frecuencia, retención y campos
-permitidos. No demuestra disponibilidad ni cobertura temporal actual del
-sitemap.
+almacenarse o exhibirse. Las pruebas del contrato solo demuestran forma y
+validaciones de datos sintéticos; no acreditan que una URL o titular sean
+auténticos. No debe conectarse a un proveedor real ni integrarse con H5.8 hasta
+resolver esa condición y definir frecuencia, retención y campos permitidos. No
+demuestra disponibilidad ni cobertura temporal actual del sitemap.
 
 ## Pruebas y ejecución
 
-Las pruebas usan exclusivamente XML sintético en
-`core/fixtures/historico_sitemap/`; se ejecutan con `python -m unittest
-core.test_descubrimiento_historico_sitemap` desde `app/`. No requieren PostgreSQL,
-Docker, red, sitemaps externos ni artículos.
+Las pruebas usan exclusivamente XML y metadatos JSON sintéticos en
+`core/fixtures/historico_sitemap/`; se ejecutan desde `app/` con
+`python -m unittest core.test_descubrimiento_historico_sitemap
+core.test_contrato_historico_lotes`. No requieren PostgreSQL, Docker, red,
+sitemaps externos ni artículos.
