@@ -40,6 +40,9 @@ class NoticiaRSS:
 class ResultadoRSS:
     noticias: tuple[NoticiaRSS, ...]
     rechazos: tuple[tuple[int, str], ...]
+    total_entradas: int = 0
+    truncadas: int = 0
+    indices_noticias: tuple[int, ...] = ()
 
 
 class _Texto(HTMLParser):
@@ -189,13 +192,18 @@ def analizar_rss(datos, fuente, *, limite_entradas=None):
     feed = feedparser.parse(BytesIO(datos), resolve_relative_uris=False, sanitize_html=True)
     if feed.get('bozo') or not feed.get('version') or len(nodos) != len(feed.entries):
         raise ValueError('Feed malformado o formato no reconocido.')
-    noticias, rechazos = [], []
+    noticias, rechazos, indices_noticias = [], [], []
     for indice, entrada in enumerate(feed.entries[:limite]):
         try:
             noticias.append(_normalizar(entrada, fuente, nodos[indice].find(campo_resumen) is not None, nodos[indice]))
+            indices_noticias.append(indice)
         except (ValueError, TypeError, AttributeError) as exc:
             rechazos.append((indice, str(exc)))
-    return ResultadoRSS(tuple(noticias), tuple(rechazos))
+    procesadas = min(len(nodos), limite)
+    return ResultadoRSS(
+        tuple(noticias), tuple(rechazos), len(nodos), max(0, len(nodos) - procesadas),
+        tuple(indices_noticias),
+    )
 
 
 def leer_rss(fuente, *, limite_entradas=None):
