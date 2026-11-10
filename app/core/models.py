@@ -119,6 +119,65 @@ class ControlSolicitudRSSMetadatos(models.Model):
         return f'Control RSS metadatos: {self.fuente_id}'
 
 
+class TrabajoLoteRSSMetadatos(models.Model):
+    """Trabajo reanudable; el snapshot contiene sólo título, URL y fecha RSS."""
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        EN_PROGRESO = 'EN_PROGRESO', 'En progreso'
+        PAUSADO = 'PAUSADO', 'Pausado'
+        COMPLETADO = 'COMPLETADO', 'Completado'
+        FALLIDO = 'FALLIDO', 'Fallido'
+
+    fuente_id = models.CharField(max_length=64)
+    estado = models.CharField(max_length=16, choices=Estado.choices, default=Estado.PENDIENTE)
+    tamano_lote = models.PositiveSmallIntegerField()
+    snapshot = models.JSONField(default=list)
+    entradas_feed = models.PositiveIntegerField(default=0)
+    entradas_snapshot = models.PositiveIntegerField(default=0)
+    entradas_fuera_snapshot = models.PositiveIntegerField(default=0)
+    procesadas = models.PositiveIntegerField(default=0)
+    nuevas = models.PositiveIntegerField(default=0)
+    duplicadas = models.PositiveIntegerField(default=0)
+    rechazadas = models.PositiveIntegerField(default=0)
+    errores = models.PositiveIntegerField(default=0)
+    resultados = models.JSONField(default=list)
+    registro = models.ForeignKey(
+        RegistroDatos, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='trabajos_lote_rss',
+    )
+    token_ejecutor = models.UUIDField(null=True, blank=True)
+    pausa_solicitada = models.BooleanField(default=False)
+    codigo_error = models.CharField(max_length=64, blank=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+    finalizado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'core_trabajoloterssmetadatos'
+        ordering = ['-creado', '-pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(estado__in=[
+                    'PENDIENTE', 'EN_PROGRESO', 'PAUSADO', 'COMPLETADO', 'FALLIDO',
+                ]),
+                name='trabajo_rss_estado_valido',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(tamano_lote__gte=1, tamano_lote__lte=5),
+                name='trabajo_rss_tamano_valido',
+            ),
+            models.UniqueConstraint(
+                fields=['fuente_id'],
+                condition=models.Q(estado__in=['PENDIENTE', 'EN_PROGRESO', 'PAUSADO']),
+                name='trabajo_rss_unico_abierto_fuente',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Lote RSS {self.pk}: {self.fuente_id} ({self.estado})'
+
+
 class PublicacionQuerySet(models.QuerySet):
     def con_cuerpo_completo(self):
         """Sólo artículos con bandera y texto no blanco; excluye legacy vacíos."""
