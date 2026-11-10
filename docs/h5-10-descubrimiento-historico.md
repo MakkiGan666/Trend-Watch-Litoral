@@ -70,15 +70,35 @@ identidad URL de H2.1 y aplica la validación de host existente. No obtiene ni
 autentica evidencia: la marca de verificación debe provenir de una futura capa
 permitida y revisable.
 
-Esta representación tiene la forma de los metadatos H2.2/H5.4, pero **todavía
-no puede iniciar un trabajo H5.8**. El Territorio no está en el catálogo
-canónico `FUENTES_RSS`, y H5.8 solo crea snapshots al leer el feed por su flujo
-normal; aún no ofrece una API para importar candidatos históricos verificados
-ni registrar su procedencia en un trabajo. La integración posterior requiere
-resolver la política de uso, incorporar un adaptador de fuente con barreras
-H5.6 y añadir un punto de entrada que acepte solo entradas verificadas para el
-snapshot existente. Debe reutilizar checkpoints, deduplicación e idempotencia
-H5.8, sin crear un procesador paralelo.
+Esta representación tiene la forma de los metadatos H2.2/H5.4. El Territorio se
+mantiene fuera del catálogo de feeds y cuenta con una configuración histórica
+sin URL de feed, deshabilitada por defecto. No se puede usar para una solicitud
+RSS ni para el transporte H2.1.
+
+H5.10-F añade `lotes_rss_metadatos.iniciar_lote_historico()`. H5.10-H cambia
+su frontera para recibir el documento de descubrimiento y los registros de
+verificación por separado, y volver a ejecutar `adaptar_candidatas()` antes de
+persistir. No acepta como evidencia un `EntradaHistoricaProcesable` construido
+por el llamador. El adaptador exige correspondencia exacta entre URL candidata
+y URL verificada, fuente, título, fecha editorial con zona y procedencia
+permitida. El paquete está limitado a 30 entradas y 256 KiB; las cadenas de
+procedencia tienen longitudes máximas y no se admiten claves o estructuras
+anidadas arbitrarias.
+
+Estas validaciones son estructurales y auditables, pero no autentican la fuente
+ni las declaraciones de verificación. Por eso
+`HISTORICO_IMPORTACION_HABILITADA` queda falso por defecto; las pruebas lo
+sobrescriben únicamente dentro de PostgreSQL temporal con fixtures sintéticos.
+No habilitarlo para datos reales hasta contar con un proceso permitido de
+verificación de evidencia y resolver las condiciones de uso del medio.
+
+Cuando ese gate y las barreras de fuente se satisfacen, el trabajo conserva
+`origen=HISTORICO` y la procedencia separada. La creación de trabajo, auditoría y
+snapshot es atómica; el procesamiento reutiliza checkpoints, fencing, pausa,
+reanudación y deduplicación H5.8/H5.4. No se modifica el control de frecuencia
+H5.6 porque no hubo solicitud. Los reportes informan cero `entradas_feed` para
+históricos y exponen `entradas_historicas`; los reportes RSS conservan su
+contador previo.
 
 ## Límites operativos y de uso
 
@@ -88,18 +108,17 @@ independiente. Este parser no amplía ese catálogo ni invoca
 cuerpo, clasificar y persistir.
 
 Los términos públicos de El Territorio indican que la reproducción de sus
-contenidos requiere autorización previa por escrito. Este prototipo offline no
-consulta sitemaps reales ni determina si las URLs, títulos o metadatos pueden
-almacenarse o exhibirse. Las pruebas del contrato solo demuestran forma y
-validaciones de datos sintéticos; no acreditan que una URL o titular sean
-auténticos. No debe conectarse a un proveedor real ni integrarse con H5.8 hasta
-resolver esa condición y definir frecuencia, retención y campos permitidos. No
-demuestra disponibilidad ni cobertura temporal actual del sitemap.
+contenidos requiere autorización previa por escrito. Este trabajo no consulta
+sitemaps reales ni determina si las URLs, títulos o metadatos pueden
+almacenarse o exhibirse. Las pruebas solo demuestran validaciones con datos
+sintéticos; no acreditan autenticidad ni permisos. No habilitar una importación
+real hasta resolver esas condiciones y definir frecuencia, retención y campos
+permitidos. No demuestra disponibilidad ni cobertura temporal actual del
+sitemap.
 
 ## Pruebas y ejecución
 
-Las pruebas usan exclusivamente XML y metadatos JSON sintéticos en
-`core/fixtures/historico_sitemap/`; se ejecutan desde `app/` con
-`python -m unittest core.test_descubrimiento_historico_sitemap
-core.test_contrato_historico_lotes`. No requieren PostgreSQL, Docker, red,
-sitemaps externos ni artículos.
+Las pruebas del descubridor y contrato usan XML y metadatos JSON sintéticos en
+`core/fixtures/historico_sitemap/`. Las pruebas de H5.10-F usan entradas
+sintéticas y requieren PostgreSQL/PostGIS temporal para verificar trabajos y
+checkpoints; no consultan red ni medios externos.

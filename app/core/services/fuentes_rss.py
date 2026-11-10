@@ -14,13 +14,14 @@ from core.services.parametros import entero_positivo, segundos_validos
 class FuenteRSS:
     identificador: str
     nombre: str
-    feed: str
+    feed: str | None
     hosts_permitidos: tuple[str, ...]
     habilitada: bool = False
     limite_noticias: int = 30
     timeout_segundos: float = 10
     max_bytes: int = 1_500_000
     max_redirecciones: int = 4
+    solo_importacion_historica: bool = False
 
     def __post_init__(self):
         if not isinstance(self.identificador, str) or not re.fullmatch(
@@ -31,6 +32,8 @@ class FuenteRSS:
             raise ValueError('Nombre de fuente vacío.')
         if type(self.habilitada) is not bool:
             raise ValueError('habilitada debe ser un booleano.')
+        if type(self.solo_importacion_historica) is not bool:
+            raise ValueError('solo_importacion_historica debe ser un booleano.')
         if type(self.hosts_permitidos) is not tuple or not self.hosts_permitidos:
             raise ValueError('hosts_permitidos debe ser una tupla no vacía.')
         for host in self.hosts_permitidos:
@@ -46,7 +49,13 @@ class FuenteRSS:
         segundos_validos(self.timeout_segundos, 'timeout_segundos')
         if type(self.max_redirecciones) is not int or self.max_redirecciones < 0:
             raise ValueError('max_redirecciones debe ser un entero no negativo.')
-        self.validar_url(self.feed)
+        if self.solo_importacion_historica:
+            if self.feed is not None or self.habilitada:
+                raise ValueError('Una fuente histórica debe carecer de feed y permanecer deshabilitada.')
+        else:
+            if not isinstance(self.feed, str) or not self.feed.strip():
+                raise ValueError('Una fuente RSS requiere una URL de feed.')
+            self.validar_url(self.feed)
 
     def validar_url(self, url):
         """Valida sólo sintaxis y host exacto; no resuelve DNS ni descarga.
@@ -72,12 +81,15 @@ def validar_catalogo(fuentes):
     for fuente in fuentes:
         if not isinstance(fuente, FuenteRSS):
             raise ValueError('El catálogo sólo admite FuenteRSS.')
-        partes = fuente.validar_url(fuente.feed)
-        clave_feed = (partes.hostname, partes.path or '/', partes.query)
-        if fuente.identificador in identificadores or clave_feed in feeds:
+        clave_feed = None
+        if fuente.feed is not None:
+            partes = fuente.validar_url(fuente.feed)
+            clave_feed = (partes.hostname, partes.path or '/', partes.query)
+        if fuente.identificador in identificadores or (clave_feed and clave_feed in feeds):
             raise ValueError('Identificador o feed duplicado en el catálogo.')
         identificadores.add(fuente.identificador)
-        feeds.add(clave_feed)
+        if clave_feed:
+            feeds.add(clave_feed)
     return fuentes
 
 
@@ -100,6 +112,16 @@ FUENTES_RSS = validar_catalogo((
     FuenteRSS('la_mision_digital', 'La Misión Digital', 'https://lamisiondigital.com/feed/', ('lamisiondigital.com', 'www.lamisiondigital.com')),
     FuenteRSS('fracran_noticias', 'Fracrán Noticias', 'https://www.fracran.com.ar/feed.xml', ('fracran.com.ar', 'www.fracran.com.ar')),
     FuenteRSS('noticias_de_irigoyen', 'Noticias de Irigoyen', 'https://noticiasdeirigoyen.com.ar/feed/', ('noticiasdeirigoyen.com.ar', 'www.noticiasdeirigoyen.com.ar')),
+))
+
+# Fuentes de descubrimiento/importación, deliberadamente fuera del catálogo RSS
+# para no incluirlas en consultas ni orquestación de feeds.
+FUENTES_HISTORICAS = validar_catalogo((
+    FuenteRSS(
+        'el_territorio', 'El Territorio', None,
+        ('elterritorio.com.ar', 'www.elterritorio.com.ar'),
+        solo_importacion_historica=True,
+    ),
 ))
 
 

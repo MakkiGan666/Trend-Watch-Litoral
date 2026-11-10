@@ -211,6 +211,12 @@ RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO = tuple(filter(None, (
     ).split(',')
 )))
 
+# H5.10: el contrato actual no autentica evidencia editorial. La importación
+# histórica permanece cerrada hasta que exista un verificador permitido y
+# una habilitación operativa explícita. Las pruebas aisladas pueden sobrescribir
+# este valor mediante override_settings.
+HISTORICO_IMPORTACION_HABILITADA = False
+
 # H5.6: habilitación técnica y revisión de acceso independientes. Todas
 # las listas deniegan por defecto.
 RSS_METADATOS_FUENTES_HABILITADAS = tuple(filter(None, (

@@ -1,7 +1,9 @@
 """Lotes RSS con snapshot de metadatos y checkpoint por entrada."""
 from datetime import datetime
+import json
 from uuid import uuid4
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, transaction
 from django.utils import timezone
@@ -24,6 +26,12 @@ from core.services.persistencia_rss_metadatos import (
     _validar_item,
 )
 from core.services.descarga_segura import RespuestaHTTPError
+from core.services.contrato_historico_lotes import (
+    MAX_BYTES_PAQUETE,
+    MAX_ENTRADAS_HISTORICAS,
+    MetadatosHistoricosInvalidos,
+    adaptar_candidatas,
+)
 
 MAXIMO_SNAPSHOT = 30
 ESTADOS_ABIERTOS = (
@@ -38,16 +46,25 @@ class TokenEjecutorPerdido(ValueError):
 
 
 def _reporte(trabajo):
+    pendientes = sum(item.get('estado') == 'PENDIENTE' for item in trabajo.snapshot)
     return {
         'trabajo_id': trabajo.pk,
         'fuente_id': trabajo.fuente_id,
+        'origen': trabajo.origen,
         'estado': trabajo.estado,
         'tamano_lote': trabajo.tamano_lote,
-        'entradas_feed': trabajo.entradas_feed,
+        # Mantener el valor histórico de RSS y no atribuir un feed a trabajos
+        # históricos. Las claves nuevas son aditivas para los consumidores.
+        'entradas_feed': (trabajo.entradas_feed
+                          if trabajo.origen == TrabajoLoteRSSMetadatos.Origen.RSS else 0),
+        'entradas_historicas': (trabajo.entradas_snapshot
+                                if trabajo.origen == TrabajoLoteRSSMetadatos.Origen.HISTORICO else 0),
         'entradas_snapshot': trabajo.entradas_snapshot,
         'entradas_fuera_snapshot': trabajo.entradas_fuera_snapshot,
         'procesadas': trabajo.procesadas,
+        'entradas_pendientes': pendientes,
         'nuevas': trabajo.nuevas,
+        'persistidas': trabajo.nuevas,
         'duplicadas': trabajo.duplicadas,
         'rechazadas': trabajo.rechazadas,
         'errores': trabajo.errores,
@@ -59,10 +76,16 @@ def _reporte(trabajo):
     }
 
 
-def _validar_barreras(fuente_id, tamano_lote, confirmar_persistencia):
+def _validar_barreras(fuente_id, tamano_lote, confirmar_persistencia, *, origen='RSS'):
     if confirmar_persistencia is not True:
         raise AutorizacionMetadatosError('Falta --confirmar-persistencia.')
     fuente = _fuente_canonica(fuente_id)
+    if origen == TrabajoLoteRSSMetadatos.Origen.RSS and fuente.solo_importacion_historica:
+        raise AutorizacionMetadatosError('La fuente sólo admite importación histórica; no se hará un GET RSS.')
+    if origen == TrabajoLoteRSSMetadatos.Origen.HISTORICO and not fuente.solo_importacion_historica:
+        raise AutorizacionMetadatosError('La fuente no está declarada como importación histórica.')
+    if origen not in TrabajoLoteRSSMetadatos.Origen.values:
+        raise ValueError('Origen de trabajo inválido.')
     maximo, intervalo, fallback_429 = _politica_fuente(fuente)
     maximo_lote = min(maximo, fuente.limite_noticias, MAXIMO_POR_EJECUCION)
     if type(tamano_lote) is not int or not 1 <= tamano_lote <= maximo_lote:
@@ -70,7 +93,7 @@ def _validar_barreras(fuente_id, tamano_lote, confirmar_persistencia):
     return fuente, intervalo, fallback_429
 
 
-def _crear_trabajo(fuente, tamano_lote):
+def _crear_trabajo(fuente, tamano_lote, *, origen=TrabajoLoteRSSMetadatos.Origen.RSS):
     token = uuid4()
     try:
         with transaction.atomic():
@@ -81,6 +104,7 @@ def _crear_trabajo(fuente, tamano_lote):
                 raise ValueError('Ya existe un trabajo abierto para esta fuente.')
             return TrabajoLoteRSSMetadatos.objects.create(
                 fuente_id=fuente.identificador,
+                origen=origen,
                 tamano_lote=tamano_lote,
                 estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
                 token_ejecutor=token,
@@ -169,6 +193,111 @@ def _registrar_snapshot(trabajo_id, lectura, fuente, token):
             'rechazadas', 'procesadas', 'resultados', 'registro', 'actualizado',
         ])
     return total, truncadas
+
+
+def _crear_trabajo_historico(fuente_id, tamano_lote, descubrimiento, verificaciones,
+                             confirmar_persistencia):
+    """Valida el contrato y crea trabajo, auditoría y snapshot; nunca hace GET."""
+    if not getattr(settings, 'HISTORICO_IMPORTACION_HABILITADA', False):
+        raise AutorizacionMetadatosError(
+            'La importación histórica está deshabilitada hasta contar con verificación de evidencia.'
+        )
+    fuente, _, _ = _validar_barreras(
+        fuente_id, tamano_lote, confirmar_persistencia,
+        origen=TrabajoLoteRSSMetadatos.Origen.HISTORICO,
+    )
+    paquete = {'descubrimiento': descubrimiento, 'verificaciones': verificaciones}
+    try:
+        tamano_paquete = len(json.dumps(
+            paquete, ensure_ascii=False, separators=(',', ':'), allow_nan=False,
+        ).encode('utf-8'))
+    except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+        raise MetadatosHistoricosInvalidos('paquete no serializable') from exc
+    if tamano_paquete > MAX_BYTES_PAQUETE:
+        raise MetadatosHistoricosInvalidos('paquete histórico supera el tamaño máximo')
+    convertido = adaptar_candidatas(descubrimiento, verificaciones)
+    entradas = convertido['entradas']
+    if (convertido['rechazadas'] or convertido['duplicadas']
+            or not 1 <= len(entradas) <= min(MAXIMO_SNAPSHOT, MAX_ENTRADAS_HISTORICAS)):
+        raise MetadatosHistoricosInvalidos(
+            'el paquete debe contener sólo entradas verificadas, únicas y dentro del límite'
+        )
+
+    instantanea = []
+    procedencia = {
+        'fuente_id': fuente.identificador,
+        'tipo': 'metadatos_historicos_verificados',
+        'entradas': [],
+    }
+    identidades = set()
+    for indice, entrada in enumerate(entradas):
+        if (entrada.noticia.fuente_id != fuente.identificador
+                or entrada.noticia.fuente != fuente.nombre
+                or entrada.noticia.resumen or entrada.noticia.contenido_completo
+                or entrada.noticia.seccion):
+            raise MetadatosHistoricosInvalidos('la fuente o los campos de contenido no corresponden al contrato')
+        titulo, url, fecha, hash_origen = _validar_item(entrada.noticia, fuente)
+        if hash_origen in identidades:
+            raise ValueError('El snapshot histórico contiene URLs duplicadas.')
+        identidades.add(hash_origen)
+        instantanea.append({
+            'indice': indice,
+            'estado': 'PENDIENTE',
+            'titulo': titulo,
+            'url': url,
+            'fecha': fecha.isoformat() if fecha else None,
+        })
+        procedencia['entradas'].append({
+            'indice': indice,
+            'url_identidad': entrada.procedencia['url_identidad'],
+            'lastmod_sitemap': entrada.lastmod_sitemap,
+            'verificacion': entrada.procedencia.get('verificacion'),
+        })
+
+    token = uuid4()
+    try:
+        with transaction.atomic():
+            bloquear_fuente_rss(fuente)
+            if TrabajoLoteRSSMetadatos.objects.filter(
+                fuente_id=fuente.identificador, estado__in=ESTADOS_ABIERTOS,
+            ).exists():
+                raise ValueError('Ya existe un trabajo abierto para esta fuente.')
+            registro = RegistroDatos.objects.create(
+                fuentes_api=f'Importación histórica por lotes: {fuente.identificador}',
+                fecha_ejecucion=timezone.now(),
+                estado='EN_PROCESO',
+                lenguaje='es',
+            )
+            trabajo = TrabajoLoteRSSMetadatos.objects.create(
+                fuente_id=fuente.identificador,
+                origen=TrabajoLoteRSSMetadatos.Origen.HISTORICO,
+                procedencia=procedencia,
+                tamano_lote=tamano_lote,
+                snapshot=instantanea,
+                entradas_feed=0,
+                entradas_snapshot=len(instantanea),
+                estado=TrabajoLoteRSSMetadatos.Estado.EN_PROGRESO,
+                token_ejecutor=token,
+                registro=registro,
+            )
+            return trabajo, token, fuente
+    except IntegrityError as exc:
+        raise ValueError('Ya existe un trabajo abierto para esta fuente.') from exc
+
+
+def iniciar_lote_historico(fuente_id, descubrimiento, verificaciones, *, tamano_lote=1,
+                           confirmar_persistencia=False):
+    """Valida el paquete H5.10-D y procesa su snapshot sin GET.
+
+    La importación permanece deshabilitada por defecto mientras no exista una
+    fuente de evidencia auténtica revisable. El flag de configuración habilita
+    operación, pero no se considera prueba de autenticidad.
+    """
+    trabajo, token, fuente = _crear_trabajo_historico(
+        fuente_id, tamano_lote, descubrimiento, verificaciones,
+        confirmar_persistencia,
+    )
+    return _procesar_con_token(trabajo.pk, token, fuente)
 
 
 def iniciar_lote(fuente_id, *, tamano_lote=1, confirmar_persistencia=False, lector=None):
@@ -319,7 +448,10 @@ def _solicitar_pausa(trabajo):
 def procesar_lote(trabajo_id, *, confirmar_persistencia=False):
     """Procesa un chunk desde el snapshot, con un checkpoint por elemento."""
     trabajo = TrabajoLoteRSSMetadatos.objects.get(pk=trabajo_id)
-    _validar_barreras(trabajo.fuente_id, trabajo.tamano_lote, confirmar_persistencia)
+    _validar_barreras(
+        trabajo.fuente_id, trabajo.tamano_lote, confirmar_persistencia,
+        origen=trabajo.origen,
+    )
     token, fuente = _reclamar(trabajo_id)
     return _procesar_con_token(trabajo_id, token, fuente)
 
