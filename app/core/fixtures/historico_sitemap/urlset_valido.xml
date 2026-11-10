@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.elterritorio.com.ar/noticias/2026/10/01/12345-titular-de-prueba</loc>
+    <lastmod>2026-10-02T10:30:00Z</lastmod>
+  </url>
+  <url>
+    <loc>https://www.elterritorio.com.ar/noticias/2026/10/01/12345-titular-de-prueba</loc>
+    <lastmod>2026-10-02T10:30:00Z</lastmod>
+  </url>
+  <url>
+    <loc>https://www.elterritorio.com.ar/noticias/2026/10/02/12346-otra-prueba</loc>
+  </url>
+  <url>
+    <loc>https://www.elterritorio.com.ar/seccion/actualidad</loc>
+    <lastmod>no-es-fecha</lastmod>
+  </url>
+  <url>
+    <loc>https://otro.example/noticias/2026/10/03/12347-externa</loc>
+  </url>
+</urlset>
