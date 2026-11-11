@@ -1,4 +1,5 @@
-from django.urls import path
+from django.urls import path, reverse_lazy
+from django.contrib.auth import views as auth_views
 from . import views
 from .views_buscador import buscar_publicaciones, buscar_noticias, sugerencias_publicaciones
 from . import views_comentarios
@@ -16,6 +17,7 @@ from .views import (
     ProcesarSentimientoPublicacionView,
     crear_publicacion_view
 )
+from .forms_password_reset import PasswordResetFormUnico
 
 urlpatterns = [
     path('api/publicaciones/sugerencias/', sugerencias_publicaciones, name='sugerencias_publicaciones'),
@@ -43,6 +45,23 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('registro/', views.registro_view, name='registro'),
     path('logout/', views.logout_view, name='logout'),
+    path('cuenta/recuperar/', auth_views.PasswordResetView.as_view(
+        form_class=PasswordResetFormUnico,
+        template_name='core/password_reset_form.html',
+        email_template_name='core/password_reset_email.txt',
+        subject_template_name='core/password_reset_subject.txt',
+        success_url=reverse_lazy('password_reset_done'),
+    ), name='password_reset'),
+    path('cuenta/recuperar/enviado/', auth_views.PasswordResetDoneView.as_view(
+        template_name='core/password_reset_done.html',
+    ), name='password_reset_done'),
+    path('cuenta/restablecer/<uidb64>/<token>/', auth_views.PasswordResetConfirmView.as_view(
+        template_name='core/password_reset_confirm.html',
+        success_url=reverse_lazy('password_reset_complete'),
+    ), name='password_reset_confirm'),
+    path('cuenta/restablecer/completo/', auth_views.PasswordResetCompleteView.as_view(
+        template_name='core/password_reset_complete.html',
+    ), name='password_reset_complete'),
     path('publicaciones/', views.publicaciones, name='publicaciones'),
     path('dashboard/', views_dashboard.dashboard, name='dashboard'),
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),
