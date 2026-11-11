@@ -163,11 +163,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# El restablecimiento no debe enviar correo a servicios externos por defecto.
+# Para una operación real se debe configurar y validar un backend de entrega seguro.
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND', 'django.core.mail.backends.locmem.EmailBackend',
+).strip()
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'TrendWatch Litoral <no-reply@localhost>')
 
 # --- Configuración de Django REST Framework & JWT ---
 REST_FRAMEWORK = {

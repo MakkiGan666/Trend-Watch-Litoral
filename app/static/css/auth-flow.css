@@ -1,4 +1,10 @@
 /* Ajuste Login: composición de acceso con la paleta original. */
+.auth-page{display:flex;justify-content:center;padding:clamp(3rem,8vh,6rem) 1rem}
+.auth-page .auth-card{color:var(--tx)}
+.auth-page .field>label{display:block;color:var(--tx-2);font-size:13px;margin-bottom:7px}
+.auth-page .input{min-height:48px}
+.auth-page .input input{width:100%;min-width:0}
+.auth-page .btn{margin-top:12px}
 .account-actions{display:flex;align-items:center;gap:9px}
 .account-enter{gap:8px;white-space:nowrap}
 .account-bell{display:grid;place-items:center;width:48px;height:48px;padding:0;flex-shrink:0}

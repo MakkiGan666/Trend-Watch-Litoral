@@ -26,6 +26,7 @@
     <button class="btn btn--primary btn--block auth-flow__next" type="submit" data-auth-next>Iniciar sesión</button>
     <button class="auth-flow__back" type="button" data-auth-back hidden>← Volver a las opciones de acceso</button>
     <p class="auth-foot">¿Todavía no tenés cuenta? <button type="button" data-auth-register>Registrate</button></p>
+    <p class="auth-foot"><a href="{% url 'password_reset' %}">¿Olvidaste tu contraseña?</a></p>
   </div>
   <fieldset class="auth-flow__registration" data-auth-registration hidden disabled>
     <div class="field">
