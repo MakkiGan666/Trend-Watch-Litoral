@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django import forms
 from django.contrib.auth import get_user_model
-from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.admin import GroupAdmin, UserAdmin
+from django.contrib.auth.models import Group
 from .services.identidad import errores_identidad, serializar_identidad
 from django.db import transaction
 from django.core.exceptions import PermissionDenied
@@ -18,6 +19,8 @@ from .models import (
     PublicacionTema,
     UserAuditoria,
     VotoPublicacion,
+    Comentario,
+    RevisionDepartamento,
 )
 
 
@@ -46,6 +49,14 @@ class PublicacionAdmin(admin.ModelAdmin):
     list_filter = ('fuente', 'procesado_ia')
     search_fields = ('titulo', 'contenido', 'url')
     readonly_fields = ('hash_origen', 'procesado_ia')
+
+
+class PublicacionRelacionAdmin(admin.ModelAdmin):
+    """Omitir derivados también cuando el changelist une la publicación."""
+    def get_queryset(self, request):
+        return super().get_queryset(request).defer(
+            'id_publicacion_api__titulo_busqueda', 'id_publicacion_api__contenido_busqueda',
+        )
 
 
 class SentimientoAdminForm(forms.ModelForm):
@@ -89,7 +100,7 @@ class SentimientoAdminForm(forms.ModelForm):
 
 
 @admin.register(Sentimiento)
-class SentimientoAdmin(admin.ModelAdmin):
+class SentimientoAdmin(PublicacionRelacionAdmin):
     form = SentimientoAdminForm
     list_display = ('id_publicacion_api', 'polaridad', 'confianza')
     list_filter = ('polaridad',)
@@ -123,9 +134,26 @@ class SentimientoAdmin(admin.ModelAdmin):
 
 
 @admin.register(Locacion)
-class LocacionAdmin(admin.ModelAdmin):
+class LocacionAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api', 'location', 'latitud', 'longitud')
     search_fields = ('location',)
+
+
+@admin.register(RevisionDepartamento)
+class RevisionDepartamentoAdmin(admin.ModelAdmin):
+    list_display = ('publicacion', 'metodo', 'estado', 'departamento', 'lugar', 'fecha_revision')
+    list_filter = ('metodo', 'estado', 'departamento')
+    search_fields = ('publicacion__titulo', 'lugar', 'evidencia')
+    readonly_fields = ('publicacion', 'metodo', 'estado', 'departamento', 'lugar', 'evidencia', 'modelo', 'historial', 'fecha_revision')
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(RegistroDatos)
@@ -155,7 +183,7 @@ class TemaTrendAdmin(admin.ModelAdmin):
 
 
 @admin.register(PublicacionTema)
-class PublicacionTemaAdmin(admin.ModelAdmin):
+class PublicacionTemaAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
 
 
@@ -165,8 +193,42 @@ class UserAuditoriaAdmin(admin.ModelAdmin):
 
 
 @admin.register(VotoPublicacion)
-class VotoPublicacionAdmin(admin.ModelAdmin):
+class VotoPublicacionAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
+
+
+@admin.register(Comentario)
+class ComentarioAdmin(admin.ModelAdmin):
+    list_display = ('id', 'publicacion', 'autor', 'estado', 'fecha_creacion')
+    list_filter = ('estado', 'fecha_creacion')
+    search_fields = ('texto', 'autor__username', 'publicacion__titulo')
+    actions = ('aprobar', 'rechazar')
+
+    def _moderar(self, request, queryset, estado):
+        if not self.has_change_permission(request):
+            raise PermissionDenied('No tenés permiso para moderar comentarios.')
+        with transaction.atomic():
+            # Orden estable para lotes superpuestos. Leer el estado después de
+            # bloquear evita auditar transiciones ficticias entre moderadores.
+            comentarios = queryset.select_related(None).select_for_update().order_by('pk')
+            for comentario in comentarios:
+                anterior = comentario.estado
+                if anterior == estado:
+                    continue
+                Comentario.objects.filter(pk=comentario.pk).update(estado=estado)
+                comentario.estado = estado
+                self.log_change(
+                    request, comentario,
+                    f'Moderación de comentario: estado {anterior} → {estado}.',
+                )
+
+    @admin.action(description='Aprobar comentarios seleccionados', permissions=['change'])
+    def aprobar(self, request, queryset):
+        self._moderar(request, queryset, Comentario.Estado.PUBLICADO)
+
+    @admin.action(description='Rechazar comentarios seleccionados', permissions=['change'])
+    def rechazar(self, request, queryset):
+        self._moderar(request, queryset, Comentario.Estado.RECHAZADO)
 
 
 class IdentidadUsuarioMixin:
@@ -198,8 +260,33 @@ if admin.site.is_registered(Usuario):
     admin.site.unregister(Usuario)
 
 
+class EscrituraTecnicaMixin:
+    """Usuarios y grupos son fronteras de privilegios, incluso con permisos antiguos."""
+    def changelist_view(self, request, extra_context=None):
+        if request.method == 'POST' and not self.has_change_permission(request):
+            raise PermissionDenied
+        return super().changelist_view(request, extra_context)
+
+    def has_add_permission(self, request):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_active and request.user.is_superuser
+
+
+admin.site.unregister(Group)
+
+
+@admin.register(Group)
+class GrupoAdmin(EscrituraTecnicaMixin, GroupAdmin):
+    pass
+
+
 @admin.register(Usuario)
-class UsuarioAdmin(UserAdmin):
+class UsuarioAdmin(EscrituraTecnicaMixin, UserAdmin):
     add_form = UsuarioAltaForm
     form = UsuarioCambioForm
 

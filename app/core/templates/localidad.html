@@ -3,13 +3,13 @@
 
 {% block title %}{{ departamento.nombre }} · Noticias · TrendWatch Litoral{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=5">
+<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=10">
 <link rel="stylesheet" href="{% static 'css/localidad.css' %}?v=1">
 {% endblock %}
 
 {% block content %}
 <div class="wrap locality-page">
-  <a class="btn btn--ghost locality-page__back" href="{% url 'categorias' %}#localidades">← Volver a Localidades</a>
+  <a class="btn btn--ghost locality-page__back" href="{% url 'categorias' %}#localidades">← Volver a Municipios</a>
   <header class="locality-hero glass">
     <img src="{% static departamento.imagen %}" alt="" width="1200" height="400">
     <div class="locality-hero__title">
@@ -46,5 +46,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/landing-news.js' %}?v=9" defer></script>
+<script src="{% static 'js/landing-news.js' %}?v=10" defer></script>
 {% endblock %}

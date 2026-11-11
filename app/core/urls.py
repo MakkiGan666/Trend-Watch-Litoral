@@ -1,9 +1,13 @@
 from django.urls import path
 from . import views
+from .views_buscador import buscar_publicaciones, buscar_noticias, hashtags_publicaciones, sugerencias_publicaciones
 from . import views_comentarios
 from . import views_valoraciones
 from . import views_perfil
 from . import views_dashboard
+from .views_administradores import gestion_administradores, listar_cuentas
+from .views_motor_ia import motor_ia, probar_motor_ia
+from .views_seguimiento_ia import detalle_ejecucion_ia, seguimiento_ia
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -16,6 +20,16 @@ from .views import (
 )
 
 urlpatterns = [
+    path('api/publicaciones/sugerencias/', sugerencias_publicaciones, name='sugerencias_publicaciones'),
+    path('api/publicaciones/hashtags/', hashtags_publicaciones, name='hashtags_publicaciones'),
+    path('administradores/', gestion_administradores, name='gestion_administradores'),
+    path('administradores/listado/', listar_cuentas, {'tipo': 'administradores'}, name='listado_administradores'),
+    path('administradores/usuarios/', listar_cuentas, {'tipo': 'usuarios'}, name='listado_usuarios'),
+    path('administradores/motor-ia/', motor_ia, name='motor_ia'),
+    path('administradores/motor-ia/probar/<str:proveedor>/', probar_motor_ia, name='probar_motor_ia'),
+    path('administradores/seguimiento-ia/', seguimiento_ia, name='seguimiento_ia'),
+    path('administradores/seguimiento-ia/<uuid:identificador>/', detalle_ejecucion_ia, name='detalle_ejecucion_ia'),
+    path('buscar/', buscar_noticias, name='buscar_noticias'),
     path('perfil/', views_perfil.perfil, name='perfil'),
     path('perfil/guardados/', views_perfil.perfil, {'seccion': 'guardados'}, name='mis_guardados'),
     path('perfil/notificaciones/', views_perfil.perfil, {'seccion': 'notificaciones'}, name='perfil_notificaciones'),
@@ -23,6 +37,8 @@ urlpatterns = [
     # Vistas Web / Templates
     path('', views.landing, name='landing'),
     path('categorias/', views.categorias, name='categorias'),
+    path('categorias/<slug:slug>/', views.publicaciones_categoria, name='publicaciones_categoria'),
+    path('etiquetas/<slug:slug>/', views.publicaciones_etiqueta, name='publicaciones_etiqueta'),
     path('noticia/<int:pk>/', views.noticia, name='noticia'),
     path('noticia/<int:pk>/comentarios/', views_comentarios.crear_comentario, name='crear_comentario'),
     path('noticia/<int:pk>/valoracion/', views_valoraciones.valorar_noticia, name='valorar_noticia'),
@@ -39,6 +55,7 @@ urlpatterns = [
     path('procesar-ia/', views.procesar_ia, name='procesar_ia'),
 
     # API REST - CRUD de Publicaciones
+    path('api/publicaciones/buscar/', buscar_publicaciones, name='buscar_publicaciones'),
     path('api/publicaciones/crear/', views.crear_o_ingestar_publicacion, name='crear_publicacion'),
     path('api/publicaciones/ingestar/<str:categoria>/', views.disparar_ingesta, name='disparar_ingesta'),
     path('api/publicaciones/', views.listar_publicaciones, name='listar_publicaciones'),

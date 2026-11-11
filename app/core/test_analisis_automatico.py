@@ -64,18 +64,62 @@ class CategoriaComentarioTests(BaseComentarios):
             with self.subTest(raw=raw):
                 self.assertIsNone(servicio.predecir_ollama('x', cliente_http=cliente_ollama(raw)).categoria)
 
-    def test_categoria_inventada_invalida_la_respuesta_y_cae_a_lexico(self):
-        for valor in ('"Transporte"', '3', '["Salud"]'):
+    def test_categoria_inventada_se_descarta_sin_perder_el_sentimiento(self):
+        # Respuesta real de llama3.1:latest observada en la integración con Docker.
+        raw = '{"polaridad": 0.8, "confianza": 0.9, "categoria": "Transporte"}'
+        prediccion = servicio.predecir_ollama('x', cliente_http=cliente_ollama(raw))
+        self.assertEqual((prediccion.polaridad, prediccion.confianza), (0.8, 0.9))
+        self.assertIsNone(prediccion.categoria)
+        self.assertEqual(prediccion.metodo, IA)
+        # Tipos que no son nombres tampoco se aceptan como categoría ni anulan el sentimiento.
+        for valor in ('3', '["Salud"]', '{"nombre": "Salud"}', 'true'):
             with self.subTest(valor=valor):
                 raw = f'{{"polaridad": 0.2, "confianza": 0.8, "categoria": {valor}}}'
+                prediccion = servicio.predecir_ollama('x', cliente_http=cliente_ollama(raw))
+                self.assertEqual((prediccion.polaridad, prediccion.confianza, prediccion.categoria), (0.2, 0.8, None))
+
+    def test_categoria_inventada_guarda_analisis_ia_sin_categoria(self):
+        raw = '{"polaridad": 0.8, "confianza": 0.9, "categoria": "Transporte"}'
+        obj, accion = servicio.analizar_comentario(self._comentario(), usar_ia=True,
+                                                   cliente_http=cliente_ollama(raw))
+        obj.refresh_from_db()
+        self.assertEqual(accion, 'creado')
+        self.assertEqual((obj.metodo, obj.estado, obj.codigo_error), (IA, SentimientoComentario.Estado.PROCESADO, ''))
+        self.assertEqual((obj.polaridad, obj.confianza), (0.8, 0.9))
+        self.assertIsNone(obj.categoria)
+        # Nunca se crea una categoría fuera de la lista ni se busca una equivalencia.
+        self.assertFalse(Categoria.objects.filter(nombre_categoria='Transporte').exists())
+
+    def test_categoria_inventada_no_salva_otros_errores(self):
+        casos = {
+            '{"polaridad": 1.5, "confianza": 0.9, "categoria": "Transporte"}': 'respuesta_fuera_de_rango',
+            '{"polaridad": 0.8, "confianza": -0.1, "categoria": "Transporte"}': 'respuesta_fuera_de_rango',
+            '{"polaridad": 0.8, "confianza": "alta", "categoria": "Transporte"}': 'respuesta_invalida',
+            '{"confianza": 0.9, "categoria": "Transporte"}': 'respuesta_invalida',
+            '{"polaridad": 0.8, "confianza": 0.9, "categoria": "Transporte"': 'respuesta_invalida',
+        }
+        for raw, codigo in casos.items():
+            with self.subTest(raw=raw):
                 with self.assertRaises(servicio.SentimientoNoDisponible) as ctx:
                     servicio.predecir_ollama('x', cliente_http=cliente_ollama(raw))
-                self.assertEqual(ctx.exception.codigo, 'categoria_invalida')
-        raw = '{"polaridad": 0.2, "confianza": 0.8, "categoria": "Transporte"}'
-        obj, _ = servicio.analizar_comentario(self._comentario(), usar_ia=True, cliente_http=cliente_ollama(raw))
-        self.assertEqual(obj.metodo, LEXICON)
-        self.assertEqual(obj.codigo_error, 'ia:categoria_invalida')
-        self.assertFalse(Categoria.objects.filter(nombre_categoria='Transporte').exists())
+                self.assertEqual(ctx.exception.codigo, codigo)
+
+    def test_categoria_inventada_queda_registrada_en_el_log(self):
+        raw = '{"polaridad": 0.8, "confianza": 0.9, "categoria": "Transporte"}'
+        with self.assertLogs('core.services.sentimiento_comentarios', level='WARNING') as logs:
+            servicio.predecir_ollama('El transporte mejoró', cliente_http=cliente_ollama(raw))
+        texto = '\n'.join(logs.output)
+        self.assertIn('categoría fuera de la lista', texto)
+        # El aviso no copia el comentario del usuario.
+        self.assertNotIn('El transporte mejoró', texto)
+
+    def test_respuesta_valida_con_categoria_nula_se_guarda(self):
+        raw = '{"polaridad": -0.4, "confianza": 0.7, "categoria": null}'
+        obj, _ = servicio.analizar_comentario(self._comentario('Llegó tarde otra vez'), usar_ia=True,
+                                              cliente_http=cliente_ollama(raw))
+        obj.refresh_from_db()
+        self.assertEqual((obj.metodo, obj.polaridad, obj.confianza, obj.codigo_error), (IA, -0.4, 0.7, ''))
+        self.assertIsNone(obj.categoria)
 
     def test_lexico_asigna_categoria_solo_con_evidencia(self):
         self.assertEqual(servicio.predecir_lexicon('El hospital no tiene médicos').categoria, 'Salud')
@@ -150,6 +194,8 @@ class PublicacionYEdicionTests(BaseComentarios):
             self._publicar('Subió la yerba otra vez, excelente para los productores')
         obj = SentimientoComentario.objects.get()
         self.assertEqual((obj.metodo, obj.modelo, obj.categoria.nombre_categoria), (IA, 'ollama:mock', 'Economía'))
+        # Se analiza al enviarse, pero la etiqueta se muestra recién cuando el moderador lo aprueba.
+        Comentario.objects.update(estado=Comentario.Estado.PUBLICADO)
         pagina = self.client.get(reverse('noticia', args=[self.noticia.pk]))
         self.assertContains(pagina, 'comment-sentiment--positivo')
         self.assertContains(pagina, '· Economía')
@@ -158,6 +204,7 @@ class PublicacionYEdicionTests(BaseComentarios):
     def test_sin_procesar_se_muestra_pendiente(self):
         with patch.object(analisis_automatico, '_enviar_a_segundo_plano'):
             self._publicar('Todavía sin analizar')
+        Comentario.objects.update(estado=Comentario.Estado.PUBLICADO)
         pagina = self.client.get(reverse('noticia', args=[self.noticia.pk]))
         self.assertContains(pagina, 'Análisis automático pendiente')
         self.assertNotContains(pagina, 'comment-sentiment--')

@@ -1,0 +1,47 @@
+/* Portada: lectura de la agenda mediática de Misiones. Usa los tokens de trendwatch.css. */
+.observatorio{display:grid;gap:22px;margin-top:40px}
+.observatorio__intro{display:grid;gap:14px;max-width:880px}
+.observatorio__eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--aqua)}
+.observatorio__intro h1{font-size:clamp(30px,4.6vw,52px);line-height:1.06;letter-spacing:-.01em}
+.observatorio__lead{font-size:clamp(15px,1.6vw,18px);color:var(--tx-2);line-height:1.6;max-width:720px}
+.observatorio__dims{list-style:none;display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.observatorio__dims li{display:flex;align-items:baseline;gap:7px;padding:7px 14px;border:1px solid var(--edge);border-radius:var(--r-pill);background:var(--glass-hi);font-size:13px}
+.observatorio__dims strong{font-weight:600;color:var(--mist)}
+.observatorio__dims span{color:var(--tx-3)}
+.observatorio__actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;margin-top:6px}
+.observatorio__link{color:var(--aqua);font-size:14px}
+.observatorio__kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.observatorio__kpis article{padding:20px 22px;border-radius:var(--r-lg);min-width:0}
+.observatorio__kpis span{display:block;font-size:12px;color:var(--tx-2)}
+.observatorio__kpis strong{display:block;margin-top:8px;font-size:34px;font-variant-numeric:tabular-nums;line-height:1.1}
+.observatorio__kpis strong em{font-style:normal;font-size:.5em;color:var(--tx-3);margin-left:2px}
+.observatorio__kpis small{display:block;margin-top:6px;font-size:12px;color:var(--tx-3);line-height:1.45}
+.observatorio__kpis small b{font-weight:600}
+.observatorio .is-up{color:var(--aqua)}
+.observatorio .is-down{color:#f4b6a6}
+.observatorio__period{font-size:12px;color:var(--tx-3);margin-top:-8px}
+.observatorio__grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;align-items:stretch}
+.observatorio__card{padding:24px;border-radius:var(--r-lg);min-width:0;display:flex;flex-direction:column}
+.observatorio__card h2{font-size:19px;margin-bottom:6px}
+.observatorio__card>p{font-size:13px;color:var(--tx-2);line-height:1.55}
+.observatorio__bars{list-style:none;display:grid;gap:13px;margin-top:16px}
+.observatorio__bars li>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:14px;margin-bottom:6px}
+.observatorio__bars a{color:var(--tx);overflow-wrap:anywhere}
+.observatorio__bars a:hover,.observatorio__bars a:focus-visible{color:var(--aqua)}
+.observatorio__bars strong{font-variant-numeric:tabular-nums;white-space:nowrap}
+.observatorio__bars small{font-size:12px;font-weight:500}
+.observatorio__bar{display:block;height:6px;border-radius:999px;background:rgba(142,182,155,.13);overflow:hidden}
+.observatorio__bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--sage),var(--aqua))}
+.observatorio__weeks{display:flex;align-items:flex-end;gap:5px;height:150px;margin-top:20px;padding-bottom:2px;border-bottom:1px solid var(--edge)}
+.observatorio__weeks span{flex:1;height:100%;display:flex;align-items:flex-end}
+.observatorio__weeks i{display:block;width:100%;min-height:2px;border-radius:6px 6px 2px 2px;background:linear-gradient(180deg,var(--aqua),rgba(142,182,155,.45))}
+.observatorio__weeks span:last-child i{background:var(--aqua);box-shadow:0 0 18px rgba(63,208,180,.35)}
+.observatorio__axis{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--tx-3);margin-top:8px}
+.observatorio__foot{margin-top:auto;padding-top:16px;font-size:12px;color:var(--tx-3);line-height:1.5}
+.observatorio__foot a{color:var(--aqua)}
+.observatorio__empty{color:var(--tx-3);font-size:13px}
+p.observatorio__empty{padding:20px;border-radius:var(--r-lg)}
+.regional-news__lead{display:block;font-size:13px;color:var(--tx-2);margin-top:4px}
+@media(max-width:1050px){.observatorio__grid{grid-template-columns:1fr 1fr}.observatorio__grid>:last-child{grid-column:1/-1}}
+@media(max-width:900px){.observatorio__kpis{grid-template-columns:1fr 1fr}}
+@media(max-width:640px){.observatorio{margin-top:26px}.observatorio__grid{grid-template-columns:1fr}.observatorio__kpis{gap:10px}.observatorio__kpis article{padding:16px}.observatorio__kpis strong{font-size:28px}.observatorio__card{padding:20px}.observatorio__weeks{height:120px;gap:3px}.observatorio__actions .btn{flex:1 1 auto;text-align:center}}

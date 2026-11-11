@@ -1,37 +1,156 @@
 {% extends "base.html" %}
+{% load roles %}
 {% load static %}
+{% load l10n %}
 {% block title %}Dashboard · TrendWatch Litoral{% endblock %}
 {% block body_class %}analytics-page{% endblock %}
-{% block extra_head %}<link rel="stylesheet" href="{% static 'css/analytics.css' %}?v=1">{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/analytics.css' %}?v=3">{% endblock %}
 {% block content %}
 <div class="wrap analytics">
-  <header class="page-head"><p class="analytics-eyebrow">Panel de superusuarios</p><h1>Dashboard</h1><p>Indicadores reales del conjunto completo de publicaciones, sin el límite del panel de gestión.</p></header>
-  <form method="get" class="analytics-filters glass glass--sheen">
+  <header class="page-head analytics-head">
+    <p class="analytics-eyebrow">Observatorio de la agenda mediática de Misiones · Panel de análisis</p>
+    <h1>Panel de observación</h1>
+    <p>Qué temas cubren los medios registrados, en qué departamentos, cómo cambian en el tiempo y con qué tono. Todos los valores salen de las publicaciones almacenadas; los filtros se aplican a cada indicador y gráfico.</p>
+    <nav class="analytics-index" aria-label="Secciones del panel"><a href="#agenda">Evolución</a><a href="#territorio">Territorio</a><a href="#temas">Temas</a><a href="#tono">Tono</a><a href="#participacion">Participación</a></nav>
+  </header>
+
+  <form method="get" class="analytics-filters glass glass--sheen" aria-label="Filtros del panel">
     {{ filtros.non_field_errors }}
-    {% for field in filtros %}<div><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}
+    {% for field in filtros %}<div class="analytics-filters__field analytics-filters__field--{{ field.name }}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endfor %}
     <div class="analytics-filter-actions"><button class="btn btn--ghost" type="submit">Aplicar filtros</button><a href="{% url 'dashboard' %}">Limpiar</a></div>
+    <p class="analytics-filters__hint">«Período» usa días hasta hoy; para otro rango elegí «Desde» y «Hasta». La búsqueda exige todas las palabras en el título, el texto o la fuente.</p>
   </form>
-  <section class="analytics-kpis" aria-label="Indicadores de las publicaciones filtradas">
-    <article class="glass"><span>Publicaciones</span><strong>{{ resumen.total }}</strong></article>
-    <article class="glass"><span>Con análisis de sentimiento</span><strong>{{ resumen.analizadas }}</strong></article>
-    <article class="glass"><span>Pendientes de análisis</span><strong>{{ resumen.pendientes }}</strong></article>
-    <article class="glass"><span>Análisis a revisar</span><strong>{{ resumen.inconsistentes }}</strong></article>
-  </section>
-  <p class="analytics-note">Se cuenta el sentimiento almacenado, no sólo la marca de procesamiento. «A revisar» identifica registros múltiples o valores fuera de rango. Consultar este panel no ejecuta IA ni modifica noticias.</p>
-  {% if resumen.pendientes %}<aside class="analytics-pending glass"><strong>{{ resumen.pendientes }} publicación{{ resumen.pendientes|pluralize:'es' }} sin análisis disponible</strong><p>Estado informativo, sin alertas automáticas. El procesamiento se realiza mediante las herramientas administrativas existentes.</p><a href="{% url 'publicaciones' %}">Ir a Publicaciones →</a></aside>{% endif %}
+  {% if filtros_activos %}<p class="analytics-active" aria-live="polite"><span>Viendo:</span>{% for etiqueta, valor in filtros_activos %} <em>{{ etiqueta }}: {{ valor }}</em>{% endfor %} · <a href="{{ url_publicaciones }}">Abrir estas publicaciones →</a></p>{% endif %}
+
   {% if resumen.total %}
-  <section class="analytics-chart glass glass--sheen" aria-labelledby="timeline-title">
-    <h2 id="timeline-title">Evolución de publicaciones</h2><p>Agrupación {% if mensual %}mensual{% else %}diaria{% endif %}. Fecha del medio cuando existe; de lo contrario, fecha de captura. Zona horaria de Argentina. La distancia horizontal es proporcional a los días transcurridos o, en agrupación mensual, a los meses. Los períodos sin registros conservan su espacio, sin agregar puntos ni valores cero.</p>
-    <svg class="analytics-line" viewBox="0 0 700 220" role="img" aria-labelledby="timeline-svg-title timeline-svg-desc"><title id="timeline-svg-title">Publicaciones por período</title><desc id="timeline-svg-desc">{{ serie|length }} períodos. Valores exactos en la tabla desplegable.</desc><path d="M30 20V190H680" fill="none" stroke="currentColor" opacity=".25"/><polyline points="{{ puntos }}" fill="none" stroke="#3fd0b4" stroke-width="3"/>{% for fila in serie %}<circle cx="{{ fila.x }}" cy="{{ fila.y }}" r="4" fill="#8eb69b"><title>{{ fila.fecha }}: {{ fila.total }}</title></circle>{% endfor %}</svg>
-    <div class="analytics-axis"><span>{{ serie.0.fecha }}</span><span>{% with ultima=serie|last %}{{ ultima.fecha }}{% endwith %}</span></div>
-    <details><summary>Ver fechas y cantidades</summary><table><thead><tr><th>Período</th><th>Publicaciones</th></tr></thead><tbody>{% for fila in serie %}<tr><td>{{ fila.fecha }}</td><td>{{ fila.total }}</td></tr>{% endfor %}</tbody></table></details>
+  <section class="analytics-kpis analytics-kpis--agenda" aria-label="Indicadores de la agenda filtrada">
+    <article class="glass"><span>Publicaciones</span><strong>{{ resumen.total }}</strong><small>con los filtros actuales</small></article>
+    <article class="glass"><span>Departamentos con cobertura</span><strong>{{ territorio.con_cobertura }}<em>/{{ territorio.cantidad }}</em></strong><small>{{ territorio.sin_identificar }} sin departamento identificado</small></article>
+    <article class="glass"><span>Temas presentes</span><strong>{{ temas_presentes }}</strong><small>categorías con publicaciones en el período</small></article>
+    <article class="glass"><span>Variación de la cobertura</span>{% if comparacion and comparacion.variacion is not None %}<strong class="{% if comparacion.diferencia > 0 %}is-up{% elif comparacion.diferencia < 0 %}is-down{% endif %}">{% if comparacion.diferencia > 0 %}+{% endif %}{{ comparacion.variacion }}%</strong><small>{{ comparacion.dias }} días vs. período anterior</small>{% else %}<strong class="analytics-kpi-empty">Sin base</strong><small>no hay publicaciones en el período anterior</small>{% endif %}</article>
   </section>
-  <div class="analytics-grid">
-    {% include 'partials/_analytics_bars.html' with titulo='Por categoría' filas=categorias nota='Una noticia puede aparecer en varias categorías. Sin categoría indica ausencia de asociaciones.' %}
-    {% include 'partials/_analytics_bars.html' with titulo='Por fuente' filas=fuentes nota='Fuentes registradas en la base, sin combinar ni modificar sus valores.' %}
-    {% include 'partials/_analytics_bars.html' with titulo='Por departamento' filas=departamentos nota='Departamento de ingesta y ubicaciones reconocidas. Una noticia puede aparecer en varios departamentos.' %}
-    {% include 'partials/_analytics_bars.html' with titulo='Sentimiento automático registrado' filas=sentimientos nota='Positivo: polaridad mayor que cero; neutral: cero; negativo: menor que cero. Excluye pendientes, conflictos y valoraciones de lectores.' %}
-  </div>
-  {% else %}<section class="analytics-chart glass"><h2>Sin publicaciones para estos filtros</h2><p>Probá otro período o limpiá los filtros. No se generan datos de ejemplo.</p></section>{% endif %}
+
+  {# ---------------- A. Evolución de la agenda ---------------- #}
+  <section class="analytics-section" id="agenda" aria-labelledby="agenda-title">
+    <header class="analytics-section__head"><p class="analytics-eyebrow">Evolución temporal</p><h2 id="agenda-title">¿Cómo cambia la cobertura en el tiempo?</h2></header>
+    <div class="analytics-grid analytics-grid--wide">
+      <section class="analytics-chart glass glass--sheen" aria-labelledby="timeline-title">
+        <h3 id="timeline-title">Publicaciones por {% if mensual %}mes{% else %}día{% endif %}</h3><p>Fecha del medio cuando existe; si no, fecha de captura (hora de Argentina). La distancia horizontal es proporcional al tiempo transcurrido; los períodos sin registros conservan su espacio, sin agregar puntos ni ceros.</p>
+        <svg class="analytics-line" viewBox="0 0 700 220" role="img" aria-labelledby="timeline-svg-title timeline-svg-desc"><title id="timeline-svg-title">Publicaciones por período</title><desc id="timeline-svg-desc">{{ serie|length }} períodos. Valores exactos en la tabla desplegable.</desc><path d="M30 20V190H680" fill="none" stroke="currentColor" opacity=".25"/><polyline points="{{ puntos }}" fill="none" stroke="#3fd0b4" stroke-width="3"/>{% for fila in serie %}<circle cx="{{ fila.x }}" cy="{{ fila.y }}" r="4" fill="#8eb69b"><title>{{ fila.fecha }}: {{ fila.total }}</title></circle>{% endfor %}</svg>
+        <div class="analytics-axis"><span>{{ serie.0.fecha }}</span><span>{% with ultima=serie|last %}{{ ultima.fecha }}{% endwith %}</span></div>
+        <details><summary>Ver fechas y cantidades</summary><table><thead><tr><th>Período</th><th>Publicaciones</th></tr></thead><tbody>{% for fila in serie %}<tr><td>{{ fila.fecha }}</td><td>{{ fila.total }}</td></tr>{% endfor %}</tbody></table></details>
+      </section>
+      {% if comparacion %}
+      <section class="analytics-chart glass glass--sheen analytics-compare" aria-labelledby="compare-title">
+        <h3 id="compare-title">Comparación entre períodos</h3>
+        <p>{% if comparacion.automatica %}Sin rango completo elegido: se comparan los últimos {{ comparacion.dias }} días con publicaciones{% else %}Rango elegido{% endif %} con los {{ comparacion.dias }} días inmediatamente anteriores. Se aplican los demás filtros. Cuenta publicaciones registradas: un aumento también puede reflejar más ingesta.</p>
+        <dl class="analytics-compare__totals">
+          <div><dt>{{ comparacion.inicio|date:"d/m/Y" }} – {{ comparacion.fin|date:"d/m/Y" }}</dt><dd>{{ comparacion.actual }}</dd></div>
+          <div><dt>{{ comparacion.inicio_anterior|date:"d/m/Y" }} – {{ comparacion.fin_anterior|date:"d/m/Y" }}</dt><dd>{{ comparacion.anterior }}</dd></div>
+        </dl>
+        <div class="analytics-movers">
+          <div><h4>Temas en aumento</h4><ul>{% for tema in comparacion.en_aumento %}<li><a href="{{ tema.url }}">{{ tema.nombre }}</a><span class="is-up">+{{ tema.diferencia }}</span></li>{% empty %}<li class="analytics-empty">Ningún tema creció.</li>{% endfor %}</ul></div>
+          <div><h4>Temas en descenso</h4><ul>{% for tema in comparacion.en_descenso %}<li><a href="{{ tema.url }}">{{ tema.nombre }}</a><span class="is-down">{{ tema.diferencia }}</span></li>{% empty %}<li class="analytics-empty">Ningún tema disminuyó.</li>{% endfor %}</ul></div>
+        </div>
+        {% if comparacion.temas %}<details><summary>Ver variación de cada tema</summary><table><thead><tr><th>Tema</th><th>Actual</th><th>Anterior</th><th>Cambio</th></tr></thead><tbody>{% for tema in comparacion.temas %}<tr><td>{{ tema.nombre }}</td><td>{{ tema.actual }}</td><td>{{ tema.anterior }}</td><td>{% if tema.diferencia > 0 %}+{% endif %}{{ tema.diferencia }}{% if tema.variacion is not None %} ({% if tema.diferencia > 0 %}+{% endif %}{{ tema.variacion }}%){% endif %}</td></tr>{% endfor %}</tbody></table></details>{% endif %}
+      </section>
+      {% endif %}
+    </div>
+    {% if evolucion_temas %}
+    <section class="analytics-chart glass glass--sheen" aria-labelledby="heatmap-title">
+      <h3 id="heatmap-title">Evolución mensual de los temas principales</h3>
+      <p>Publicaciones por tema en los últimos meses con registros dentro de los filtros. Más intensidad indica más publicaciones; una noticia puede tener varios temas.</p>
+      <div class="analytics-heatmap-wrap"><table class="analytics-heatmap"><thead><tr><th scope="col">Tema</th>{% for mes in evolucion_temas.meses %}<th scope="col">{{ mes }}</th>{% endfor %}</tr></thead><tbody>{% for tema in evolucion_temas.temas %}<tr><th scope="row">{{ tema.nombre }}</th>{% for celda in tema.celdas %}<td style="--nivel:{{ celda.nivel|unlocalize }}" title="{{ tema.nombre }} · {{ celda.mes }}: {{ celda.total }}">{{ celda.total }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    </section>
+    {% endif %}
+  </section>
+
+  {# ---------------- B. Territorio ---------------- #}
+  <section class="analytics-section" id="territorio" aria-labelledby="territorio-title">
+    <header class="analytics-section__head"><p class="analytics-eyebrow">Territorio</p><h2 id="territorio-title">¿Dónde se concentra la cobertura?</h2></header>
+    <div class="analytics-grid analytics-grid--wide">
+      <section class="analytics-chart glass glass--sheen" aria-labelledby="ranking-title">
+        <h3 id="ranking-title">Publicaciones por departamento</h3>
+        <p>Los 17 departamentos de Misiones, de mayor a menor cobertura. Se usa el departamento detectado en la ingesta y las ubicaciones reconocidas; una noticia puede contar en varios. {% if departamento_seleccionado %}El ranking ignora el filtro de departamento para poder comparar; el elegido aparece resaltado.{% else %}Elegí un departamento para ver sus temas.{% endif %} No hay coordenadas suficientes para un mapa, por eso se muestra un ranking.</p>
+        <ol class="analytics-ranking">{% for fila in departamentos %}<li class="{% if fila.seleccionado %}is-selected{% endif %}{% if not fila.total %} is-empty{% endif %}"><a href="{{ fila.url }}" {% if fila.seleccionado %}aria-current="true"{% endif %}><span class="analytics-ranking__pos">{{ forloop.counter }}</span><span class="analytics-ranking__name">{{ fila.nombre }}</span><strong>{{ fila.total }}</strong><span class="analytics-bar" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span></a></li>{% endfor %}</ol>
+        <p class="analytics-note">{{ territorio.sin_identificar }} publicación{{ territorio.sin_identificar|pluralize:"es" }} sin departamento identificado (noticias provinciales, nacionales o sin evidencia territorial).{% if departamento_seleccionado != 'sin-identificar' %} <a href="{{ territorio.url_sin_identificar }}">Ver sólo esas publicaciones</a>{% endif %}</p>
+      </section>
+      <div class="analytics-stack">
+        {% if foco_territorial %}
+        <section class="analytics-chart glass glass--sheen analytics-focus" aria-labelledby="focus-title">
+          <p class="analytics-eyebrow">Departamento seleccionado</p>
+          <h3 id="focus-title">{{ foco_territorial.nombre }}</h3>
+          <p><strong>{{ foco_territorial.total }}</strong> publicacion{{ foco_territorial.total|pluralize:"es" }} con los filtros actuales. Municipios del catálogo: {{ foco_territorial.municipios|join:", " }}.</p>
+          <h4>Temas asociados a este territorio</h4>
+          <ul class="analytics-bars">{% for tema in foco_territorial.temas %}<li><div><a class="analytics-bars__link" href="{{ tema.url }}">{{ tema.nombre }}</a><strong>{{ tema.total }}</strong></div><span class="analytics-bar" aria-hidden="true"><i style="width:{{ tema.ancho|unlocalize }}%"></i></span></li>{% empty %}<li class="analytics-empty">Las publicaciones de este departamento todavía no tienen tema asociado.</li>{% endfor %}</ul>
+          <div class="analytics-focus__links"><a href="{{ foco_territorial.url_publicaciones }}">Ver publicaciones →</a><a href="{{ foco_territorial.url_publica }}">Página pública del departamento →</a></div>
+        </section>
+        {% endif %}
+        <section class="analytics-chart glass glass--sheen" aria-labelledby="coverage-title">
+          <h3 id="coverage-title">Mayor y menor cobertura</h3>
+          {% if territorio.mayor %}
+          <dl class="analytics-extremes">
+            <div><dt>Mayor cobertura</dt><dd><a href="{{ territorio.mayor.url }}">{{ territorio.mayor.nombre }}</a> <span>{{ territorio.mayor.total }}</span></dd></div>
+            {% if territorio.menor %}<div><dt>Menor cobertura (con publicaciones)</dt><dd><a href="{{ territorio.menor.url }}">{{ territorio.menor.nombre }}</a> <span>{{ territorio.menor.total }}</span></dd></div>{% endif %}
+          </dl>
+          {% if territorio.sin_cobertura %}<p>Sin publicaciones en este recorte: {% for fila in territorio.sin_cobertura %}{{ fila.nombre }}{% if not forloop.last %}, {% endif %}{% endfor %}.</p>{% else %}<p>Los {{ territorio.cantidad }} departamentos tienen al menos una publicación en este recorte.</p>{% endif %}
+          {% else %}<p class="analytics-empty">Ninguna publicación filtrada tiene departamento identificado.</p>{% endif %}
+        </section>
+      </div>
+    </div>
+  </section>
+
+  {# ---------------- C. Temas ---------------- #}
+  <section class="analytics-section" id="temas" aria-labelledby="temas-title">
+    <header class="analytics-section__head"><p class="analytics-eyebrow">Temática</p><h2 id="temas-title">¿Qué temas concentran la cobertura?</h2></header>
+    <div class="analytics-grid">
+      {% include 'partials/_analytics_bars.html' with titulo='Publicaciones por categoría' filas=categorias nota='Tocá un tema para filtrar todo el panel o abrí sus publicaciones. Una noticia puede tener varias categorías; «Sin categoría asociada» indica que aún no fue clasificada.' %}
+      {% include 'partials/_analytics_bars.html' with titulo='Publicaciones por fuente' filas=fuentes nota='Las secciones de El Territorio se cuentan como una sola fuente. Otras fuentes aparecen por separado.' %}
+    </div>
+    {% if tematica %}{% include 'partials/_analytics_tematica.html' %}{% endif %}
+  </section>
+
+  {# ---------------- D. Tono ---------------- #}
+  <section class="analytics-section" id="tono" aria-labelledby="tono-title">
+    <header class="analytics-section__head"><p class="analytics-eyebrow">Análisis de contenido</p><h2 id="tono-title">¿Con qué tono se cubren y comentan los temas?</h2>
+      <p>Clasificación automática del texto disponible en el sistema. Publicaciones y comentarios se analizan por separado y no representan la opinión de la población de Misiones.</p></header>
+    <div class="analytics-grid">
+      <section class="analytics-chart glass glass--sheen" aria-labelledby="tono-publicaciones-title">
+        <h3 id="tono-publicaciones-title">Tono de las publicaciones</h3>
+        <p>Sentimiento automático del texto de cada noticia. Positivo: polaridad mayor que cero; neutral: cero; negativo: menor que cero. Excluye pendientes y análisis a revisar.</p>
+        {% if resumen.analizadas %}
+        <ul class="analytics-bars">{% for fila in sentimientos %}<li><div><span>{{ fila.nombre }}</span><strong>{{ fila.total }}</strong></div><span class="analytics-bar" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span></li>{% endfor %}</ul>
+        {% else %}<p class="analytics-empty">Todavía no hay análisis de sentimiento registrado para estas publicaciones. Se muestran cuando se procesan con las herramientas administrativas.</p>{% endif %}
+        <dl class="analytics-mini"><div><dt>Con análisis de sentimiento</dt><dd>{% if resumen.analizadas %}{{ resumen.analizadas }}{% else %}Aún sin análisis{% endif %}</dd></div><div><dt>Pendientes de análisis</dt><dd>{% if resumen.pendientes %}{{ resumen.pendientes }}{% else %}Sin pendientes{% endif %}</dd></div><div><dt>Análisis a revisar</dt><dd>{% if resumen.inconsistentes %}{{ resumen.inconsistentes }}{% else %}Sin casos{% endif %}</dd></div></dl>
+      </section>
+      <section class="analytics-chart glass glass--sheen" aria-labelledby="tono-comentarios-title">
+        <h3 id="tono-comentarios-title">Tono de los comentarios de lectores</h3>
+        <p>Sentimiento automático de los comentarios publicados sobre estas noticias. Sólo cuenta el análisis vigente (calculado sobre el texto actual del comentario).</p>
+        {% if tono_comentarios.analizados %}
+        <ul class="analytics-bars">{% for fila in tono_comentarios.filas %}<li><div><span>{{ fila.nombre }}</span><strong>{{ fila.total }}</strong></div><span class="analytics-bar analytics-bar--alt" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span></li>{% endfor %}</ul>
+        {% else %}<p class="analytics-empty">No hay comentarios publicados con análisis vigente para estas publicaciones.</p>{% endif %}
+        <dl class="analytics-mini"><div><dt>Analizados</dt><dd>{{ tono_comentarios.analizados }}</dd></div><div><dt>Sin análisis vigente</dt><dd>{{ tono_comentarios.sin_analisis }}</dd></div></dl>
+      </section>
+    </div>
+    <p class="analytics-note">Se cuenta el sentimiento almacenado, no sólo la marca de procesamiento. «A revisar» identifica registros múltiples o valores fuera de rango. Consultar este panel no ejecuta IA ni modifica noticias.</p>
+    {% if resumen.pendientes %}<aside class="analytics-pending glass"><strong>{{ resumen.pendientes }} publicación{{ resumen.pendientes|pluralize:'es' }} sin análisis disponible</strong><p>Estado informativo, sin alertas automáticas. El procesamiento se realiza mediante las herramientas administrativas existentes.</p><a href="{% url 'publicaciones' %}">Ir a Publicaciones →</a></aside>{% endif %}
+  </section>
+
+  {# ---------------- E. Participación de lectores ---------------- #}
+  <section class="analytics-reader-section analytics-section" id="participacion" aria-labelledby="reader-participation-title">
+    <header class="analytics-section__head"><p class="analytics-eyebrow">Respuesta del público</p><h2 id="reader-participation-title">Participación de lectores</h2><p>Valoraciones, comentarios y clics de las publicaciones incluidas en los filtros: muestran qué parte de la agenda genera respuesta de los lectores registrados. Son independientes del análisis automático; los datos de demostración se identifican con «[Simulación]».</p></header>
+    <div class="analytics-kpis" aria-label="Indicadores de participación de lectores">
+      <article class="glass"><span>Clics</span><strong {% if not participacion.clics %}class="analytics-kpi-empty"{% endif %}>{% if participacion.clics %}{{ participacion.clics }}{% else %}Sin clics{% endif %}</strong></article>
+      <article class="glass"><span>Valoraciones</span><strong {% if not participacion.valoraciones %}class="analytics-kpi-empty"{% endif %}>{% if participacion.valoraciones %}{{ participacion.valoraciones }}{% else %}Sin valoraciones{% endif %}</strong></article>
+      <article class="glass"><span>Comentarios publicados</span><strong {% if not participacion.comentarios_publicados %}class="analytics-kpi-empty"{% endif %}>{% if participacion.comentarios_publicados %}{{ participacion.comentarios_publicados }}{% else %}Sin comentarios{% endif %}</strong></article>
+      <article class="glass"><span>Comentarios pendientes</span><strong {% if not participacion.comentarios_pendientes %}class="analytics-kpi-empty"{% endif %}>{% if participacion.comentarios_pendientes %}{{ participacion.comentarios_pendientes }}{% else %}Sin pendientes{% endif %}</strong></article>
+    </div>
+    <div class="analytics-grid">
+      {% if participacion.valoraciones %}{% include 'partials/_analytics_bars.html' with titulo='Valoraciones de lectores' filas=valoraciones_lectores nota='Una valoración vigente por usuario y noticia. El voto puede cambiarse o retirarse.' %}{% else %}<section class="analytics-chart glass glass--sheen"><h2>Valoraciones de lectores</h2><p>Aún no hay valoraciones para las publicaciones filtradas.</p></section>{% endif %}
+      {% if participacion.comentarios_total %}{% include 'partials/_analytics_bars.html' with titulo='Estado de los comentarios' filas=comentarios_lectores nota='Sólo los comentarios publicados son visibles para los lectores y cuentan en tendencias.' %}{% else %}<section class="analytics-chart glass glass--sheen"><h2>Estado de los comentarios</h2><p>Aún no hay comentarios para las publicaciones filtradas.</p></section>{% endif %}
+    </div>
+    <p class="analytics-note">Las fechas del filtro corresponden a las publicaciones, no a la fecha de cada interacción.</p>
+  </section>
+  {% else %}<section class="analytics-chart glass analytics-empty-state"><h2>Sin publicaciones para estos filtros</h2><p>{% if filtros.errors %}Revisá los filtros marcados arriba.{% else %}No hay publicaciones que cumplan todas las condiciones elegidas. Probá otro período, quitá la búsqueda o limpiá los filtros.{% endif %} No se generan datos de ejemplo.</p><a href="{% url 'dashboard' %}">Limpiar filtros →</a></section>{% endif %}
 </div>
 {% endblock %}

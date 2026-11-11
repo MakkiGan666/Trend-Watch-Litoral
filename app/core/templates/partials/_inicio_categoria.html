@@ -1,0 +1,25 @@
+<section class="news-category home-category" data-home-category aria-labelledby="news-heading-{{ grupo.slug }}">
+  <div class="news-category__head">
+    <div>
+      <h2 id="news-heading-{{ grupo.slug }}">{{ grupo.nombre }}</h2>
+      <p class="home-category__subtitle">Hasta 15 noticias destacadas de Misiones</p>
+    </div>
+    {% if grupo.publicaciones %}
+    <div class="news-category__controls" hidden>
+      <button class="icon-btn" type="button" data-news-prev aria-label="Noticias anteriores de {{ grupo.nombre }}" aria-controls="news-track-{{ grupo.slug }}">‹</button>
+      <button class="icon-btn" type="button" data-news-next aria-label="Noticias siguientes de {{ grupo.nombre }}" aria-controls="news-track-{{ grupo.slug }}">›</button>
+    </div>
+    {% endif %}
+  </div>
+  {% if grupo.publicaciones %}
+  <div class="news-track" id="news-track-{{ grupo.slug }}" role="region" aria-label="Noticias destacadas de {{ grupo.nombre }}" tabindex="0">
+    {% for publicacion in grupo.publicaciones %}
+      {% include "partials/_regional_card.html" with publicacion=publicacion %}
+    {% endfor %}
+  </div>
+  <div class="news-category__pages" role="group" aria-label="Páginas de noticias de {{ grupo.nombre }}" hidden></div>
+  {% else %}
+  <p class="home-category__empty">Todavía no hay noticias de Misiones confirmadas en esta categoría.</p>
+  {% endif %}
+  <a class="home-category__all" href="{% url 'publicaciones_categoria' grupo.slug %}">Ver todas las noticias de {{ grupo.nombre }} →</a>
+</section>

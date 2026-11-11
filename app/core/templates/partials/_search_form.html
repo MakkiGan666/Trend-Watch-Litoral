@@ -1,0 +1,23 @@
+<form class="news-search-form" data-suggestions-url="{% url 'sugerencias_publicaciones' %}" data-hashtags-url="{% url 'hashtags_publicaciones' %}" action="{% url 'buscar_noticias' %}" method="get" role="search">
+  <label for="{{ search_prefix }}-q">Buscar noticias</label>
+  <div class="news-search-form__controls">
+    <input type="search" id="{{ search_prefix }}-q" name="q" value="{{ search_query }}" placeholder="Buscar noticias, personas, localidades o temas…" autocomplete="off" aria-describedby="{{ search_prefix }}-hint{% if error %} search-error{% endif %}"{% if error %} aria-invalid="true"{% endif %}>
+    <button class="btn btn--primary" type="submit">Buscar</button>
+  </div>
+  <p id="{{ search_prefix }}-hint" class="news-search-hint">Todas las noticias · Entre 2 y 150 caracteres, hasta 10 palabras.</p>
+  {% if mostrar_hashtags and hashtags %}
+  {# Antes del panel de sugerencias, que el script agrega al final del formulario. #}
+  <nav class="search-hashtags search-hashtags--page" data-consulta="{{ consulta }}" aria-labelledby="{{ search_prefix }}-hashtags-title">
+    <p class="search-hashtags__heading" id="{{ search_prefix }}-hashtags-title">Explorar por hashtags</p>
+    <ul class="search-hashtags__list">
+      {% for etiqueta in hashtags %}
+      <li><a class="hashtag-chip{% if etiqueta.seleccionado %} is-selected{% endif %}" href="{{ etiqueta.url }}" data-hashtag="{{ etiqueta.valor }}" title="{% if etiqueta.seleccionado %}Quitar el filtro {{ etiqueta.texto }}{% else %}{{ etiqueta.descripcion }} · filtrar {{ etiqueta.total }} noticia{{ etiqueta.total|pluralize:'s' }}{% endif %}"{% if etiqueta.seleccionado %} aria-current="true"{% endif %}>
+        <span>{{ etiqueta.texto }}</span>
+        <span class="hashtag-chip__count"><span class="sr-only">, </span>{{ etiqueta.total }}<span class="sr-only"> noticia{{ etiqueta.total|pluralize:'s' }}</span></span>
+        {% if etiqueta.seleccionado %}<span class="hashtag-chip__remove" aria-hidden="true">×</span><span class="sr-only">, filtro activo; quitar</span>{% endif %}
+      </a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+</form>

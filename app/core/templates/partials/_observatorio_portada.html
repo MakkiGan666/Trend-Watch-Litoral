@@ -1,0 +1,77 @@
+{% load l10n %}
+<section class="observatorio" id="observatorio" aria-labelledby="observatorio-title">
+  <div class="observatorio__intro">
+    <p class="observatorio__eyebrow">Observatorio de la agenda mediática de Misiones</p>
+    <h1 id="observatorio-title">¿Qué está pasando en la agenda informativa de Misiones?</h1>
+    <p class="observatorio__lead">TrendWatch Litoral reúne publicaciones de medios de la provincia y muestra qué temas se tratan, cómo cambian en el tiempo, en qué departamentos tienen presencia y con qué tono se cubren.</p>
+    <ul class="observatorio__dims" aria-label="Dimensiones de análisis">
+      <li><strong>Territorio</strong><span>17 departamentos</span></li>
+      <li><strong>Temática</strong><span>12 categorías</span></li>
+      <li><strong>Evolución</strong><span>semana a semana</span></li>
+      <li><strong>Tono</strong><span>noticias y comentarios</span></li>
+    </ul>
+    <div class="observatorio__actions">
+      {% if perms.core.view_publicacion and perms.core.add_publicacion and perms.core.change_publicacion and perms.core.delete_publicacion %}<a class="btn btn--primary" href="{% url 'dashboard' %}">Abrir panel de análisis</a>{% endif %}
+      <a class="btn btn--ghost" href="{% url 'categorias' %}#localidades">Explorar por departamento</a>
+      <a class="observatorio__link" href="{% url 'categorias' %}">Explorar por tema →</a>
+    </div>
+  </div>
+
+  {% if observatorio %}
+  {% with c=observatorio.comparacion t=observatorio.territorio %}
+  <div class="observatorio__kpis" aria-label="Indicadores de actividad informativa">
+    <article class="glass glass--sheen"><span>Publicaciones registradas</span><strong>{{ observatorio.total }}</strong><small>en todo el archivo</small></article>
+    <article class="glass glass--sheen"><span>Últimos {{ observatorio.dias }} días</span><strong>{{ c.actual }}</strong><small>{% if c.variacion is not None %}<b class="{% if c.diferencia > 0 %}is-up{% elif c.diferencia < 0 %}is-down{% endif %}">{% if c.diferencia > 0 %}▲ +{% elif c.diferencia < 0 %}▼ {% endif %}{{ c.variacion }}%</b> vs. {{ c.anterior }} en los {{ observatorio.dias }} días previos{% else %}sin publicaciones en el período previo{% endif %}</small></article>
+    <article class="glass glass--sheen"><span>Departamentos con cobertura</span><strong>{{ t.con_cobertura }}<em>/{{ t.cantidad }}</em></strong><small>en el período</small></article>
+    <article class="glass glass--sheen"><span>Temas con presencia</span><strong>{{ observatorio.temas_presentes }}</strong><small>categorías con publicaciones</small></article>
+  </div>
+  <p class="observatorio__period">Período analizado: {{ observatorio.inicio|date:"d/m/Y" }} – {{ observatorio.fin|date:"d/m/Y" }} (hasta la última publicación registrada). Comparado con {{ c.inicio_anterior|date:"d/m/Y" }} – {{ c.fin_anterior|date:"d/m/Y" }}. Se cuentan publicaciones de los medios registrados en el sistema.</p>
+
+  <div class="observatorio__grid">
+    <section class="observatorio__card glass glass--sheen" aria-labelledby="obs-temas-title">
+      <h2 id="obs-temas-title">Temas con mayor presencia</h2>
+      <p>Publicaciones por categoría en el período y cambio frente al período anterior.</p>
+      <ol class="observatorio__bars">
+        {% for tema in observatorio.temas %}
+        <li>
+          <div>{% if tema.slug %}<a href="{% url 'publicaciones_categoria' tema.slug %}">{{ tema.nombre }}</a>{% else %}<span>{{ tema.nombre }}</span>{% endif %}<strong>{{ tema.actual }}{% if tema.diferencia %} <small class="{% if tema.diferencia > 0 %}is-up{% else %}is-down{% endif %}">{% if tema.diferencia > 0 %}+{% endif %}{{ tema.diferencia }}</small>{% endif %}</strong></div>
+          <span class="observatorio__bar" aria-hidden="true"><i style="width:{{ tema.ancho|unlocalize }}%"></i></span>
+        </li>
+        {% empty %}
+        <li class="observatorio__empty">Las publicaciones del período todavía no tienen tema asignado.</li>
+        {% endfor %}
+      </ol>
+    </section>
+
+    <section class="observatorio__card glass glass--sheen" aria-labelledby="obs-evolucion-title">
+      <h2 id="obs-evolucion-title">Evolución reciente de la cobertura</h2>
+      <p>Publicaciones por semana durante las últimas {{ observatorio.semanas|length }} semanas. Las semanas sin registros quedan vacías.</p>
+      <div class="observatorio__weeks" role="img" aria-label="Publicaciones por semana: {% for s in observatorio.semanas %}{{ s.inicio|date:'d/m' }} {{ s.total }}{% if not forloop.last %}; {% endif %}{% endfor %}">
+        {% for s in observatorio.semanas %}<span title="{{ s.inicio|date:'d/m' }}–{{ s.fin|date:'d/m' }}: {{ s.total }} publicaciones"><i style="height:{{ s.alto|unlocalize }}%"></i></span>{% endfor %}
+      </div>
+      {% with primera=observatorio.semanas.0 ultima=observatorio.semanas|last %}
+      <div class="observatorio__axis"><span>{{ primera.inicio|date:"d/m" }}</span><span>Semana actual: {{ ultima.total }}</span><span>{{ ultima.fin|date:"d/m" }}</span></div>
+      {% endwith %}
+    </section>
+
+    <section class="observatorio__card glass glass--sheen" aria-labelledby="obs-territorio-title">
+      <h2 id="obs-territorio-title">Departamentos con más cobertura</h2>
+      <p>Según el departamento identificado en cada publicación del período.</p>
+      <ol class="observatorio__bars">
+        {% for fila in observatorio.departamentos %}
+        <li>
+          <div><a href="{% url 'localidad' fila.slug %}">{{ fila.nombre }}</a><strong>{{ fila.total }}</strong></div>
+          <span class="observatorio__bar" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span>
+        </li>
+        {% empty %}
+        <li class="observatorio__empty">Ninguna publicación del período tiene departamento identificado.</li>
+        {% endfor %}
+      </ol>
+      <p class="observatorio__foot">{{ t.sin_identificar }} publicación{{ t.sin_identificar|pluralize:"es" }} del período sin departamento identificado. <a href="{% url 'categorias' %}#localidades">Ver los {{ t.cantidad }} departamentos →</a></p>
+    </section>
+  </div>
+  {% endwith %}
+  {% else %}
+  <p class="observatorio__empty glass">Todavía no hay publicaciones registradas para analizar la agenda.</p>
+  {% endif %}
+</section>

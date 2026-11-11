@@ -1,0 +1,27 @@
+.news-keywords{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 0}
+.news-keywords a{display:inline-flex;align-items:center;min-height:26px;padding:3px 10px;border:1px solid var(--aqua-line);border-radius:999px;background:var(--aqua-soft);color:var(--mist);font-size:11px;line-height:1.3;text-decoration:none;transition:background .18s,border-color .18s,box-shadow .18s}
+.news-keywords a:hover,.news-keywords a:focus-visible{border-color:var(--aqua);background:var(--glass-hi);box-shadow:0 0 16px -6px var(--aqua);outline:none}
+.news-keywords--card{position:relative;z-index:2;margin:12px 0}
+.news-keywords--card a{font-size:10px;min-height:23px;padding:2px 8px}
+.news-keywords--trend{position:relative;z-index:2;margin:0 9px 10px;gap:5px}
+.news-keywords--trend a{min-height:22px;padding:2px 7px;font-size:10px}
+/* Etiquetas temáticas identificadas con IA: borde pleno y punto, sin otro color de fondo. */
+.news-keywords a.news-keywords__ia{border-color:var(--aqua);font-weight:600}
+.news-keywords a.news-keywords__ia::before{content:"";width:5px;height:5px;margin-right:6px;border-radius:50%;background:var(--aqua);flex:none}
+.news-keywords__grupo{margin-top:14px}
+.news-keywords__titulo{margin:0 0 6px;color:var(--tx-2);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.news-keywords__grupo .news-keywords{margin-top:0}
+.news-card__facts{position:relative;z-index:2;display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0 0;color:var(--tx-2);font-size:11px}
+.news-card__facts:empty{display:none}
+.news-related{margin-top:28px}
+.news-related h2{font-size:18px;margin-bottom:6px}
+.news-related>p{color:var(--tx-2);font-size:13px;margin-bottom:12px}
+.news-related ul{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.news-related li{padding:12px 14px;border:1px solid var(--edge);border-radius:14px}
+.news-related li a{color:var(--mist);font-weight:600;text-decoration:none}
+.news-related li a:hover{color:var(--aqua)}
+.news-related small{display:block;margin-top:4px;color:var(--tx-2);font-size:11px}
+.tag-filters{display:grid;gap:10px;margin:14px 0 20px}
+.tag-filters p{margin:0;color:var(--tx-2);font-size:13px}
+.tag-filters .news-keywords{margin:0}
+.tag-filters a.tag-filters__activa{border-color:var(--aqua);color:var(--aqua)}

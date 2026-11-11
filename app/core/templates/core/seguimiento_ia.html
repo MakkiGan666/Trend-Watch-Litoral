@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Seguimiento de IA · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/admin-accounts.css' %}?v=1"><link rel="stylesheet" href="{% static 'css/seguimiento-ia.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap admin-accounts-page">
+  <div class="admin-accounts-layout">
+    {% include 'partials/_admin_accounts_nav.html' with activa='seguimiento_ia' %}
+    <section class="admin-accounts-main glass glass--sheen seguimiento-ia" aria-labelledby="seguimiento-title">
+      <h1 id="seguimiento-title">Seguimiento de IA</h1>
+      <p>Historial de cada llamada a Gemini u Ollama: qué se pidió, qué respondió el modelo y qué resultado usó finalmente TrendWatch. Las claves de acceso nunca se guardan; de los comentarios de usuarios sólo se registra su número.</p>
+
+      <form method="get" class="seguimiento-ia__filtros" aria-label="Filtrar ejecuciones">
+        {% if form.non_field_errors %}<div class="seguimiento-ia__error" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+        {% for campo in form %}<label>{{ campo.label }}{{ campo }}{% if campo.errors %}<span class="seguimiento-ia__error">{{ campo.errors|join:' ' }}</span>{% endif %}</label>{% endfor %}
+        <div class="seguimiento-ia__acciones"><button class="btn btn--primary" type="submit">Filtrar</button>{% if request.GET %}<a href="{% url 'seguimiento_ia' %}">Limpiar filtros</a>{% endif %}</div>
+      </form>
+
+      <ul class="seguimiento-ia__resumen" aria-label="Ejecuciones por estado">
+        <li><strong>{{ total }}</strong> ejecucion{{ total|pluralize:'es' }}</li>
+        {% for valor, etiqueta, cantidad in resumen %}<li><strong>{{ cantidad }}</strong> {{ etiqueta|lower }}</li>{% endfor %}
+      </ul>
+
+      {% if pagina %}
+      <div class="admin-accounts-table-wrap"><table class="admin-accounts-table seguimiento-ia__tabla">
+        <thead><tr><th scope="col">Fecha</th><th scope="col">Análisis</th><th scope="col">Proveedor y modelo</th><th scope="col">Referencia</th><th scope="col">Estado</th><th scope="col">Tiempo</th><th scope="col"><span class="sr-only">Detalle</span></th></tr></thead>
+        <tbody>{% for ejecucion in pagina %}<tr>
+          <td><time datetime="{{ ejecucion.fecha|date:'c' }}">{{ ejecucion.fecha|date:'d/m/Y H:i:s' }}</time></td>
+          <td>{{ ejecucion.get_tarea_display }}</td>
+          <td>{{ ejecucion.proveedor|capfirst }}<br><small>{{ ejecucion.modelo|default:'—' }}{% if ejecucion.respaldo %} · respaldo{% endif %}</small></td>
+          <td>{% if ejecucion.publicacion_id %}{% if ejecucion.publicacion_id in existentes %}<a href="{% url 'noticia' ejecucion.publicacion_id %}">Noticia #{{ ejecucion.publicacion_id }}</a>{% else %}Noticia #{{ ejecucion.publicacion_id }} (eliminada){% endif %}{% elif ejecucion.entidad == 'comentario' %}Comentario #{{ ejecucion.entidad_id|default:'—' }}{% elif ejecucion.entidad == 'lote' %}Lote{% if ejecucion.referencias %} de {{ ejecucion.referencias|length }}{% endif %}{% else %}—{% endif %}</td>
+          <td><span class="seguimiento-ia__pill seguimiento-ia__estado--{{ ejecucion.estado }}">{{ ejecucion.get_estado_display }}</span>{% if ejecucion.codigo_error %}<br><small>{{ ejecucion.codigo_error }}</small>{% endif %}</td>
+          <td>{% if ejecucion.duracion_ms is not None %}{{ ejecucion.duracion_ms }} ms{% else %}—{% endif %}</td>
+          <td><a href="{% url 'detalle_ejecucion_ia' ejecucion.identificador %}">Ver detalle</a></td>
+        </tr>{% endfor %}</tbody>
+      </table></div>
+      {% else %}<p>No hay ejecuciones registradas{% if request.GET %} para estos filtros{% endif %}. El historial se completa con cada nueva llamada a un modelo de IA.</p>{% endif %}
+      {% if pagina.has_other_pages %}<nav class="admin-accounts-pagination" aria-label="Páginas del historial">
+        {% if pagina.has_previous %}<a href="?{% if consulta %}{{ consulta }}&amp;{% endif %}pagina={{ pagina.previous_page_number }}">← Anterior</a>{% endif %}
+        <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+        {% if pagina.has_next %}<a href="?{% if consulta %}{{ consulta }}&amp;{% endif %}pagina={{ pagina.next_page_number }}">Siguiente →</a>{% endif %}
+      </nav>{% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

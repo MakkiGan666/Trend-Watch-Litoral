@@ -1,0 +1,3 @@
+{% load roles %}
+{% puede_gestionar_administradores request.user as gestionar_administradores %}
+{% if gestionar_administradores %}<a href="{% url 'gestion_administradores' %}" {% if request.resolver_match.url_name == 'gestion_administradores' %}aria-current="page"{% endif %}>Administradores</a>{% endif %}

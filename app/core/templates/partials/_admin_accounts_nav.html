@@ -1,0 +1,9 @@
+<nav class="admin-accounts-nav glass" aria-label="Gestión de cuentas">
+  <a href="{% url 'gestion_administradores' %}" {% if activa == 'gestion' %}aria-current="page"{% endif %}>Gestión de administradores</a>
+  <span>Cuenta</span>
+  <a href="{% url 'listado_administradores' %}" {% if activa == 'administradores' %}aria-current="page"{% endif %}>Administradores</a>
+  <span>Contenido</span>
+  <a href="{% url 'listado_usuarios' %}" {% if activa == 'usuarios' %}aria-current="page"{% endif %}>Usuarios registrados</a>
+  <a href="{% url 'motor_ia' %}" {% if activa == 'motor_ia' %}aria-current="page"{% endif %}>Motor de Inteligencia Artificial</a>
+  <a href="{% url 'seguimiento_ia' %}" {% if activa == 'seguimiento_ia' %}aria-current="page"{% endif %}>Seguimiento de IA</a>
+</nav>

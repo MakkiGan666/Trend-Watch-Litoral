@@ -20,15 +20,16 @@ dentro de la respuesta HTTP de creación o edición de comentarios.
 import hashlib
 import json
 import logging
-import os
 from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import Q
 
 from core.localidades import normalizar_nombre
-from core.models import Categoria, Comentario, SentimientoComentario
+from core.models import Categoria, Comentario, EjecucionIA, SentimientoComentario
 from .clasificacion import CATEGORIAS_PROYECTO, categoria_con_confianza
+from .ia import seguimiento
+from .ia.ollama import config_ollama
 from .sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
 
 try:
@@ -48,8 +49,6 @@ VERSION_LEXICON = 'lexicon_v2'
 # Prefijo de codigo_error para resultados léxicos que reemplazaron a una IA fallida.
 PREFIJO_FALLO_IA = 'ia:'
 
-_OLLAMA_BASE_DEFAULT = 'http://127.0.0.1:11434'
-_OLLAMA_MODELO_DEFAULT = 'llama3.1:latest'
 _OLLAMA_TIMEOUT_DEFAULT = 20.0
 _LARGO_MAX_PROMPT = 2000
 # Tolera mayúsculas y tildes ("economia" -> "Economía"), nunca nombres fuera de la lista.
@@ -120,13 +119,9 @@ def predecir_lexicon(texto):
 
 
 def _config_ollama():
-    base = (os.environ.get('OLLAMA_BASE_URL') or _OLLAMA_BASE_DEFAULT).rstrip('/')
-    modelo = os.environ.get('OLLAMA_MODELO_CHAT', _OLLAMA_MODELO_DEFAULT)
-    try:
-        timeout = float(os.environ.get('OLLAMA_TIMEOUT', _OLLAMA_TIMEOUT_DEFAULT))
-    except (TypeError, ValueError):
-        timeout = _OLLAMA_TIMEOUT_DEFAULT
-    return base, modelo, timeout
+    # Fuente única de la configuración de Ollama (compartida con el proveedor de la capa
+    # `core.services.ia`); el sentimiento de comentarios conserva su espera por defecto corta.
+    return config_ollama(timeout_por_defecto=_OLLAMA_TIMEOUT_DEFAULT)
 
 
 _PROMPT_IA = (
@@ -140,13 +135,40 @@ _PROMPT_IA = (
 )
 
 
-def predecir_ollama(texto, cliente_http=None):
+_CODIGOS_SIN_RESPUESTA = ('httpx_no_disponible', 'ollama_sin_respuesta')
+
+
+def predecir_ollama(texto, cliente_http=None, comentario_id=None):
     """Predicción con un modelo local servido por Ollama.
 
     No se descarga ni se instala nada aquí: si Ollama no responde en el formato
     esperado se lanza `SentimientoNoDisponible` para que el llamador caiga al
     método léxico (modo degradado documentado).
+
+    Cada llamada queda en el historial de IA con la respuesta original del modelo.
+    El texto del comentario no se copia (puede tener datos personales): sólo su id.
     """
+    cronometro = seguimiento.Cronometro()
+    contexto = {'raw': None}
+    datos = dict(tarea=EjecucionIA.Tarea.SENTIMIENTO_COMENTARIO, proveedor='ollama',
+                 modelo=_config_ollama()[1], entidad='comentario', entidad_id=comentario_id)
+    try:
+        prediccion = _predecir_ollama(texto, cliente_http, contexto)
+    except SentimientoNoDisponible as exc:
+        estado = (EjecucionIA.Estado.FALLIDA if exc.codigo in _CODIGOS_SIN_RESPUESTA
+                  else EjecucionIA.Estado.INVALIDA)
+        seguimiento.registrar(**datos, estado=estado, respuesta=contexto['raw'], codigo_error=exc.codigo,
+                              duracion_ms=cronometro.ms)
+        raise
+    seguimiento.registrar(**datos, estado=EjecucionIA.Estado.EXITOSA, respuesta=contexto['raw'],
+                          duracion_ms=cronometro.ms, resultado={
+                              'polaridad': prediccion.polaridad, 'confianza': prediccion.confianza,
+                              'categoria': prediccion.categoria, 'modelo': prediccion.modelo,
+                          })
+    return prediccion
+
+
+def _predecir_ollama(texto, cliente_http, contexto):
     if httpx is None:
         raise SentimientoNoDisponible('httpx_no_disponible')
     base, modelo, timeout = _config_ollama()
@@ -175,6 +197,7 @@ def predecir_ollama(texto, cliente_http=None):
             if not isinstance(envoltorio, dict):
                 raise SentimientoNoDisponible('respuesta_invalida')
             raw = envoltorio.get('response')
+            contexto['raw'] = raw
             if not isinstance(raw, str):
                 raise SentimientoNoDisponible('respuesta_invalida')
         finally:
@@ -200,12 +223,13 @@ def predecir_ollama(texto, cliente_http=None):
         raise SentimientoNoDisponible('respuesta_fuera_de_rango') from exc
     if not (-1 <= pol <= 1 and 0 <= conf <= 1):
         raise SentimientoNoDisponible('respuesta_fuera_de_rango')
-    # La categoría es opcional (ausente o null = sin categoría), pero si viene
-    # debe estar en la lista cerrada: una categoría inventada invalida la respuesta.
+    # La categoría es opcional (ausente o null = sin categoría). Una categoría fuera
+    # de la lista cerrada se descarta sin perder la polaridad ni la confianza:
+    # nunca se busca una equivalencia ni se crea un nombre nuevo.
     categoria_cruda = contenido.get('categoria')
     categoria = categoria_canonica(categoria_cruda)
     if categoria_cruda is not None and categoria is None:
-        raise SentimientoNoDisponible('categoria_invalida')
+        logger.warning('Ollama devolvió una categoría fuera de la lista; se guarda sin categoría.')
     return Prediccion(
         polaridad=pol,
         confianza=conf,
@@ -314,7 +338,7 @@ def analizar_comentario(comentario, usar_ia=False, cliente_http=None, forzar=Fal
     codigo_error = ''
     if usar_ia:
         try:
-            prediccion = predecir_ollama(texto, cliente_http=cliente_http)
+            prediccion = predecir_ollama(texto, cliente_http=cliente_http, comentario_id=comentario.pk)
         except SentimientoNoDisponible as exc:
             # El fallo del método IA no es un error de análisis: se cae al léxico
             # y el resultado persiste con metodo='lexicon' para que quede claro.

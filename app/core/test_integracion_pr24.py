@@ -62,15 +62,17 @@ class IntegracionPR24Tests(TestCase):
         self.assertEqual(archivo.dashboard_categorias, [c.pk for c in self.categorias])
         self.assertEqual(archivo.dashboard_departamentos, ['capital', 'guarani'])
         self.assertContains(respuesta, 'data-departamentos="capital,guarani"')
-        # El calendario sigue etiquetado y filtrando captura: 02 UTC es día previo local.
-        self.assertContains(respuesta, 'data-capture-date="2026-10-19"')
+        # La fecha publicada tiene prioridad; sin ella se usa la captura en hora local.
+        self.assertContains(respuesta, 'data-publication-date="2026-10-01"')
+        self.assertContains(respuesta, 'data-publication-date="2026-10-18"')
         self.assertContains(respuesta, 'Fecha de captura')
         self.assertContains(respuesta, 'data-dashboard-edit-toggle')
         self.assertContains(respuesta, 'Sin categoría asociada')
 
     def test_detalle_conserva_precision_y_funciones_sociales_y_guardados(self):
         self.client.force_login(self.usuario)
-        Comentario.objects.create(publicacion=self.archivo, autor=self.usuario, texto='Opinión integrada')
+        Comentario.objects.create(publicacion=self.archivo, autor=self.usuario, texto='Opinión integrada',
+                                 estado=Comentario.Estado.PUBLICADO)
         ValoracionPublicacion.objects.create(publicacion=self.archivo, usuario=self.usuario, sentimiento='positivo')
         PublicacionGuardada.objects.create(publicacion=self.archivo, usuario=self.usuario)
         respuesta = self.client.get(reverse('noticia', args=[self.archivo.pk]))

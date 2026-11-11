@@ -1,0 +1,37 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Ejecución de IA · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/admin-accounts.css' %}?v=1"><link rel="stylesheet" href="{% static 'css/seguimiento-ia.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap admin-accounts-page">
+  <div class="admin-accounts-layout">
+    {% include 'partials/_admin_accounts_nav.html' with activa='seguimiento_ia' %}
+    <section class="admin-accounts-main glass glass--sheen seguimiento-ia" aria-labelledby="ejecucion-title">
+      <a class="seguimiento-ia__volver" href="{% url 'seguimiento_ia' %}">← Volver al historial</a>
+      <h1 id="ejecucion-title">{{ ejecucion.get_tarea_display }}</h1>
+      <dl class="seguimiento-ia__datos">
+        <div><dt>Identificador</dt><dd><code>{{ ejecucion.identificador }}</code></dd></div>
+        <div><dt>Fecha</dt><dd><time datetime="{{ ejecucion.fecha|date:'c' }}">{{ fecha_local|date:'d/m/Y H:i:s' }}</time></dd></div>
+        <div><dt>Estado</dt><dd><span class="seguimiento-ia__pill seguimiento-ia__estado--{{ ejecucion.estado }}">{{ ejecucion.get_estado_display }}</span></dd></div>
+        <div><dt>Proveedor</dt><dd>{{ ejecucion.proveedor|capfirst }}{% if ejecucion.respaldo %} (motor de respaldo){% endif %}</dd></div>
+        <div><dt>Modelo</dt><dd>{{ ejecucion.modelo|default:'—' }}</dd></div>
+        <div><dt>Tiempo de procesamiento</dt><dd>{% if ejecucion.duracion_ms is not None %}{{ ejecucion.duracion_ms }} ms{% else %}—{% endif %}</dd></div>
+        <div><dt>Referencia</dt><dd>{% if publicacion %}<a href="{% url 'noticia' publicacion.pk %}">{{ publicacion.titulo }}</a>{% elif ejecucion.publicacion_id %}Noticia #{{ ejecucion.publicacion_id }} (eliminada){% elif ejecucion.entidad == 'comentario' %}Comentario #{{ ejecucion.entidad_id|default:'—' }} (el texto no se copia al historial){% elif ejecucion.referencias %}Lote: {{ ejecucion.referencias|join:', ' }}{% elif ejecucion.entidad == 'lote' %}Lote de noticias durante la ingesta{% else %}—{% endif %}</dd></div>
+        {% if ejecucion.codigo_error %}<div><dt>Error</dt><dd><strong>{{ ejecucion.codigo_error }}</strong>{% if ejecucion.detalle_error %} · {{ ejecucion.detalle_error }}{% endif %}</dd></div>{% endif %}
+      </dl>
+
+      {% if etiquetas_asignadas %}<section class="seguimiento-ia__bloque" aria-labelledby="vigentes-title"><h2 id="vigentes-title">Etiquetas vigentes que provienen de esta ejecución</h2>
+        <nav class="seguimiento-ia__etiquetas" aria-label="Etiquetas vigentes">{% for relacion in etiquetas_asignadas %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}</nav></section>{% endif %}
+
+      <section class="seguimiento-ia__bloque" aria-labelledby="resultado-title"><h2 id="resultado-title">Resultado procesado que usa el sistema</h2>
+        {% if resultado_legible %}<pre>{{ resultado_legible }}</pre>{% else %}<p>{% if ejecucion.estado == 'fallida' %}No hubo respuesta del modelo.{% else %}El servicio no registró un resultado procesado.{% endif %}</p>{% endif %}</section>
+      <section class="seguimiento-ia__bloque" aria-labelledby="respuesta-title"><h2 id="respuesta-title">Respuesta original del modelo</h2>
+        {% if respuesta_legible %}<pre>{{ respuesta_legible }}</pre>{% else %}<p>Sin respuesta.</p>{% endif %}</section>
+      <details class="seguimiento-ia__bloque"><summary>Entrada enviada al modelo</summary>
+        {% if ejecucion.instrucciones %}<h3>Instrucciones</h3><pre>{{ ejecucion.instrucciones }}</pre>{% endif %}
+        {% if entrada_legible %}<h3>Contenido</h3><pre>{{ entrada_legible }}</pre>{% else %}<p>No se registró la entrada{% if ejecucion.entidad == 'comentario' %}: es texto de un usuario y se omite para no guardar datos personales{% endif %}.</p>{% endif %}
+      </details>
+    </section>
+  </div>
+</div>
+{% endblock %}

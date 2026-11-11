@@ -3,24 +3,29 @@
 
 {% block title %}{{ publicacion.titulo|default:"Noticia" }} · TrendWatch Litoral{% endblock %}
 {% block extra_head %}
-<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=7">
+<link rel="stylesheet" href="{% static 'css/news-detail.css' %}?v=11">
+<link rel="stylesheet" href="{% static 'css/news-keywords.css' %}?v=2">
 <link rel="stylesheet" href="{% static 'css/comments.css' %}?v=1">
-<link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'css/news-ratings.css' %}?v=4">
 {% endblock %}
 
 {% block content %}
 <div class="wrap news-detail">
   <a class="btn btn--ghost news-detail__back" href="{% url 'landing' %}">← Volver a las noticias</a>
+  <div class="news-detail__layout">
   <article class="news-detail__article glass glass--sheen">
     <header>
       <div class="news-detail__tags">
         {% for categoria in categorias_noticia %}<span class="tag">{{ categoria }}</span>{% empty %}<span class="tag tag--soft">Sin categoría asociada</span>{% endfor %}
         {% if seccion_noticia %}<span class="tag tag--soft">Sección: {{ seccion_noticia }}</span>{% endif %}
+        {% if publicacion.departamento_nombre %}<a class="tag tag--soft" href="{% url 'localidad' publicacion.departamento %}">Departamento {{ publicacion.departamento_nombre }}</a>{% endif %}
         {% for localidad in localidades_noticia %}<span class="tag tag--soft">{{ localidad }}</span>{% empty %}<span class="tag tag--soft">Localidad sin identificar</span>{% endfor %}
       </div>
       <h1>{{ publicacion.titulo|default:"Noticia sin título" }}</h1>
-      <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if publicacion.fecha_captura %} · Incorporada el <time datetime="{{ publicacion.fecha_captura|date:'c' }}">{{ publicacion.fecha_captura|date:"d/m/Y H:i" }}</time>{% endif %}</p>
-      {% if fecha_navegacion.fecha_efectiva %}<p class="news-detail__meta">{% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_navegacion.fecha_dia }}</time>{% if fecha_navegacion.fecha_precision == 'dia' %} · Hora no verificada{% endif %}</p>{% endif %}
+      {% if etiquetas_ia %}<div class="news-keywords__grupo"><p class="news-keywords__titulo" id="temas-ia">Temas identificados con IA</p><nav class="news-keywords" aria-labelledby="temas-ia">{% for relacion in etiquetas_ia %}<a class="news-keywords__ia" href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}" title="Identificada con {{ relacion.modelo_ia|default:'IA' }}">{{ relacion.etiqueta.nombre|capfirst }}</a>{% endfor %}</nav></div>{% endif %}
+      {% if palabras_clave %}<div class="news-keywords__grupo">{% if etiquetas_ia %}<p class="news-keywords__titulo" id="palabras-clave">Palabras clave del texto</p>{% endif %}<nav class="news-keywords" {% if etiquetas_ia %}aria-labelledby="palabras-clave"{% else %}aria-label="Etiquetas de la noticia"{% endif %}>{% for relacion in palabras_clave %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}">{{ relacion.etiqueta.nombre }}</a>{% endfor %}</nav></div>{% endif %}
+      {% if resumen %}<p class="news-detail__summary">{{ resumen }}</p>{% endif %}
+      <p class="news-detail__meta">Fuente: <strong>{{ publicacion.fuente|default:"Sin fuente identificada" }}</strong>{% if fecha_navegacion.fecha_efectiva %} · {% if fecha_navegacion.fecha_origen == 'publicacion' %}Publicada{% else %}Incorporada{% endif %} el <time datetime="{{ fecha_navegacion.fecha_efectiva }}">{{ fecha_legible }}</time>{% if fecha_navegacion.fecha_precision == 'dia' %} · <span class="news-detail__precision">Hora no verificada</span>{% endif %}{% endif %}</p>
     </header>
 
     {% if imagen_noticia %}
@@ -33,12 +38,22 @@
     {% endif %}
     <div class="news-detail__reading" data-news-reading>
       <div class="news-detail__content" id="news-full-content" data-news-content>
-        {% if contenido_noticia %}{{ contenido_noticia|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
-      </div>
-      <div class="news-detail__expand" data-news-expand hidden>
-        <button class="btn btn--ghost" type="button" data-news-read-more aria-expanded="false" aria-controls="news-full-content">Leer más</button>
+        {% if primer_parrafo %}{{ primer_parrafo|linebreaks }}{% else %}<p>El contenido de esta noticia todavía no está disponible.</p>{% endif %}
+        {% if resto %}
+        <div id="news-remaining-content" data-news-more>{{ resto|linebreaks }}</div>
+        <div class="news-detail__expand" data-news-expand hidden>
+          <button class="btn btn--ghost" type="button" data-news-read-more aria-expanded="false" aria-controls="news-remaining-content">Leer más</button>
+        </div>
+        {% endif %}
       </div>
     </div>
+    {% if relacionadas %}
+    <section class="news-related" aria-labelledby="news-related-title">
+      <h2 id="news-related-title">Noticias relacionadas por tema</h2>
+      <p>Comparten etiquetas temáticas con esta noticia; las etiquetas poco frecuentes pesan más.</p>
+      <ul>{% for relacionada, comunes in relacionadas %}<li><a href="{% url 'noticia' relacionada.pk %}">{{ relacionada.titulo }}</a><small>En común: {{ comunes|join:', ' }}</small></li>{% endfor %}</ul>
+    </section>
+    {% endif %}
     <footer class="news-detail__source">
       <p>Contenido disponible de la publicación original. Puede corresponder al texto completo o a un resumen proporcionado por la fuente.</p>
       {% if enlace_original %}<a class="btn btn--ghost" href="{{ enlace_original }}" target="_blank" rel="noopener noreferrer">Consultar publicación original ↗</a>{% endif %}
@@ -56,13 +71,16 @@
       </div>
     </footer>
   </article>
-  {% include "partials/_valoraciones.html" %}
+  <div class="news-detail__rating-rail">
+    {% include "partials/_valoraciones.html" %}
+  </div>
   {% include "partials/_comentarios.html" %}
+  </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/news-detail.js' %}?v=1" defer></script>
+<script src="{% static 'js/news-detail.js' %}?v=5" defer></script>
 {% endblock %}
 
 {% block footer %}

@@ -44,10 +44,19 @@ la necesidad.
   por defecto).
 - `predecir_ollama(texto)`: pide a Ollama (`/api/generate`, `format=json`) un
   JSON con `polaridad`, `confianza` y `categoria`. El prompt enumera las 12
-  categorías de `CATEGORIAS_PROYECTO`; se aceptan diferencias de mayúsculas y
-  tildes, `null` o ausencia (sin categoría). Una categoría fuera de la lista
-  invalida la respuesta (`categoria_invalida`). Valida tipo, rango y claves;
-  si falla por red, timeout o formato, lanza `SentimientoNoDisponible`.
+  categorías de `CATEGORIAS_PROYECTO`. Reglas de la categoría:
+  - una categoría de la lista se conserva (se aceptan diferencias de
+    mayúsculas y tildes);
+  - `null` o ausencia se admiten y quedan sin categoría (`NULL`);
+  - una categoría fuera de la lista (p. ej. "Transporte") o que no sea texto se
+    descarta y queda `NULL`: la polaridad y la confianza se conservan si son
+    válidas, el resultado sigue siendo `metodo='ia'` y se registra un aviso en
+    el log. No se crean categorías nuevas ni se buscan equivalencias.
+
+  La polaridad (número en [-1, 1]) y la confianza (número en [0, 1]) siguen
+  siendo obligatorias: si faltan, no son numéricas o están fuera de rango, la
+  respuesta se rechaza aunque la categoría sea válida. Si falla por red,
+  timeout o formato (JSON inválido), lanza `SentimientoNoDisponible`.
 - `analizar_comentario(comentario, usar_ia=False, forzar=False)`: orquesta la
   predicción, persiste y responde `('creado' | 'actualizado' | 'omitido')`.
   Si `usar_ia=True` falla, cae automáticamente al método léxico, lo registra

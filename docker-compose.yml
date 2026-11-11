@@ -33,6 +33,34 @@ services:
       DB_HOST: db
       # Puerto interno del servicio; 5433 sólo corresponde al anfitrión.
       DB_PORT: 5432
+      # Ollama corre en Windows: dentro del contenedor 127.0.0.1 es el propio contenedor.
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      # Margen para la carga en frío del modelo (el código pide keep_alive: 0).
+      OLLAMA_TIMEOUT: "60"
+    # En Linux host.docker.internal no existe por defecto; en Docker Desktop esto es redundante.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+  ingesta:
+    build: .
+    env_file:
+      - .env
+    command: python manage.py ingestar_recientes
+    restart: unless-stopped
+    # Mostrar el avance de cada RSS sin esperar al fin del ciclo.
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_HOST: db
+      DB_PORT: 5432
+      # La clasificación con IA de la ingesta también puede usar Ollama (ver servicio web).
+      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
+      OLLAMA_TIMEOUT: "60"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./app:/app
     depends_on:
       db:
         condition: service_healthy

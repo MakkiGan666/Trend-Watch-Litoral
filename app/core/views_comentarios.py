@@ -3,6 +3,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -17,8 +18,11 @@ from .services.sentimiento_comentarios import sentimiento_vigente
 def contexto_comentarios(request, publicacion):
     # `select_related('sentimiento')` evita una consulta extra por comentario al
     # pintar la etiqueta de análisis automático en la plantilla.
+    visibles = Q(estado=Comentario.Estado.PUBLICADO)
+    if request.user.is_authenticated:
+        visibles |= Q(autor=request.user)
     pagina = Paginator(
-        publicacion.comentarios.select_related('autor', 'sentimiento__categoria'),
+        publicacion.comentarios.filter(visibles).select_related('autor', 'sentimiento__categoria'),
         10,
     ).get_page(request.GET.get('pagina_comentarios'))
     # Page conserva la lista ya evaluada, así la plantilla recibe estas instancias.
@@ -57,11 +61,12 @@ def crear_comentario(request, pk):
         comentario.autor = request.user
         comentario.save()
         # Después del commit y en segundo plano: la respuesta no espera a Ollama.
+        # Se analiza aunque esté pendiente; la plantilla sólo lo muestra al publicarse.
         transaction.on_commit(lambda: programar_analisis(comentario.pk))
-        messages.success(request, 'Comentario publicado.')
+        messages.success(request, 'Comentario enviado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(pk, comentario_id=comentario.pk))
     return render(request, 'core/comentario_form.html', {
-        'form': form, 'publicacion': publicacion, 'titulo': 'Publicar comentario',
+        'form': form, 'publicacion': publicacion, 'titulo': 'Revisá tu comentario',
         'pagina_comentarios': 1,
     }, status=400)
 
@@ -69,20 +74,24 @@ def crear_comentario(request, pk):
 @require_http_methods(['GET', 'POST'])
 @login_required(login_url='login')
 def editar_comentario(request, pk):
-    comentario = get_object_or_404(Comentario.objects.select_related('publicacion'), pk=pk)
+    comentario = get_object_or_404(Comentario.objects.select_related('publicacion').defer(
+        'publicacion__titulo_busqueda', 'publicacion__contenido_busqueda',
+    ), pk=pk)
     if comentario.autor_id != request.user.pk:
         raise PermissionDenied
     form = ComentarioForm(request.POST if request.method == 'POST' else None, instance=comentario)
     if request.method == 'POST' and form.is_valid():
         comentario = form.save(commit=False)
         comentario.fecha_edicion = timezone.now()
-        comentario.save(update_fields=['texto', 'fecha_edicion'])
+        comentario.estado = Comentario.Estado.PENDIENTE
+        comentario.save(update_fields=['texto', 'fecha_edicion', 'estado'])
         transaction.on_commit(lambda: programar_analisis(comentario.pk))
-        messages.success(request, 'Comentario actualizado.')
+        messages.success(request, 'Comentario editado. Se mostrará cuando un moderador lo apruebe.')
         return redirect(_destino(comentario.publicacion_id, _pagina(request), comentario.pk))
     return render(request, 'core/comentario_form.html', {
         'form': form, 'comentario': comentario, 'publicacion': comentario.publicacion,
-        'titulo': 'Editar comentario', 'pagina_comentarios': _pagina(request),
+        'titulo': 'Revisá tu comentario' if form.errors else 'Editar comentario',
+        'pagina_comentarios': _pagina(request),
     }, status=400 if request.method == 'POST' else 200)
 
 

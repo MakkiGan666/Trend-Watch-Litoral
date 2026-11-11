@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}{{ categoria }} · Categorías · TrendWatch Litoral{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=10">
+<link rel="stylesheet" href="{% static 'css/category-news.css' %}?v=4">
+<link rel="stylesheet" href="{% static 'css/news-keywords.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/dashboard-calendar.css' %}?v=3">
+{% endblock %}
+
+{% block content %}
+<div class="wrap category-news">
+  <a class="btn btn--ghost" href="{% url 'categorias' %}#categorias">← Volver a Categorías</a>
+  <header class="category-news__head">
+    <p>Categoría</p>
+    <h1>{{ categoria }}</h1>
+    <p>{{ pagina.paginator.count }} noticia{{ pagina.paginator.count|pluralize }} asociada{{ pagina.paginator.count|pluralize }} a esta categoría.</p>
+  </header>
+  <form class="category-news__filters glass glass--sheen" method="get" action="{% url 'publicaciones_categoria' categoria|slugify %}">
+    <div class="category-news__field dashboard-date" data-dashboard-calendar data-calendar-max-date="{{ fecha_maxima|date:'Y-m-d' }}">
+      <label for="dashboard-date-trigger" id="dashboard-date-label">Fecha de publicación</label>
+      <input type="hidden" id="dashboard-date" name="fecha" value="{{ fecha_seleccionada|date:'Y-m-d' }}">
+      <button class="select dashboard-date__trigger" id="dashboard-date-trigger" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="dashboard-calendar" aria-labelledby="dashboard-date-label dashboard-date-value">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M7 3v4M17 3v4M7 14h2m6 0h2M7 17h2m6 0h2"/></svg>
+        <span id="dashboard-date-value">Todas las fechas</span>
+      </button>
+      <div class="dashboard-calendar" id="dashboard-calendar" role="dialog" aria-modal="false" aria-label="Elegir fecha de publicación" hidden>
+        <div class="dashboard-calendar__head">
+          <button type="button" class="icon-btn" data-calendar-prev aria-label="Mes anterior">‹</button>
+          <strong id="dashboard-calendar-month" data-calendar-month aria-live="polite"></strong>
+          <button type="button" class="icon-btn" data-calendar-next aria-label="Mes siguiente">›</button>
+        </div>
+        <div class="dashboard-calendar__jump">
+          <select data-calendar-month-select aria-label="Elegir mes del calendario">
+            <option value="0">Enero</option><option value="1">Febrero</option><option value="2">Marzo</option><option value="3">Abril</option>
+            <option value="4">Mayo</option><option value="5">Junio</option><option value="6">Julio</option><option value="7">Agosto</option>
+            <option value="8">Septiembre</option><option value="9">Octubre</option><option value="10">Noviembre</option><option value="11">Diciembre</option>
+          </select>
+          <input data-calendar-year-input type="number" min="2026" max="9999" step="1" aria-label="Elegir año del calendario">
+        </div>
+        <div class="dashboard-calendar__week" aria-hidden="true"><span>Lu</span><span>Ma</span><span>Mi</span><span>Ju</span><span>Vi</span><span>Sá</span><span>Do</span></div>
+        <div class="dashboard-calendar__days" data-calendar-days role="group" aria-labelledby="dashboard-calendar-month"></div>
+        <div class="dashboard-calendar__foot"><button type="button" data-calendar-today>Hoy</button><button type="button" data-calendar-clear>Quitar fecha</button></div>
+      </div>
+      <noscript><label for="category-date-fallback">Elegir fecha sin calendario</label><input id="category-date-fallback" class="select" type="date" name="fecha" min="2026-01-01" max="{{ fecha_maxima|date:'Y-m-d' }}" value="{{ fecha_seleccionada|date:'Y-m-d' }}"></noscript>
+    </div>
+    <fieldset class="category-news__order">
+      <legend>Ordenar noticias</legend>
+      <div class="category-news__order-options">
+        <label><input type="radio" name="orden" value="recientes" {% if orden_seleccionado == 'recientes' %}checked{% endif %}><span>Más nuevas primero</span></label>
+        <label><input type="radio" name="orden" value="antiguas" {% if orden_seleccionado == 'antiguas' %}checked{% endif %}><span>Más viejas primero</span></label>
+      </div>
+    </fieldset>
+    <div class="category-news__filter-actions">
+      <button class="btn btn--ghost" type="submit">Aplicar filtros</button>
+      <a class="btn btn--ghost" href="{% url 'publicaciones_categoria' categoria|slugify %}">Limpiar filtros</a>
+    </div>
+  </form>
+  {% if filtros_categoria.errors %}<p class="category-news__error" role="alert">Revisá los filtros: {{ filtros_categoria.errors.as_text }}</p>{% endif %}
+  <div class="category-news__grid">
+    {% for publicacion in pagina %}
+    {% include 'partials/_etiqueta_news_card.html' with publicacion=publicacion %}
+    {% empty %}
+      <p class="category-news__empty">{% if filtros_aplicados %}No hay noticias que coincidan con estos filtros.{% else %}Todavía no hay noticias confirmadas en esta categoría.{% endif %}</p>
+    {% endfor %}
+  </div>
+  {% if pagina.has_other_pages %}
+  <nav class="category-news__pagination" aria-label="Páginas de {{ categoria }}">
+    {% if pagina.has_previous %}<a class="btn btn--ghost" href="?{% if filtros_query %}{{ filtros_query }}&amp;{% endif %}pagina={{ pagina.previous_page_number }}">← Anteriores</a>{% endif %}
+    <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+    {% if pagina.has_next %}<a class="btn btn--ghost" href="?{% if filtros_query %}{{ filtros_query }}&amp;{% endif %}pagina={{ pagina.next_page_number }}">Siguientes →</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}<script src="{% static 'js/dashboard-calendar.js' %}?v=8" defer></script>{% endblock %}

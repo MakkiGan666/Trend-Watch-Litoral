@@ -1,0 +1,14 @@
+<article class="news-card news-card--keywords">
+  <a class="news-card__overlay" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}"></a>
+  <div class="news-card__media">
+    {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
+    {% else %}{% include "partials/_news_image_fallback.html" %}{% endif %}
+  </div>
+  <div class="news-card__body">
+    <span class="news-card__source">{{ publicacion.fuente }}</span>
+    <h2>{{ publicacion.titulo }}</h2>
+    <p class="news-card__facts">{% if mostrar_categoria and publicacion.categoria_principal %}<span>{{ publicacion.categoria_principal }}</span>{% endif %}{% if publicacion.departamento_nombre %}<span>{{ publicacion.departamento_nombre }}</span>{% endif %}{% with fecha=publicacion.fecha_publicacion|default:publicacion.fecha_captura %}{% if fecha %}<time datetime="{{ fecha|date:'Y-m-d' }}">{{ fecha|date:'d/m/Y' }}</time>{% endif %}{% endwith %}</p>
+    {% with etiquetas=publicacion.etiquetas_visibles %}{% if etiquetas %}<nav class="news-keywords news-keywords--card" aria-label="Etiquetas de {{ publicacion.titulo }}">{% for relacion in etiquetas|slice:':5' %}<a href="{% url 'publicaciones_etiqueta' relacion.etiqueta.slug %}"{% if relacion.origen == 'ia' %} class="news-keywords__ia" title="Etiqueta temática identificada con IA"{% endif %}>{{ relacion.etiqueta.nombre }}</a>{% endfor %}</nav>{% endif %}{% endwith %}
+    <span class="news-card__link">Leer noticia →</span>
+  </div>
+</article>

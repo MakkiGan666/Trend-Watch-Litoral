@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ etiqueta.nombre }} · Etiquetas · TrendWatch Litoral{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/landing-news.css' %}?v=10">
+<link rel="stylesheet" href="{% static 'css/category-news.css' %}?v=2">
+<link rel="stylesheet" href="{% static 'css/news-keywords.css' %}?v=2">
+{% endblock %}
+
+{% block content %}
+<div class="wrap category-news">
+  <a class="btn btn--ghost" href="{% url 'categorias' %}">← Volver a Categorías</a>
+  <header class="category-news__head">
+    <p>Etiqueta</p>
+    <h1>{{ etiqueta.nombre }}</h1>
+    <p>{{ pagina.paginator.count }} noticia{{ pagina.paginator.count|pluralize }} con {% if adicionales %}todas estas etiquetas{% else %}esta etiqueta{% endif %}.</p>
+  </header>
+  {% if adicionales or combinables or departamentos %}
+  <section class="tag-filters" aria-label="Combinar etiquetas">
+    {% if adicionales %}<p>Filtrando también por:</p><nav class="news-keywords" aria-label="Etiquetas combinadas">{% for item in adicionales %}<a class="tag-filters__activa" href="{{ item.url_sin }}" aria-label="Quitar la etiqueta {{ item.etiqueta.nombre }}">{{ item.etiqueta.nombre }} ×</a>{% endfor %}</nav>{% endif %}
+    {% if combinables %}<p>Aparecen junto a {% if adicionales %}estas etiquetas{% else %}«{{ etiqueta.nombre }}»{% endif %} (tocá para combinar):</p><nav class="news-keywords" aria-label="Etiquetas para combinar">{% for fila in combinables %}<a href="{{ fila.url }}">{{ fila.nombre }} · {{ fila.total }}</a>{% endfor %}</nav>{% endif %}
+    {% if departamentos %}<p>Departamentos con más noticias de este tema (sólo noticias con departamento identificado): {% for d in departamentos %}<a href="{% url 'localidad' d.slug %}">{{ d.nombre }}</a> ({{ d.total }}){% if not forloop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+  </section>
+  {% endif %}
+  <div class="category-news__grid">
+    {% for publicacion in pagina %}
+      {% include 'partials/_etiqueta_news_card.html' with publicacion=publicacion mostrar_categoria=True %}
+    {% empty %}
+      <p class="category-news__empty">Todavía no hay noticias con esta etiqueta.</p>
+    {% endfor %}
+  </div>
+  {% if pagina.has_other_pages %}
+  <nav class="category-news__pagination" aria-label="Páginas de la etiqueta {{ etiqueta.nombre }}">
+    {% if pagina.has_previous %}<a class="btn btn--ghost" href="?{% if consulta_filtros %}{{ consulta_filtros }}&amp;{% endif %}pagina={{ pagina.previous_page_number }}">← Anteriores</a>{% endif %}
+    <span>Página {{ pagina.number }} de {{ pagina.paginator.num_pages }}</span>
+    {% if pagina.has_next %}<a class="btn btn--ghost" href="?{% if consulta_filtros %}{{ consulta_filtros }}&amp;{% endif %}pagina={{ pagina.next_page_number }}">Siguientes →</a>{% endif %}
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}

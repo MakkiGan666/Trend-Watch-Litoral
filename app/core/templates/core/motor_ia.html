@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Motor de Inteligencia Artificial · TrendWatch{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/admin-accounts.css' %}?v=1"><link rel="stylesheet" href="{% static 'css/motor-ia.css' %}?v=1">{% endblock %}
+{% block content %}
+<div class="wrap admin-accounts-page motor-ia-page">
+  <div class="admin-accounts-layout">
+    {% include 'partials/_admin_accounts_nav.html' with activa='motor_ia' %}
+    <section class="admin-accounts-main glass glass--sheen motor-ia" aria-labelledby="motor-ia-title">
+      <h1 id="motor-ia-title">Motor de inteligencia artificial</h1>
+      <p>Seleccioná qué motor utilizará TrendWatch para realizar sus análisis automáticos.</p>
+      {% for message in messages %}<p role="status" class="motor-ia__aviso">{{ message }}</p>{% endfor %}
+      {% if form.non_field_errors %}<div class="motor-ia__error" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      {% if form.motor_principal.errors %}<div class="motor-ia__error" role="alert">{{ form.motor_principal.errors }}</div>{% endif %}
+
+      <form method="post" class="motor-ia__form">
+        {% csrf_token %}
+        <fieldset class="motor-ia__grupo">
+          <legend>Motor activo</legend>
+          <label class="motor-ia__opcion">
+            <input type="radio" name="motor_principal" value="gemini" {% if principal == 'gemini' %}checked{% endif %}>
+            <span class="motor-ia__texto">
+              <strong>Gemini</strong>
+              <small>Procesamiento mediante API de Google.</small>
+              <small>Modelo configurado: {{ gemini_modelo }}</small>
+              {% if principal == 'gemini' %}<span class="motor-ia__badge motor-ia__badge--principal">Motor principal</span>{% else %}<span class="motor-ia__badge">Motor alternativo</span>{% endif %}
+            </span>
+          </label>
+          <label class="motor-ia__opcion">
+            <input type="radio" name="motor_principal" value="ollama" {% if principal == 'ollama' %}checked{% endif %}>
+            <span class="motor-ia__texto">
+              <strong>Llama 3.1</strong>
+              <small>Procesamiento local mediante Ollama.</small>
+              <small>Modelo configurado: {{ ollama_modelo }}</small>
+              <span class="motor-ia__badge motor-ia__badge--local">Modelo local</span>
+              {% if principal == 'ollama' %}<span class="motor-ia__badge motor-ia__badge--principal">Motor principal</span>{% endif %}
+            </span>
+          </label>
+        </fieldset>
+
+        <fieldset class="motor-ia__grupo">
+          <legend>Comportamiento ante errores</legend>
+          <label class="motor-ia__opcion motor-ia__opcion--check">
+            <input type="checkbox" name="respaldo_automatico" {% if respaldo %}checked{% endif %}>
+            <span class="motor-ia__texto"><strong>Activar cambio automático al motor alternativo si el principal no responde.</strong></span>
+          </label>
+          <p class="motor-ia__nota">Ejemplo: si {{ principal_etiqueta }} presenta un error temporal, TrendWatch intenta procesar la tarea con {{ alternativo_etiqueta }}.</p>
+          <p class="motor-ia__nota">Sólo se usa el respaldo ante errores de conexión, tiempos de espera o indisponibilidad del servicio; no ante errores de configuración, permisos o datos inválidos.</p>
+          <p class="motor-ia__nota">Estado del respaldo automático: <strong>{% if respaldo %}activado{% else %}desactivado{% endif %}</strong>.
+            {% if ultimo_respaldo_en %}Último cambio automático: {{ ultimo_respaldo_en|date:"d/m/Y H:i" }} ({{ ultimo_respaldo_detalle }}).{% endif %}</p>
+        </fieldset>
+
+        <div class="motor-ia__acciones">
+          <button type="submit" class="btn btn--primary">Guardar configuración</button>
+        </div>
+      </form>
+
+      <div class="motor-ia__grupo" role="group" aria-labelledby="motor-ia-estado">
+        <h2 id="motor-ia-estado">Estado de los motores</h2>
+        <div class="motor-ia__estados">
+          {% for clave, nombre, modelo, persiste in estados %}
+          <article class="motor-ia__estado" data-proveedor="{{ clave }}" data-url="{% url 'probar_motor_ia' clave %}">
+            <header>
+              <h3>{{ nombre }}</h3>
+              <span class="motor-ia__rol">{% if clave == principal %}Motor principal{% else %}Motor alternativo{% endif %}</span>
+            </header>
+            <p class="motor-ia__modelo">Modelo: {{ modelo }}</p>
+            <div class="motor-ia__prueba" data-alcance="conexion">
+              <p class="motor-ia__linea"><strong>Conexión al servicio</strong>
+                <span class="motor-ia__pill" data-estado="sin_verificar" data-pill>Sin verificar</span></p>
+              <p data-detalle>Indica si el servicio responde; no garantiza que pueda generar.</p>
+              <button type="button" class="btn btn--ghost" data-probar="conexion">Probar conexión</button>
+            </div>
+            <div class="motor-ia__prueba" data-alcance="generacion">
+              <p class="motor-ia__linea"><strong>Capacidad de generación</strong>
+                <span class="motor-ia__pill" data-estado="sin_verificar" data-pill>Sin verificar</span></p>
+              <p data-detalle>Pide una respuesta mínima de prueba (sin datos de noticias); consume una llamada.</p>
+              <button type="button" class="btn btn--ghost" data-probar="generacion">Probar generación</button>
+            </div>
+            <p class="motor-ia__modelo">Análisis de publicaciones: {% if persiste %}se guardan con este motor{% else %}<strong>no se guardan</strong> con este motor (sólo clasificación de categorías y revisión de departamentos){% endif %}.</p>
+          </article>
+          {% endfor %}
+        </div>
+        <p class="motor-ia__nota">«Conectado» sólo significa que el servicio responde. Un motor puede responder y aun así fallar al generar (sobrecarga, timeouts): usá «Probar generación» para comprobarlo. Ninguna prueba ejecuta un análisis ni guarda datos.</p>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block extra_js %}<script src="{% static 'js/motor-ia.js' %}?v=2" defer></script>{% endblock %}

@@ -1,34 +1,50 @@
+import os
+import uuid
+import pytest
 import requests
 
-# 1. Autenticarse y obtener Token Access
-login_url = "http://localhost:8000/api/auth/login/"
-auth_payload = {"username": "admin", "password": "TrendWatch123456"}
+BASE_URL = os.getenv("TW_API_URL", "http://localhost:8000").rstrip("/")
+USERNAME = os.getenv("TW_TEST_USER")
+PASSWORD = os.getenv("TW_TEST_PASSWORD")
 
-response_auth = requests.post(login_url, json=auth_payload)
+pytestmark = pytest.mark.skipif(
+    not (USERNAME and PASSWORD),
+    reason="Configurá TW_TEST_USER y TW_TEST_PASSWORD",
+)
 
-if response_auth.status_code != 200:
-    print("❌ Error de Autenticación:", response_auth.text)
-    exit()
+@pytest.fixture(scope="session")
+def headers():
+    r = requests.post(f"{BASE_URL}/api/auth/login/",
+                      json={"username": USERNAME, "password": PASSWORD},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    token = data.get("access") or data.get("token") or data.get("access_token")
+    assert token, f"Sin token en respuesta: {data}"
+    return {"Authorization": f"Bearer {token}"}
 
-token = response_auth.json().get("access")
-print("✅ Token obtenido exitosamente.")
+def nuevo_payload():
+    uid = uuid.uuid4().hex
+    return {
+        "titulo": "Fuerte optimismo por la nueva temporada turística en Misiones",
+        "contenido": "Las reservas hoteleras superan las expectativas para los próximos meses.",
+        "fuente": "El Territorio",
+        "url": f"https://elterritorio.com.ar/noticia/{uid}",
+    }
 
-# 2. Enviar la publicación al endpoint de Ingesta
-crear_url = "http://localhost:8000/api/publicaciones/crear/"
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json"
-}
-pub_payload = {
-    "titulo": "Fuerte optimismo por la nueva temporada turistica en Misiones",
-    "contenido": "Las reservas hoteleras superan las expectativas para los proximos meses.",
-    "fuente": "El Territorio",
-    "url": "https://elterritorio.com.ar/noticia/8888"
-}
+def test_crear_publicacion(headers):
+    r = requests.post(f"{BASE_URL}/api/publicaciones/crear/",
+                      json=nuevo_payload(), headers=headers, timeout=15)
+    assert r.status_code in (201, 202), r.text
 
-response_ingesta = requests.post(crear_url, json=pub_payload, headers=headers)
+def test_duplicado_no_se_crea_dos_veces(headers):
+    p = nuevo_payload()
+    r1 = requests.post(f"{BASE_URL}/api/publicaciones/crear/", json=p, headers=headers, timeout=15)
+    r2 = requests.post(f"{BASE_URL}/api/publicaciones/crear/", json=p, headers=headers, timeout=15)
+    assert r1.status_code in (201, 202)
+    assert r2.status_code in (200, 409)  # RF-02
 
-print("\n--- RESPUESTA DE LA API ---")
-print("Status Code:", response_ingesta.status_code)
-print("JSON:")
-print(response_ingesta.text)
+def test_sin_token_es_rechazado():
+    r = requests.post(f"{BASE_URL}/api/publicaciones/crear/",
+                      json=nuevo_payload(), timeout=15)
+    assert r.status_code in (401, 403)

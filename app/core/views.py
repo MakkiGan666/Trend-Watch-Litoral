@@ -1,25 +1,29 @@
 import hashlib
+from datetime import date
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, Q
-from django.db.models.functions import Coalesce
-from .fechas import datos_fecha
+from django.db.models import Q, prefetch_related_objects
+from django.db.models import Exists, OuterRef
+from django.db.models.functions import Coalesce, TruncDate
+from django.core.paginator import Paginator
+from .fechas import ZONA_LOCAL, datos_fecha
 from .categorias import datos_categorias
+from .lectura_noticia import preparar_lectura
 from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator
 import re
-from html import unescape
-from urllib.parse import urlsplit
-from django.utils.html import strip_tags
+from urllib.parse import urlencode, urlsplit
 from django.views.decorators.http import require_safe, require_POST
 from django.http import Http404
 from django.urls import reverse
+from django.utils.text import slugify
 from django.utils.http import url_has_allowed_host_and_scheme
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
+from .busqueda_texto_v1 import plegar_v1
 from .services.cotizaciones import obtener_cotizaciones
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
@@ -34,21 +38,27 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 # Modelos y Formularios
 from core.models import (
-    Publicacion, Sentimiento, Locacion, TemaTrend, Tema, PublicacionTema, Categoria, PublicacionGuardada
+    Publicacion, Sentimiento, Locacion, Tema, PublicacionTema, Categoria, PublicacionGuardada, Etiqueta,
+    PublicacionEtiqueta,
 )
-from .forms import PublicacionForm
+from .forms import FiltrosPublicaciones, FiltrosCategoria, PublicacionForm
 from .serializers import PublicacionCreateSerializer, PublicacionUpdateSerializer, UserMeSerializer, LogoutJWTSerializer
 from .permissions import CrearPublicacion, EditarPublicacion, EliminarPublicacion, EjecutarIngesta, ProcesarIA
 from .roles import PERMISOS_PANEL
 from .views_comentarios import contexto_comentarios
 from .views_valoraciones import contexto_valoraciones
 from .services.indicadores import resumen_publicaciones
+from .services.relevancia import noticias_destacadas_por_categoria, tendencias_destacadas, rankings_valoraciones, ejemplos_rankings, registrar_clic
+from .services.observatorio import resumen_portada
+from .services import temas
+from .services.publicaciones_unicas import ids_publicaciones_unicas, publicaciones_unicas
 from .services.autenticacion import autenticar_identificador
 from .services.identidad import con_identidad_serializada, errores_identidad
 
 # Servicios (Scrapers, Sentiment & Gemini)
 from .services.scraper import fetch_and_store_elterritorio
 from .services.clasificacion import vincular_categoria as _vincular_categoria
+from .services.clasificacion import CATEGORIAS_PROYECTO
 from core.services.gemini_cliente import procesar_publicaciones_con_ia
 from core.services.resultado_ia import respuesta_resultado_ia
 from .services.sentimiento import analyze_sentiment_lexicon, compute_probabilistic_sentiment
@@ -62,27 +72,128 @@ from .services.integridad_sentimiento import (
 # ==========================================
 
 
-def landing(request):
-    """
-    Carga la portada (inicio.html) enviando las tendencias/temas destacados
-    y calculando el total de publicaciones por cada tema.
-    """
-    featured_trends = TemaTrend.objects.select_related(
-        'id_temas', 
-        'id_trends', 
-        'id_temas__id_categoria'
-    ).annotate(
-        publication_count=Count('id_temas__publicaciones')
-    ).all()[:6]
+def _contexto_inicio(request):
+    categorias_inicio = noticias_destacadas_por_categoria()
+    tendencias_inicio = tendencias_destacadas()
+    publicaciones_visibles = [
+        publicacion
+        for grupo in categorias_inicio
+        for publicacion in grupo['publicaciones']
+    ] + [tendencia['publicacion'] for tendencia in tendencias_inicio]
+    prefetch_related_objects(publicaciones_visibles, 'etiquetas__etiqueta')
+    return {
+        # Lectura pública y agregada de la agenda; no expone el estado del análisis.
+        'observatorio': resumen_portada(),
+        'categorias_inicio': categorias_inicio,
+        'tendencias_inicio': tendencias_inicio,
+        'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.has_perms(PERMISOS_PANEL) else None,
+    }
 
-    return render(request, 'inicio.html', {
-        'featured_trends': featured_trends,
-        'indicadores_inicio': resumen_publicaciones(Publicacion.objects.all()) if request.user.is_superuser else None,
+
+def landing(request):
+    """Portada del observatorio: lectura de la agenda, noticias por categoría y tendencias reales."""
+    return render(request, 'inicio.html', _contexto_inicio(request))
+
+def categorias(request):
+    tarjetas = [{'nombre': nombre, 'slug': slugify(nombre)} for nombre in CATEGORIAS_PROYECTO]
+    ranking_positivo, ranking_polemico = rankings_valoraciones(limite=15)
+    candidatas_positivas, candidatas_polemicas = (
+        ejemplos_rankings(limite=30) if len(ranking_positivo) < 15 or len(ranking_polemico) < 15 else ([], [])
+    )
+    def completar(reales, candidatas):
+        visibles = publicaciones_unicas([*reales, *candidatas], limite=15)
+        ids_reales = {publicacion.pk for publicacion in reales}
+        return [publicacion for publicacion in visibles if publicacion.pk not in ids_reales]
+
+    ejemplos_positivos = completar(ranking_positivo, candidatas_positivas)
+    ejemplos_polemicos = completar(ranking_polemico, candidatas_polemicas)
+    tendencias = tendencias_destacadas()
+    prefetch_related_objects(
+        [*ranking_positivo, *ranking_polemico, *ejemplos_positivos, *ejemplos_polemicos,
+         *(tendencia['publicacion'] for tendencia in tendencias)],
+        'etiquetas__etiqueta',
+    )
+    return render(request, 'categorias.html', {
+        'categorias_disponibles': tarjetas, 'departamentos': DEPARTAMENTOS,
+        'tendencias': tendencias,
+        'ranking_positivo': ranking_positivo, 'ranking_polemico': ranking_polemico,
+        'ejemplos_positivos': ejemplos_positivos, 'ejemplos_polemicos': ejemplos_polemicos,
     })
 
 
-def categorias(request):
-    return render(request, 'categorias.html')
+@require_safe
+def publicaciones_categoria(request, slug):
+    categoria = next((nombre for nombre in CATEGORIAS_PROYECTO if slugify(nombre) == slug), None)
+    if categoria is None:
+        raise Http404('Categoría no encontrada')
+    filtros = FiltrosCategoria(request.GET)
+    filtros_validos = filtros.is_valid()
+    publicaciones = Publicacion.objects.filter(
+        temas__id_categoria__nombre_categoria=categoria,
+    ) if filtros_validos else Publicacion.objects.none()
+    if filtros_validos:
+        if filtros.cleaned_data['fecha']:
+            publicaciones = publicaciones.annotate(
+                dia_visible=TruncDate(Coalesce('fecha_publicacion', 'fecha_captura'), tzinfo=ZONA_LOCAL)
+            ).filter(dia_visible=filtros.cleaned_data['fecha'])
+    orden = filtros.cleaned_data.get('orden') or 'recientes'
+    if orden == 'antiguas':
+        publicaciones = publicaciones.distinct().order_by(
+            Coalesce('fecha_publicacion', 'fecha_captura').asc(nulls_last=True), 'pk',
+        )
+    else:
+        publicaciones = publicaciones.distinct().order_by(*_orden_por_publicacion())
+    ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+    ))
+    pagina = Paginator(
+        publicaciones.filter(pk__in=ids_visibles).prefetch_related('etiquetas__etiqueta'), 24,
+    ).get_page(request.GET.get('pagina'))
+    parametros = request.GET.copy()
+    parametros.pop('pagina', None)
+    return render(request, 'categoria_noticias.html', {
+        'categoria': categoria, 'pagina': pagina, 'filtros_categoria': filtros,
+        'fecha_seleccionada': filtros.cleaned_data.get('fecha') if filtros_validos else None,
+        'fecha_maxima': timezone.localtime(timezone.now(), ZONA_LOCAL).date(),
+        'orden_seleccionado': orden, 'filtros_query': parametros.urlencode(),
+        'filtros_aplicados': bool(filtros.cleaned_data.get('fecha') or orden == 'antiguas') if filtros_validos else bool(request.GET),
+    })
+
+
+@require_safe
+def publicaciones_etiqueta(request, slug):
+    """Noticias con la etiqueta; `?y=<slug>` (repetible) exige además otras etiquetas."""
+    etiqueta = get_object_or_404(Etiqueta, slug=slug)
+    adicionales = list(Etiqueta.objects.filter(
+        slug__in=[s for s in request.GET.getlist('y') if s != slug][:temas.MAX_ETIQUETAS_FILTRO - 1],
+    ).order_by('nombre'))
+    slugs = [etiqueta.slug, *[e.slug for e in adicionales]]
+    # Filtro por subconsultas: una noticia con la misma etiqueta léxica y de IA aparece una vez.
+    publicaciones = temas.filtrar_por_etiquetas(Publicacion.objects.all(), slugs).order_by(*_orden_por_publicacion())
+    ids_visibles = ids_publicaciones_unicas(publicaciones.values_list(
+        'pk', 'titulo', 'fecha_publicacion', 'fecha_captura',
+    ))
+    visibles = publicaciones.filter(pk__in=ids_visibles)
+    pagina = Paginator(
+        visibles.prefetch_related('etiquetas__etiqueta', 'temas__id_categoria'), 24,
+    ).get_page(request.GET.get('pagina'))
+
+    def url_con(seleccion):
+        base = reverse('publicaciones_etiqueta', args=[seleccion[0]])
+        return base + ('?' + urlencode([('y', s) for s in seleccion[1:]]) if seleccion[1:] else '')
+
+    combinables = []
+    if len(slugs) < temas.MAX_ETIQUETAS_FILTRO:
+        combinables = [{**fila, 'url': url_con([*slugs, fila['slug']])}
+                       for fila in temas.etiquetas_coocurrentes(Publicacion.objects.filter(pk__in=ids_visibles), slugs)
+                       if fila['total'] >= 2]
+    return render(request, 'etiqueta_noticias.html', {
+        'etiqueta': etiqueta, 'pagina': pagina,
+        'adicionales': [{'etiqueta': e, 'url_sin': url_con([s for s in slugs if s != e.slug])} for e in adicionales],
+        'combinables': combinables,
+        'departamentos': temas.departamentos_de_etiqueta(visibles, etiqueta.slug)[:6],
+        'consulta_filtros': urlencode([('y', s) for s in slugs[1:]]),
+    })
 
 
 @require_safe
@@ -103,12 +214,15 @@ def credito_fuente(fuente):
 @require_safe
 def noticia(request, pk):
     """Lectura interna de una publicación existente, sin disparar ingesta ni IA."""
-    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria'), pk=pk)
+    publicacion = get_object_or_404(Publicacion.objects.prefetch_related('temas__id_categoria', 'etiquetas__etiqueta'), pk=pk)
+    registrar_clic(publicacion, request.user)
     categorias_noticia = _categorias_de_publicacion(publicacion)
     localidades_noticia = list(dict.fromkeys(
         Locacion.objects.filter(id_publicacion_api=publicacion)
         .exclude(location='').values_list('location', flat=True)
     ))
+    fecha_navegacion = datos_fecha(publicacion)
+    fecha_legible = date.fromisoformat(fecha_navegacion['fecha_dia']).strftime('%d/%m/%Y') if fecha_navegacion['fecha_dia'] else None
 
     def enlace_seguro(valor):
         try:
@@ -120,12 +234,17 @@ def noticia(request, pk):
 
     return render(request, 'noticia.html', {
         'publicacion': publicacion,
-        'fecha_navegacion': datos_fecha(publicacion),
+        'fecha_navegacion': fecha_navegacion,
+        'fecha_legible': fecha_legible,
         'categorias_noticia': categorias_noticia,
+        'etiquetas_noticia': publicacion.etiquetas_visibles,
+        'etiquetas_ia': [r for r in publicacion.etiquetas_visibles if r.origen == PublicacionEtiqueta.Origen.IA],
+        'palabras_clave': [r for r in publicacion.etiquetas_visibles if r.origen != PublicacionEtiqueta.Origen.IA],
+        'relacionadas': temas.publicaciones_relacionadas(publicacion),
         'seccion_noticia': datos_categorias(publicacion)['seccion_origen'],
         'localidades_noticia': localidades_noticia,
-        'contenido_noticia': unescape(strip_tags(publicacion.contenido or '')).strip(),
-        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_url),
+        **preparar_lectura(publicacion.contenido),
+        'imagen_noticia': publicacion.imagen_archivo.url if publicacion.imagen_archivo else enlace_seguro(publicacion.imagen_publica_url),
         'noticia_guardada': request.user.is_authenticated and PublicacionGuardada.objects.filter(usuario=request.user, publicacion=publicacion).exists(),
         'credito_imagen': credito_fuente(publicacion.fuente),
         'enlace_original': enlace_seguro(publicacion.url),
@@ -277,12 +396,8 @@ def login_view(request):
             status=400,
         )
 
-    featured_trends = TemaTrend.objects.select_related(
-        'id_temas', 'id_trends', 'id_temas__id_categoria'
-    ).annotate(publication_count=Count('id_temas__publicaciones')).all()[:6]
-
     return render(request, 'inicio.html', {
-        'featured_trends': featured_trends,
+        **_contexto_inicio(request),
         'open_login_modal': True,
         'login_identifier': identifier,
         'login_error': error_message,
@@ -303,12 +418,86 @@ def logout_view(request):
 @login_required(login_url='login')
 @permission_required(PERMISOS_PANEL, raise_exception=True)
 def publicaciones(request):
-    """ Muestra el panel con las publicaciones, sentimientos y locaciones """
-    publicaciones = Publicacion.objects.select_related('id_registro')\
-                                       .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')\
-                                       .order_by(*_orden_por_publicacion())[:100]
+    """Filtra todo el archivo en la base y renderiza sólo la página solicitada."""
+    nombres_fuente = list(Publicacion.objects.order_by().values_list('fuente', flat=True).distinct())
+    fuentes_territorio = [
+        nombre for nombre in nombres_fuente
+        if re.fullmatch(r'El\s+Territorio(?:\s*\([^)]*\))?', nombre or '', re.I)
+    ]
+    fuentes = sorted({
+        'El Territorio' if re.fullmatch(r'El\s+Territorio(?:\s*\([^)]*\))?', nombre, re.I) else nombre
+        for nombre in nombres_fuente if nombre
+    }, key=str.casefold)
+    filtros = FiltrosPublicaciones(request.GET, fuentes=fuentes)
+    filtros_validos = filtros.is_valid()
+    fecha_seleccionada = filtros.cleaned_data.get('fecha')
+    publicaciones_filtradas = Publicacion.objects.all() if filtros_validos else Publicacion.objects.none()
+    if filtros_validos:
+        valores = filtros.cleaned_data
+        for termino in valores['q'].split():
+            comparable = plegar_v1(termino)
+            publicaciones_filtradas = publicaciones_filtradas.filter(
+                Q(titulo_busqueda__contains=comparable) |
+                Q(contenido_busqueda__contains=comparable) |
+                Q(fuente__icontains=termino)
+            )
+        if valores['fecha']:
+            publicaciones_filtradas = publicaciones_filtradas.annotate(
+                dia_visible=TruncDate(Coalesce('fecha_publicacion', 'fecha_captura'), tzinfo=ZONA_LOCAL)
+            ).filter(dia_visible=valores['fecha'])
+        if valores['fuente']:
+            if valores['fuente'] == 'El Territorio':
+                publicaciones_filtradas = publicaciones_filtradas.filter(fuente__in=fuentes_territorio)
+            else:
+                publicaciones_filtradas = publicaciones_filtradas.filter(fuente=valores['fuente'])
+        if valores['categoria'] == '__missing':
+            publicaciones_filtradas = publicaciones_filtradas.exclude(
+                pk__in=PublicacionTema.objects.order_by().values('id_publicacion_api_id')
+            )
+        elif valores['categoria']:
+            publicaciones_filtradas = publicaciones_filtradas.filter(temas__id_categoria_id=valores['categoria'])
+        if valores['localidad']:
+            ubicaciones = {departamento['slug']: [] for departamento in DEPARTAMENTOS}
+            for nombre in Locacion.objects.order_by().values_list('location', flat=True).distinct():
+                slug = departamento_de_ubicacion(nombre)
+                if slug:
+                    ubicaciones[slug].append(nombre)
+            if valores['localidad'] == '__missing':
+                publicaciones_filtradas = publicaciones_filtradas.exclude(
+                    departamento__in=ubicaciones
+                ).exclude(locacion__location__in=[nombre for grupo in ubicaciones.values() for nombre in grupo])
+            else:
+                slug = valores['localidad']
+                publicaciones_filtradas = publicaciones_filtradas.filter(
+                    Q(departamento=slug) | Q(locacion__location__in=ubicaciones[slug])
+                )
+    ids = publicaciones_filtradas.order_by().values('pk').distinct()
+    base = Publicacion.objects.filter(pk__in=ids).annotate(
+        tiene_analisis=Exists(Sentimiento.objects.filter(id_publicacion_api=OuterRef('pk')))
+    )
+    pagina = Paginator(
+        base.select_related('id_registro')
+        .prefetch_related('sentimiento_set', 'locacion_set', 'temas__id_categoria')
+        .order_by(*_orden_por_publicacion()), 25,
+    ).get_page(request.GET.get('page'))
+    analizadas = base.filter(tiene_analisis=True).count()
+    resumen = {'total': pagina.paginator.count, 'analizadas': analizadas,
+               'pendientes': pagina.paginator.count - analizadas}
+
+    def enlace_pagina(numero):
+        parametros = request.GET.copy()
+        parametros['page'] = numero
+        return reverse('publicaciones') + '?' + parametros.urlencode()
+
+    enlaces = [
+        {'numero': numero, 'url': enlace_pagina(numero), 'actual': numero == pagina.number,
+         'separador': numero == Paginator.ELLIPSIS}
+        for numero in pagina.paginator.get_elided_page_range(pagina.number, on_each_side=2, on_ends=1)
+    ]
     departamentos_por_slug = {d['slug']: d['nombre'] for d in DEPARTAMENTOS}
-    for publicacion in publicaciones:
+    for publicacion in pagina.object_list:
+        publicacion.dashboard_fecha = publicacion.fecha_publicacion or publicacion.fecha_captura
+        publicacion.dashboard_fecha_info = datos_fecha(publicacion)
         detalles = datos_categorias(publicacion)['categorias_detalle']
         publicacion.dashboard_categorias = [c['id'] for c in detalles]
         publicacion.categorias_navegacion = list(dict.fromkeys(c['nombre'] for c in detalles))
@@ -320,7 +509,16 @@ def publicaciones(request):
         publicacion.dashboard_departamentos = sorted(slugs)
         publicacion.dashboard_departamento_nombres = [departamentos_por_slug[slug] for slug in sorted(slugs)]
     return render(request, 'core/publicaciones.html', {
-        'publicaciones': publicaciones,
+        'publicaciones': pagina.object_list,
+        'pagina': pagina,
+        'enlaces_pagina': enlaces,
+        'anterior_url': enlace_pagina(pagina.previous_page_number()) if pagina.has_previous() else None,
+        'siguiente_url': enlace_pagina(pagina.next_page_number()) if pagina.has_next() else None,
+        'resumen': resumen,
+        'total_global': Publicacion.objects.count(),
+        'filtros': filtros,
+        'fecha_seleccionada': fecha_seleccionada.isoformat() if fecha_seleccionada else '',
+        'fuentes_dashboard': fuentes,
         'departamentos': DEPARTAMENTOS,
         'categorias_dashboard': Categoria.objects.order_by('nombre_categoria', 'pk'),
     })

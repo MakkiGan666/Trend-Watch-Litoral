@@ -1,0 +1,28 @@
+{% load l10n %}
+<header class="analytics-section__head"><p class="analytics-eyebrow">{{ tematica.origen_nombre }}</p><h3>¿Qué temas concretos aparecen en estas noticias?</h3>
+  <p>{% if tematica.origen == 'ia' %}Etiquetas temáticas identificadas con IA y validadas contra el texto de cada noticia.{% else %}Todavía no hay etiquetas de IA: se muestran las palabras clave extraídas del texto. Al generar etiquetas con IA, este bloque pasa a usarlas.{% endif %}</p></header>
+<div class="analytics-grid">
+  <section class="analytics-chart glass glass--sheen">
+    <h2>Etiquetas más frecuentes</h2><p>Publicaciones distintas del período filtrado que tienen cada etiqueta.</p>
+    <ul class="analytics-bars">{% for fila in tematica.frecuentes %}<li><div><a class="analytics-bars__link" href="{{ fila.url }}">{{ fila.nombre }}</a><strong>{{ fila.total }}</strong></div><span class="analytics-bar" aria-hidden="true"><i style="width:{{ fila.ancho|unlocalize }}%"></i></span></li>{% empty %}<li>Sin etiquetas para estas publicaciones.</li>{% endfor %}</ul>
+  </section>
+  {% if tematica.alza %}
+  <section class="analytics-chart glass glass--sheen analytics-compare">
+    <h2>Etiquetas en aumento</h2>
+    <p>{{ tematica.alza.periodo.0|date:"d/m/Y" }} – {{ tematica.alza.periodo.1|date:"d/m/Y" }} contra {{ tematica.alza.anterior.0|date:"d/m/Y" }} – {{ tematica.alza.anterior.1|date:"d/m/Y" }}. Sólo etiquetas con al menos 3 publicaciones en el período actual. Cuenta publicaciones registradas: un aumento también puede reflejar más ingesta.</p>
+    <div class="analytics-movers"><div><ul>{% for fila in tematica.alza.etiquetas %}<li><a href="{% url 'publicaciones_etiqueta' fila.slug %}">{{ fila.nombre }}</a><span class="is-up">{{ fila.anterior }} → {{ fila.actual }}{% if fila.variacion is not None %} (+{{ fila.variacion }}%){% else %} (nueva){% endif %}</span></li>{% empty %}<li class="analytics-empty">Ninguna etiqueta creció lo suficiente entre ambos períodos.</li>{% endfor %}</ul></div></div>
+  </section>
+  {% endif %}
+  {% if tematica.por_departamento %}
+  <section class="analytics-chart glass glass--sheen">
+    <h2>Temas por departamento</h2><p>Sólo noticias con departamento identificado; etiquetas presentes en 2 o más noticias del departamento.</p>
+    <ul class="analytics-bars">{% for grupo in tematica.por_departamento %}<li><div><span>{{ grupo.nombre }}</span></div><p>{% for e in grupo.etiquetas %}<a href="{% url 'publicaciones_etiqueta' e.slug %}">{{ e.nombre }}</a> ({{ e.total }}){% if not forloop.last %} · {% endif %}{% endfor %}</p></li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+  {% if tematica.negativas %}
+  <section class="analytics-chart glass glass--sheen">
+    <h2>Temas con más noticias de tono negativo</h2><p>Sentimiento estimado por IA del contenido de la noticia (polaridad menor a −0,05). Sólo noticias con un análisis válido.</p>
+    <div class="analytics-movers"><div><ul>{% for fila in tematica.negativas %}<li><a href="{% url 'publicaciones_etiqueta' fila.slug %}">{{ fila.nombre }}</a><span class="is-down">{{ fila.negativas }} de {{ fila.total }} ({{ fila.proporcion }}%)</span></li>{% endfor %}</ul></div></div>
+  </section>
+  {% endif %}
+</div>

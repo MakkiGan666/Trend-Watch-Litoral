@@ -1,0 +1,24 @@
+/* Panel de seguimiento de IA: reutiliza el layout de administración. */
+.seguimiento-ia__filtros{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:20px 0}
+.seguimiento-ia__filtros label{display:grid;gap:6px;color:var(--tx-2);font-size:12px}
+.seguimiento-ia__filtros select,.seguimiento-ia__filtros input{width:100%;min-width:0;padding:9px 11px;border:1px solid var(--edge-hi);border-radius:10px;background:var(--ink-900);color:var(--tx)}
+.seguimiento-ia__acciones{display:flex;align-items:end;gap:14px}
+.seguimiento-ia__acciones a,.seguimiento-ia__volver,.seguimiento-ia__tabla a{color:var(--aqua)}
+.seguimiento-ia__error{grid-column:1/-1;color:var(--warn)}
+.seguimiento-ia__resumen{display:flex;flex-wrap:wrap;gap:8px 18px;margin:0 0 14px;padding:0;list-style:none;color:var(--tx-2);font-size:13px}
+.seguimiento-ia__resumen strong{color:var(--mist)}
+.seguimiento-ia__tabla small{color:var(--tx-2)}
+.seguimiento-ia__pill{display:inline-block;padding:2px 9px;border:1px solid var(--edge-hi);border-radius:999px;font-size:12px}
+.seguimiento-ia__estado--exitosa{border-color:var(--aqua-line);color:var(--aqua)}
+.seguimiento-ia__estado--fallida,.seguimiento-ia__estado--invalida{border-color:var(--warn);color:var(--warn)}
+.seguimiento-ia__datos{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0}
+.seguimiento-ia__datos div{padding:12px;border:1px solid var(--edge);border-radius:12px}
+.seguimiento-ia__datos dt{color:var(--tx-2);font-size:12px;margin-bottom:4px}
+.seguimiento-ia__datos dd{margin:0;overflow-wrap:anywhere}
+.seguimiento-ia__bloque{margin-top:22px}
+.seguimiento-ia__bloque h2{font-size:17px;margin-bottom:10px}
+.seguimiento-ia__bloque h3{font-size:14px;margin:12px 0 6px;color:var(--tx-2)}
+.seguimiento-ia__bloque summary{cursor:pointer;font-weight:600}
+.seguimiento-ia__bloque pre{max-height:420px;overflow:auto;padding:14px;border:1px solid var(--edge);border-radius:12px;background:var(--ink-900);white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.55}
+.seguimiento-ia__etiquetas{display:flex;flex-wrap:wrap;gap:7px}
+.seguimiento-ia__etiquetas a{padding:3px 10px;border:1px solid var(--aqua-line);border-radius:999px;background:var(--aqua-soft);color:var(--mist);font-size:12px;text-decoration:none}

@@ -1,4 +1,7 @@
-from django.db import models
+from .busqueda_texto_v1 import TextoComparableV1
+from .imagenes import es_portada_generica
+
+from django.db import models, router, transaction
 from django.utils import timezone
 from uuid import uuid4
 from django.conf import settings
@@ -23,6 +26,19 @@ class PublicacionGuardada(models.Model):
     class Meta:
         ordering = ['-fecha_creacion', '-pk']
         constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='guardado_unico_usuario_noticia')]
+
+
+class ClicPublicacion(models.Model):
+    """Lectura única por usuario y noticia, con actividad reciente para tendencias."""
+
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='clics_noticias')
+    publicacion = models.ForeignKey('Publicacion', on_delete=models.CASCADE, related_name='clics')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    ultima_visita = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['usuario', 'publicacion'], name='clic_unico_usuario_noticia')]
+        indexes = [models.Index(fields=['fecha_creacion'], name='clic_noticia_fecha_idx')]
 
 
 class Role(models.Model):
@@ -64,12 +80,27 @@ class RegistroDatos(models.Model):
         return f"Registro {self.id_registro} - {self.fuentes_api}"
 
 
+class PublicacionManager(models.Manager):
+    def get_queryset(self):
+        # Sólo son necesarios para filtrar en SQL; no se presentan ni se leen
+        # desde instancias en las vistas. Evitar duplicar texto transferido.
+        return super().get_queryset().defer('titulo_busqueda', 'contenido_busqueda')
+
+
 class Publicacion(models.Model):
+    objects = PublicacionManager()
+
     id_publicacion_api = models.AutoField(primary_key=True)
     hash_origen = models.CharField(max_length=64, unique=True, default="")
     fuente = models.CharField(max_length=100, default='El Territorio')  # <-- Agregado default
     titulo = models.CharField(max_length=255, default="")
     contenido = models.TextField()
+    titulo_busqueda = models.GeneratedField(
+        expression=TextoComparableV1('titulo'), output_field=models.TextField(), db_persist=True, serialize=False,
+    )
+    contenido_busqueda = models.GeneratedField(
+        expression=TextoComparableV1('contenido'), output_field=models.TextField(), db_persist=True, serialize=False,
+    )
     # El Territorio usa slugs largos: 200 (el valor por defecto) descartaba noticias reales.
     url = models.URLField(max_length=500, default="")
     # Se enlaza la foto original del medio (no se copia); la web le superpone el crédito.
@@ -92,9 +123,73 @@ class Publicacion(models.Model):
     def __str__(self):
         return self.titulo
 
+    def save(self, *args, **kwargs):
+        # Incluir pre_save/post_save en la misma transacción que el texto.
+        # Así un fallo de etiquetas no deja el artículo guardado sin sincronizar.
+        using = kwargs.get('using') or router.db_for_write(type(self), instance=self)
+        kwargs['using'] = using
+        with transaction.atomic(using=using):
+            return super().save(*args, **kwargs)
+
+    @property
+    def etiquetas_visibles(self):
+        """Etiquetas para mostrar: primero las temáticas de IA, luego las léxicas, sin repetir.
+
+        Trabaja sobre `etiquetas.all()` para aprovechar `prefetch_related('etiquetas__etiqueta')`.
+        """
+        relaciones = sorted(self.etiquetas.all(), key=lambda r: (r.origen != PublicacionEtiqueta.Origen.IA, r.posicion, r.pk))
+        vistas, resultado = set(), []
+        for relacion in relaciones:
+            if relacion.etiqueta_id not in vistas:
+                vistas.add(relacion.etiqueta_id)
+                resultado.append(relacion)
+        return resultado
+
+    @property
+    def departamento_nombre(self):
+        """Nombre del departamento identificado; '' si no hay información territorial válida."""
+        from .localidades import DEPARTAMENTOS
+        return next((d['nombre'] for d in DEPARTAMENTOS if d['slug'] == self.departamento), '') if self.departamento else ''
+
+    @property
+    def categoria_principal(self):
+        """Primera categoría asociada (usa `prefetch_related('temas__id_categoria')` si está)."""
+        temas = sorted(self.temas.all(), key=lambda t: t.pk)
+        return temas[0].id_categoria.nombre_categoria if temas and temas[0].id_categoria_id else ''
+
     @property
     def imagen_publica_url(self):
-        return self.imagen_archivo.url if self.imagen_archivo else self.imagen_url
+        if self.imagen_archivo:
+            return self.imagen_archivo.url
+        return '' if es_portada_generica(self.imagen_url) else self.imagen_url
+
+
+class RevisionDepartamento(models.Model):
+    """Decisión auditable para noticias que llegaron sin departamento."""
+
+    class Metodo(models.TextChoices):
+        REGLAS = 'reglas', 'Reglas locales'
+        IA = 'ia', 'IA'
+
+    class Estado(models.TextChoices):
+        ASIGNADO = 'asignado', 'Departamento asignado'
+        PROVINCIAL = 'provincial', 'Misiones sin departamento claro'
+        FUERA = 'fuera', 'Fuera de Misiones'
+        VARIOS = 'varios', 'Varios departamentos'
+        SIN_EVIDENCIA = 'sin_evidencia', 'Sin evidencia suficiente'
+
+    publicacion = models.OneToOneField(Publicacion, on_delete=models.CASCADE, related_name='revision_departamento')
+    metodo = models.CharField(max_length=8, choices=Metodo.choices)
+    estado = models.CharField(max_length=16, choices=Estado.choices)
+    departamento = models.CharField(max_length=30, blank=True, default='')
+    lugar = models.CharField(max_length=80, blank=True, default='')
+    evidencia = models.CharField(max_length=240, blank=True, default='')
+    modelo = models.CharField(max_length=80, blank=True, default='')
+    historial = models.JSONField(default=list, blank=True)
+    fecha_revision = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'Revisión territorial de publicación #{self.publicacion_id}: {self.get_estado_display()}'
 
 
 class Categoria(models.Model):
@@ -109,6 +204,8 @@ class Categoria(models.Model):
 
 
 class Trend(models.Model):
+    # Identidad de tendencias automáticas; los registros históricos se conservan.
+    clave = models.CharField(max_length=50, null=True, blank=True, unique=True, editable=False)
     id_trends = models.AutoField(primary_key=True)
     relevancia = models.CharField(max_length=50)
     intervalos_periodo = models.CharField(max_length=100)
@@ -141,6 +238,8 @@ class Tema(models.Model):
 
 
 class PublicacionTema(models.Model):
+    # Las tablas históricas usan AutoField; declararlo evita cambios de tipo espurios.
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_publicacion_api = models.ForeignKey(
         Publicacion, on_delete=models.CASCADE, db_column='id_publicacion_api'
     )
@@ -153,7 +252,50 @@ class PublicacionTema(models.Model):
         unique_together = (('id_publicacion_api', 'id_temas'),)
 
 
+class Etiqueta(models.Model):
+    nombre = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=110, unique=True)
+
+    def __str__(self):
+        return self.nombre
+
+
+class PublicacionEtiqueta(models.Model):
+    """Asociación publicación–etiqueta con su procedencia.
+
+    Un mismo catálogo (`Etiqueta`) sirve a dos orígenes independientes:
+    - `lexico`: extracción determinista del texto (`services.etiquetas`), sin IA.
+    - `ia`: etiquetas temáticas validadas a partir de una respuesta de Gemini u Ollama
+      (`services.etiquetas_ia`); `ejecucion` apunta al registro de seguimiento que las produjo.
+    Cada origen se sincroniza por separado: recalcular uno nunca borra el otro.
+    """
+    class Origen(models.TextChoices):
+        LEXICO = 'lexico', 'Extracción del texto'
+        IA = 'ia', 'Inteligencia artificial'
+
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='etiquetas')
+    etiqueta = models.ForeignKey(Etiqueta, on_delete=models.CASCADE, related_name='publicaciones')
+    posicion = models.PositiveSmallIntegerField()
+    origen = models.CharField(max_length=8, choices=Origen.choices, default=Origen.LEXICO)
+    # Null en las asociaciones anteriores a este campo: no se inventa una fecha.
+    fecha_asignacion = models.DateTimeField(null=True, blank=True)
+    ejecucion = models.ForeignKey(
+        'EjecucionIA', on_delete=models.SET_NULL, null=True, blank=True, related_name='etiquetas_asignadas',
+    )
+    # "proveedor:modelo" que generó la etiqueta; se conserva aunque falte el registro de seguimiento.
+    modelo_ia = models.CharField(max_length=100, blank=True, default='')
+
+    class Meta:
+        ordering = ['posicion', 'pk']
+        constraints = [
+            models.UniqueConstraint(fields=['publicacion', 'etiqueta', 'origen'], name='etiqueta_unica_por_publicacion_origen'),
+            models.UniqueConstraint(fields=['publicacion', 'origen', 'posicion'], name='posicion_unica_por_publicacion_origen'),
+        ]
+        indexes = [models.Index(fields=['origen', 'etiqueta'], name='pubetiq_origen_etiqueta_idx')]
+
+
 class TemaTrend(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_temas = models.ForeignKey(
         Tema, on_delete=models.CASCADE, db_column='id_temas'
     )
@@ -192,6 +334,7 @@ class Sentimiento(models.Model):
 
 
 class VotoPublicacion(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_user = models.ForeignKey(
         User, on_delete=models.CASCADE, db_column='id_user'
     )
@@ -223,6 +366,7 @@ class Auditoria(models.Model):
 
 
 class UserAuditoria(models.Model):
+    id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_user = models.ForeignKey(
         User, on_delete=models.CASCADE, db_column='id_user'
     )
@@ -236,9 +380,15 @@ class UserAuditoria(models.Model):
 
 
 class Comentario(models.Model):
+    class Estado(models.TextChoices):
+        PENDIENTE = 'pendiente', 'Pendiente de revisión'
+        PUBLICADO = 'publicado', 'Publicado'
+        RECHAZADO = 'rechazado', 'Rechazado'
+
     publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='comentarios')
     autor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='comentarios_noticias')
     texto = models.TextField(max_length=2000)
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_edicion = models.DateTimeField(null=True, blank=True)
 
@@ -354,3 +504,115 @@ class SentimientoComentario(models.Model):
         if self.polaridad < -0.05:
             return 'negativo'
         return 'neutral'
+
+
+class ConfiguracionIA(models.Model):
+    """Configuración del motor de IA; una única fila (pk=1) administrada desde el panel.
+
+    Sólo guarda preferencias del administrador. Las credenciales (GEMINI_API_KEY)
+    y la dirección de Ollama siguen en variables de entorno: nunca en la base.
+    Sin fila rige el valor predeterminado (Gemini con respaldo automático).
+    """
+    PK = 1
+    PRINCIPAL_POR_DEFECTO = 'gemini'
+    RESPALDO_POR_DEFECTO = True
+
+    class Motor(models.TextChoices):
+        GEMINI = 'gemini', 'Gemini'
+        OLLAMA = 'ollama', 'Llama 3.1 (Ollama)'
+
+    motor_principal = models.CharField(max_length=16, choices=Motor.choices, default=Motor.GEMINI)
+    respaldo_automatico = models.BooleanField(default=True)
+    # Último cambio automático de motor (informativo, para el panel).
+    ultimo_respaldo_en = models.DateTimeField(null=True, blank=True)
+    ultimo_respaldo_detalle = models.CharField(max_length=120, blank=True, default='')
+    actualizado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'configuración de IA'
+        verbose_name_plural = 'configuración de IA'
+        constraints = [
+            models.CheckConstraint(condition=models.Q(pk=1), name='configuracionia_fila_unica'),
+            models.CheckConstraint(
+                condition=models.Q(motor_principal__in=['gemini', 'ollama']),
+                name='configuracionia_motor_valido',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Motor principal: {self.get_motor_principal_display()}'
+
+
+class EjecucionIA(models.Model):
+    """Historial de cada llamada a un modelo de IA (seguimiento y trazabilidad).
+
+    Un registro por intento de proveedor: si el motor principal falla y responde el
+    respaldo, quedan dos filas. Se escribe desde un único servicio
+    (`core.services.ia.seguimiento`) y nunca se edita la respuesta original: el
+    resultado que finalmente usa el sistema se guarda aparte en `resultado`.
+    No contiene credenciales; las entradas que podrían tener datos personales
+    (comentarios de usuarios) no se copian, sólo se referencia su id.
+    """
+
+    class Estado(models.TextChoices):
+        EXITOSA = 'exitosa', 'Exitosa'
+        FALLIDA = 'fallida', 'Fallida'
+        INVALIDA = 'invalida', 'Respuesta inválida'
+
+    class Tarea(models.TextChoices):
+        ANALISIS_PUBLICACION = 'analisis_publicacion', 'Sentimiento y localidades de noticias'
+        CLASIFICACION_CATEGORIAS = 'clasificacion_categorias', 'Clasificación de categorías'
+        REVISION_DEPARTAMENTOS = 'revision_departamentos', 'Extracción territorial (departamentos)'
+        ETIQUETADO_TEMATICO = 'etiquetado_tematico', 'Etiquetas temáticas'
+        SENTIMIENTO_COMENTARIO = 'sentimiento_comentario', 'Sentimiento de comentarios'
+        OTRA = 'otra', 'Otra operación'
+
+    identificador = models.UUIDField(default=uuid4, unique=True, editable=False)
+    tarea = models.CharField(max_length=40)
+    proveedor = models.CharField(max_length=16)
+    modelo = models.CharField(max_length=80, blank=True, default='')
+    # True si respondió el motor alternativo porque el principal falló.
+    respaldo = models.BooleanField(default=False)
+    # Sin restricción de clave foránea: el historial sobrevive a la publicación y
+    # nunca puede impedir ni romper una operación principal.
+    publicacion = models.ForeignKey(
+        Publicacion, on_delete=models.DO_NOTHING, db_constraint=False, null=True, blank=True,
+        related_name='ejecuciones_ia',
+    )
+    entidad = models.CharField(max_length=20, blank=True, default='')
+    entidad_id = models.PositiveBigIntegerField(null=True, blank=True)
+    referencias = models.JSONField(default=list, blank=True)
+    instrucciones = models.TextField(blank=True, default='')
+    entrada = models.TextField(blank=True, default='')
+    respuesta_original = models.TextField(blank=True, default='')
+    resultado = models.JSONField(null=True, blank=True)
+    estado = models.CharField(max_length=10, choices=Estado.choices)
+    codigo_error = models.CharField(max_length=64, blank=True, default='')
+    detalle_error = models.CharField(max_length=240, blank=True, default='')
+    duracion_ms = models.PositiveIntegerField(null=True, blank=True)
+    fecha = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-fecha', '-pk']
+        verbose_name = 'ejecución de IA'
+        verbose_name_plural = 'ejecuciones de IA'
+        indexes = [
+            models.Index(fields=['-fecha'], name='ejecia_fecha_idx'),
+            models.Index(fields=['tarea', '-fecha'], name='ejecia_tarea_fecha_idx'),
+            models.Index(fields=['estado', '-fecha'], name='ejecia_estado_fecha_idx'),
+            models.Index(fields=['proveedor', 'modelo'], name='ejecia_proveedor_modelo_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(estado__in=['exitosa', 'fallida', 'invalida']),
+                                   name='ejecucionia_estado_valido'),
+        ]
+
+    def __str__(self):
+        return f'{self.get_tarea_display()} · {self.proveedor} · {self.get_estado_display()}'
+
+    def get_tarea_display(self):
+        return dict(self.Tarea.choices).get(self.tarea, self.tarea)

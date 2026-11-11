@@ -31,11 +31,21 @@ Las dependencias están fijadas en `requirements.txt` con las versiones validada
 ## Configuración (`.env`)
 
 Toda la configuración sensible se lee de variables de entorno; no hay claves ni
-contraseñas en el código. Desde la raíz del repositorio:
+contraseñas en el código. Copiar el ejemplo **solamente si `.env` todavía no
+existe**; conservar la configuración de una instalación existente. Desde la raíz,
+este comando Python sirve también en PowerShell y usa creación exclusiva (`xb`):
 
 ```bash
-cp .env.example .env            # Windows (PowerShell): Copy-Item .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(50))"   # pegar como SECRET_KEY
+python -c "from pathlib import Path; datos = Path('.env.example').read_bytes(); archivo = Path('.env').open('xb'); archivo.write(datos); archivo.close()"
+```
+
+Si `.env` ya existe, omitir el comando. Si se repite accidentalmente, termina con
+`FileExistsError` sin sobrescribir el archivo, incluso si es un enlace simbólico.
+Para una instalación nueva, generar una clave propia y pegarla como `SECRET_KEY`;
+no reemplazar la clave de una instalación existente como parte de esta actualización:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(50))"
 ```
 
 | Variable | Obligatoria | Uso |
@@ -64,6 +74,16 @@ antes de habilitar web para atender tráfico:
 ```bash
 docker compose build web
 docker compose up -d db
+docker compose ps
+```
+
+**Antes de cualquier `migrate`, completar la [comprobación de identidad de
+PostgreSQL](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql)**:
+contrastar el servicio `db` propio y su IP con la conexión efectiva de Django.
+Esperar a que `db` esté saludable y detenerse si el destino no coincide.
+Solo después de confirmar esa identidad, continuar:
+
+```bash
 docker compose run --rm --no-deps web python manage.py migrate
 docker compose run --rm --no-deps web python manage.py showmigrations token_blacklist
 docker compose run --rm --no-deps web python manage.py check
@@ -75,6 +95,16 @@ Esperar a que `db` esté saludable antes de ejecutar los comandos puntuales;
 puede comprobarse con `docker compose ps`. No iniciar web si falla una migración
 o quedan migraciones de blacklist sin aplicar. Abrir http://localhost:8000.
 
+### Cargar noticias reales sin Gemini
+
+Levantar Docker y aplicar migraciones no ejecuta el scraper ni carga noticias.
+Con una base vacía, la portada no tendrá publicaciones hasta realizar una ingesta
+explícita o un alta manual.
+
+Seguir la [guía de carga inicial de noticias](docs/carga-inicial-noticias.md) para
+comprobar la base de destino, ejecutar un lote pequeño con `--sin-ia`, interpretar
+resultados parciales y verificar las fotografías en la API y el navegador.
+
 ### Despliegue sobre una base existente
 
 Antes de ejecutar migraciones sobre PostgreSQL compartido, obtener autorización
@@ -82,10 +112,19 @@ explícita del equipo, coordinar una ventana sin tráfico y realizar un respaldo
 de la base. Ejecutar
 `docker compose stop web` **antes de actualizar el código montado**, ya que Compose
 utiliza un volumen del repositorio. Este paso no detiene `db`.
-Con la versión nueva disponible, conservar la base existente y ejecutar:
+Con la versión nueva disponible, conservar la base existente y reconstruir web:
 
 ```bash
 docker compose build web
+```
+
+**Antes de `migrate --plan` o `migrate`, repetir la [comprobación de identidad de
+PostgreSQL](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql)**
+con la configuración actualizada. El servicio `db` propio debe seguir disponible;
+no iniciar otro proyecto ni reutilizar una base ajena. Si la identidad coincide
+y se dispone del respaldo y la autorización indicados, revisar el plan y continuar:
+
+```bash
 docker compose run --rm --no-deps web python manage.py migrate --plan
 docker compose run --rm --no-deps web python manage.py migrate
 docker compose run --rm --no-deps web python manage.py showmigrations token_blacklist
@@ -123,7 +162,17 @@ Elegir la base según `DB_HOST` en `.env`:
   (ignorado por git).
 - **PostgreSQL local:** `DB_HOST=localhost` y las variables `DB_*`. Puede usarse
   la base del Compose con `docker compose up -d db` (publicada sólo en
-  `127.0.0.1:5432`).
+  `127.0.0.1:5433`; configurar `DB_PORT=5433` al conectar desde el anfitrión).
+  Entre servicios Compose, Django usa `db:5432`; ese puerto interno no cambia.
+
+**Antes de `migrate`, verificar el motor y el destino de Django.** Con PostgreSQL,
+seguir la [comprobación de identidad](docs/carga-inicial-noticias.md#comprobar-la-identidad-de-postgresql),
+pero abrir el shell con `python app/manage.py shell` al ejecutar Django en el
+anfitrión. Si PostgreSQL no pertenece al Compose, contrastar servidor, base,
+usuario y puerto con la instancia local autorizada, en lugar de buscar un
+contenedor `db`. Con SQLite, verificar `connection.vendor` y el `NAME` configurado
+para confirmar que corresponde al archivo local esperado; no ejecutar la consulta
+SQL específica de PostgreSQL. Solo después continuar:
 
 ```bash
 python app/manage.py migrate
@@ -143,6 +192,39 @@ restricciones de `PublicacionDuplicadosTestCase` y `PublicacionConcurrenciaTestC
 fallan; ejecutar la suite completa contra PostgreSQL
 (`docker compose exec web python manage.py test core`).
 No utilizar la base compartida para pruebas que escriban datos.
+
+### Datos sintéticos para demostración
+
+En una base **local de desarrollo** con las migraciones aplicadas, el comando
+`simular_datos_demo` crea cuentas inactivas `demo_sim_`, votos y clics, y
+comentarios breves basados en el titular de cada publicación. Los comentarios
+llevan el prefijo `[Simulación]`; las cuentas no pueden iniciar sesión. No usa
+Gemini, no modifica usuarios existentes fuera del prefijo reservado y es
+idempotente: repetirlo completa interacciones faltantes hasta los objetivos.
+No requiere migraciones y nunca se ejecuta automáticamente al iniciar Django.
+
+Primero confirmar que `DB_HOST` y `DB_NAME` apuntan a la base local propia; la
+previsualización no escribe. Para aplicar cambios se requiere `DEBUG=True` y
+`--aplicar`. Por defecto usa hasta 10.000 cuentas, cuatro votos, un comentario
+y seis clics por publicación:
+
+```bash
+docker compose exec web python manage.py simular_datos_demo
+docker compose exec web python manage.py simular_datos_demo --aplicar
+```
+
+También se puede usar localmente con `python app/manage.py` en lugar de
+`docker compose exec web python manage.py`. Para una prueba pequeña, limitar el
+lote, por ejemplo `--limite 20 --usuarios 100`. Nunca ejecutar `--aplicar` contra
+producción ni contra una base compartida. Los datos se generan sobre las noticias
+que ya existen en cada base, así que no hace falta importar la base del laboratorio.
+
+El dashboard de participación es de solo lectura y requiere los permisos del
+panel de administración (`PERMISOS_PANEL`), que tiene el grupo `Administrador`;
+no hace falta ser superusuario. Sus filtros se aplican a las publicaciones; muestra clics,
+valoraciones por sentimiento y estados de comentarios. Esas métricas agregan
+interacciones sintéticas y no sintéticas, por lo que deben interpretarse como
+datos de demostración cuando se haya ejecutado este comando.
 
 ## Rutas
 
@@ -281,6 +363,64 @@ roles: usa IDs de permisos y contiene el conjunto anterior de Analista. Usar
 Scraping e IA por HTTP requieren POST. La API sigue requiriendo JWT; una sesión
 web no reemplaza el token. Los comandos de scraping de terminal son operaciones
 del servidor y su acceso depende de los permisos operativos de Docker/servidor.
+
+## Motor de inteligencia artificial (Gemini y Ollama)
+
+Los análisis automáticos (análisis de publicaciones, clasificación de categorías y
+revisión de departamentos) piden el procesamiento al gestor central
+`core/services/ia/gestor.py`, que usa uno de dos proveedores intercambiables:
+**Gemini** (API de Google, modelo `GEMINI_MODEL`, hoy `gemini-3.8-flash`) y
+**Llama 3.1 mediante Ollama** (`llama3.1:latest`). Los servicios no saben qué
+proveedor responde y conservan sus validadores y formatos de respuesta.
+
+Los administradores lo gestionan en **Administradores → Motor de Inteligencia
+Artificial** (`/administradores/motor-ia/`, mismo permiso que la gestión de
+administradores):
+
+- **Motor activo**: Gemini (predeterminado) o Llama 3.1. Gemini no puede elegirse
+  como principal si falta `GEMINI_API_KEY`.
+- **Cambio automático**: si el principal no responde, se intenta **una sola vez**
+  con el otro motor. Sólo se usa ante errores de conexión, timeouts, 5xx y límites
+  de frecuencia cortos; nunca ante errores de configuración, credenciales,
+  permisos, solicitud o validación de la respuesta. Desactivado, se informa el
+  error sin cambiar de proveedor.
+- **Estado de los motores**: «Probar conexión» consulta el servicio (metadatos en
+  Gemini, `/api/tags` en Ollama) sin ejecutar ningún análisis ni descargar modelos.
+
+La elección se guarda en la tabla `ConfiguracionIA` (migración `0021`): hay que
+aplicarla con `python manage.py migrate`. Sin ella el sistema usa los valores
+por defecto (Gemini con cambio automático) y el panel no puede guardar. Las
+claves nunca se guardan en la base.
+
+Los análisis de publicaciones (sentimiento y localidades con coordenadas) **sólo se guardan
+con Gemini**: Llama no es equivalente (coordenadas y sentimiento poco confiables), así que sus
+resultados no se persisten ni como respaldo ni como motor principal; la clasificación de
+categorías y la revisión de departamentos sí pueden usar Llama. El panel separa «Conexión al
+servicio» de «Capacidad de generación»: un motor puede responder y aun así fallar al generar.
+
+Qué motor respondió cada análisis y cuándo hubo un cambio queda en el log
+`core.services.ia.gestor` (`IA: tarea=… proveedor=… respaldo=si|no`,
+`IA: cambio de motor … de=… a=… motivo=…`), sin claves ni texto de noticias; el
+último cambio también se ve en el panel. El sentimiento de comentarios no usa este
+gestor: sigue con Ollama y, si falla, con el método léxico.
+
+### Ollama y Docker
+
+Dentro de un contenedor `localhost` es el propio contenedor, no tu equipo. Con
+Docker Desktop (Windows/Mac) la aplicación alcanza Ollama del anfitrión en
+`http://host.docker.internal:11434`, ya configurado en `docker-compose.yml`
+(verificado desde el contenedor `web`); en Linux se agrega con `extra_hosts`
+(`host-gateway`), también incluido. No hace falta exponer el puerto de Ollama a
+Internet: escucha sólo en el equipo y el contenedor entra por la pasarela de Docker.
+Si tu Ollama escucha únicamente en una interfaz que el contenedor no alcanza, definí
+`OLLAMA_HOST=0.0.0.0` **sólo** con el firewall cerrado hacia afuera.
+
+Variables (`.env`): `OLLAMA_BASE_URL`, `OLLAMA_MODELO_CHAT` (por defecto
+`llama3.1:latest`), `OLLAMA_TIMEOUT` (segundos, 60), `OLLAMA_NUM_CTX` (8192),
+`OLLAMA_KEEP_ALIVE` (`5m`) y `GEMINI_TIMEOUT` (60). El modelo debe estar instalado
+(`ollama pull llama3.1:latest`); TrendWatch nunca lo descarga. En producción
+(`compose.production.yml`) estas variables no están definidas: agregalas allí
+según tu infraestructura antes de usar Ollama.
 
 ## Análisis de sentimiento de comentarios
 

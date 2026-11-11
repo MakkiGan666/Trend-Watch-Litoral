@@ -73,6 +73,18 @@
       {% endfor %}
       {% if guardados.has_other_pages %}<nav class="profile-pagination" aria-label="Páginas de noticias guardadas">{% if guardados.has_previous %}<a href="?pagina={{ guardados.previous_page_number }}">← Anterior</a>{% endif %}<span>{{ guardados.number }} de {{ guardados.paginator.num_pages }}</span>{% if guardados.has_next %}<a href="?pagina={{ guardados.next_page_number }}">Siguiente →</a>{% endif %}</nav>{% endif %}
     </section>
+    {% if recomendaciones %}
+    <section class="profile-card glass glass--sheen" aria-labelledby="recomendaciones-title">
+      <h2 id="recomendaciones-title">También te puede interesar</h2>
+      <p>Noticias relacionadas con las categorías y lugares que guardaste o valoraste positivamente.</p>
+      {% for publicacion in recomendaciones %}
+      <article class="profile-saved">
+        {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">{% endif %}
+        <div><p>{{ publicacion.fuente }}</p><h2><a href="{% url 'noticia' publicacion.pk %}">{{ publicacion.titulo }}</a></h2></div>
+      </article>
+      {% endfor %}
+    </section>
+    {% endif %}
     {% else %}
     <section class="profile-card glass glass--sheen">
       <h2>Preferencias de notificaciones</h2>
