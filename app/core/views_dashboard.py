@@ -11,7 +11,10 @@ from django.views.decorators.http import require_GET
 
 from .fechas import ZONA_LOCAL
 from .localidades import DEPARTAMENTOS, departamento_de_ubicacion
-from .models import Categoria, Locacion, Publicacion
+from .models import (
+    Categoria, ClicPublicacion, Comentario, Locacion, Publicacion,
+    ValoracionPublicacion,
+)
 from .services.indicadores import ANALISIS_VALIDO, publicaciones_con_estado, resumen_publicaciones
 
 
@@ -111,6 +114,32 @@ def dashboard(request):
         {'nombre': 'Neutral', 'total': datos.filter(polaridad_registrada=0).count()},
         {'nombre': 'Negativo', 'total': datos.filter(polaridad_registrada__lt=0).count()},
     ])
+    valoraciones = ValoracionPublicacion.objects.filter(publicacion_id__in=ids)
+    conteo_valoraciones = {
+        fila['sentimiento']: fila['total']
+        for fila in valoraciones.values('sentimiento').annotate(total=Count('pk'))
+    }
+    valoraciones_lectores = barras([
+        {'nombre': nombre, 'total': conteo_valoraciones.get(codigo, 0)}
+        for codigo, nombre in ValoracionPublicacion.Sentimiento.choices
+    ])
+    comentarios = Comentario.objects.filter(publicacion_id__in=ids).aggregate(
+        publicados=Count('pk', filter=Q(estado=Comentario.Estado.PUBLICADO)),
+        pendientes=Count('pk', filter=Q(estado=Comentario.Estado.PENDIENTE)),
+        rechazados=Count('pk', filter=Q(estado=Comentario.Estado.RECHAZADO)),
+    )
+    comentarios_lectores = barras([
+        {'nombre': 'Publicados', 'total': comentarios['publicados']},
+        {'nombre': 'Pendientes', 'total': comentarios['pendientes']},
+        {'nombre': 'Rechazados', 'total': comentarios['rechazados']},
+    ])
+    participacion = {
+        'clics': ClicPublicacion.objects.filter(publicacion_id__in=ids).count(),
+        'valoraciones': sum(conteo_valoraciones.values()),
+        'comentarios_publicados': comentarios['publicados'],
+        'comentarios_pendientes': comentarios['pendientes'],
+        'comentarios_total': sum(comentarios.values()),
+    }
     fechadas = base.annotate(fecha_base=Coalesce('fecha_publicacion', 'fecha_captura'))
     extremos = fechadas.aggregate(primera=Min('fecha_base'), ultima=Max('fecha_base'))
     mensual = extremos['primera'] and (extremos['ultima'] - extremos['primera']).days > 120
@@ -127,5 +156,7 @@ def dashboard(request):
     return render(request, 'core/dashboard.html', {
         'filtros': form, 'resumen': resumen, 'categorias': categorias, 'fuentes': fuentes,
         'departamentos': departamentos, 'sentimientos': sentimientos, 'serie': serie,
-        'puntos': puntos, 'mensual': mensual,
+        'puntos': puntos, 'mensual': mensual, 'participacion': participacion,
+        'valoraciones_lectores': valoraciones_lectores,
+        'comentarios_lectores': comentarios_lectores,
     }, status=200 if valido else 400)

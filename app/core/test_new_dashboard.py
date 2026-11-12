@@ -5,7 +5,10 @@ from django.contrib.auth.models import Permission
 from django.test import TestCase
 from django.urls import reverse
 
-from core.models import Categoria, Locacion, Publicacion, PublicacionTema, Sentimiento, Tema
+from core.models import (
+    Categoria, ClicPublicacion, Comentario, Locacion, Publicacion,
+    PublicacionTema, Sentimiento, Tema, ValoracionPublicacion,
+)
 
 
 class DashboardAnaliticoTests(TestCase):
@@ -69,6 +72,51 @@ class DashboardAnaliticoTests(TestCase):
         })
         self.assertEqual({f['nombre']: f['total'] for f in response.context['sentimientos']}, {'Positivo': 0, 'Neutral': 1, 'Negativo': 0})
         self.assertEqual(Sentimiento.objects.count(), 4)
+
+    def test_participacion_filtrada_cuenta_clics_votos_y_estados_de_comentarios(self):
+        incluida = self.noticia('participacion-incluida', fuente='Fuente A')
+        excluida = self.noticia('participacion-excluida', fuente='Fuente B')
+        ValoracionPublicacion.objects.create(
+            publicacion=incluida, usuario=self.lector, sentimiento='positivo',
+        )
+        ValoracionPublicacion.objects.create(
+            publicacion=incluida, usuario=self.admin, sentimiento='neutral',
+        )
+        ValoracionPublicacion.objects.create(
+            publicacion=excluida, usuario=self.lector, sentimiento='negativo',
+        )
+        ClicPublicacion.objects.create(publicacion=incluida, usuario=self.lector)
+        ClicPublicacion.objects.create(publicacion=incluida, usuario=self.admin)
+        ClicPublicacion.objects.create(publicacion=excluida, usuario=self.lector)
+        for estado in (
+            Comentario.Estado.PUBLICADO,
+            Comentario.Estado.PENDIENTE,
+            Comentario.Estado.RECHAZADO,
+        ):
+            Comentario.objects.create(
+                publicacion=incluida, autor=self.lector,
+                texto=f'Comentario {estado}', estado=estado,
+            )
+        Comentario.objects.create(
+            publicacion=excluida, autor=self.lector, texto='Fuera del filtro',
+            estado=Comentario.Estado.PUBLICADO,
+        )
+
+        self.client.force_login(self.root)
+        response = self.client.get(reverse('dashboard'), {'fuente': 'Fuente A'})
+
+        self.assertEqual(response.context['participacion'], {
+            'clics': 2,
+            'valoraciones': 2,
+            'comentarios_publicados': 1,
+            'comentarios_pendientes': 1,
+            'comentarios_total': 3,
+        })
+        self.assertEqual(
+            {fila['nombre']: fila['total'] for fila in response.context['valoraciones_lectores']},
+            {'Positivo': 1, 'Neutral': 1, 'Negativo': 0},
+        )
+        self.assertContains(response, 'Participación de lectores')
 
     def test_filtros_combinados_y_asociaciones_no_duplican(self):
         n = self.noticia('coincide', fuente='Fuente A', departamento='capital', fecha_publicacion=datetime(2026, 10, 1, 12, tzinfo=timezone.utc))

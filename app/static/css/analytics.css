@@ -16,6 +16,10 @@
 .analytics-note{font-size:13px;color:var(--tx-2);line-height:1.6}
 .analytics-pending{padding:22px;border-radius:22px;border-color:var(--aqua-line)}
 .analytics-pending p{font-size:13px;color:var(--tx-2);margin:8px 0 12px}
+.analytics-reader-section{display:grid;gap:18px}
+.analytics-reader-section>header h2{font-size:24px;margin-bottom:6px}
+.analytics-reader-section>header p{font-size:13px;color:var(--tx-2);line-height:1.6}
+.analytics-reader-section .analytics-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
 .analytics-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
 .analytics-chart{padding:26px;border-radius:22px;min-width:0}
 .analytics-chart h2{font-size:21px;margin-bottom:10px}
@@ -31,5 +35,6 @@
 .analytics-bar{display:block;height:7px;border-radius:999px;background:rgba(142,182,155,.13);overflow:hidden}
 .analytics-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--sage),var(--aqua));border-radius:inherit}
 .analytics-filters .errorlist{color:#f4b6a6;font-size:13px;list-style:none;flex-basis:100%}
-@media(max-width:900px){.analytics-kpis{grid-template-columns:1fr 1fr}.analytics-grid{grid-template-columns:1fr}}
+@media(max-width:900px){.analytics-kpis,.analytics-reader-section .analytics-kpis{grid-template-columns:1fr 1fr}.analytics-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.analytics-reader-section .analytics-kpis{grid-template-columns:1fr}}
 @media(max-width:480px){.analytics-kpis{gap:10px}.analytics-kpis article{padding:16px}.analytics-kpis strong{font-size:30px}.analytics-chart{padding:20px}.analytics-filters>div{min-width:100%}}

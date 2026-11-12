@@ -9,7 +9,7 @@
 {% endblock %}
 {% block content %}
 <div class="wrap analytics">
-  <header class="page-head"><p class="analytics-eyebrow">Panel de superusuarios</p><h1>Dashboard</h1><p>Indicadores reales del conjunto completo de publicaciones, sin el límite del panel de gestión.</p></header>
+  <header class="page-head"><p class="analytics-eyebrow">Panel de superusuarios</p><h1>Dashboard</h1><p>Indicadores de publicaciones y participación de lectores, separados del análisis automático.</p></header>
   <form method="get" class="analytics-filters glass glass--sheen">
     {{ filtros.non_field_errors }}
     {% for field in filtros %}
@@ -38,6 +38,20 @@
   <p class="analytics-note">Publicaciones y gráficos de evolución, fuente, categoría y departamento abarcan todos los registros. Los conteos de análisis y sentimiento incluyen solo artículos con cuerpo completo. Las fichas RSS no cuentan como pendientes de IA; los registros históricos sin cuerpo se cuentan aparte para revisión. «Análisis a revisar» identifica análisis inconsistentes de artículos completos. Consultar este panel no ejecuta IA ni modifica noticias.</p>
   {% if resumen.pendientes %}<aside class="analytics-pending glass"><strong>{{ resumen.pendientes }} publicación{{ resumen.pendientes|pluralize:'es' }} sin análisis disponible</strong><p>Estado informativo, sin alertas automáticas. El procesamiento se realiza mediante las herramientas administrativas existentes.</p><a href="{% url 'publicaciones' %}">Ir a Publicaciones →</a></aside>{% endif %}
   {% if resumen.total %}
+  <section class="analytics-reader-section" aria-labelledby="reader-participation-title">
+    <header><h2 id="reader-participation-title">Participación de lectores</h2><p>Valoraciones, comentarios y clics de las publicaciones incluidas en los filtros. Son independientes del análisis automático; los datos de demostración se identifican con «[Simulación]».</p></header>
+    <div class="analytics-kpis" aria-label="Indicadores de participación de lectores">
+      <article class="glass"><span>Clics</span><strong {% if not participacion.clics %}class="analytics-kpi-empty"{% endif %}>{% if participacion.clics %}{{ participacion.clics }}{% else %}Sin clics{% endif %}</strong></article>
+      <article class="glass"><span>Valoraciones</span><strong {% if not participacion.valoraciones %}class="analytics-kpi-empty"{% endif %}>{% if participacion.valoraciones %}{{ participacion.valoraciones }}{% else %}Sin valoraciones{% endif %}</strong></article>
+      <article class="glass"><span>Comentarios publicados</span><strong {% if not participacion.comentarios_publicados %}class="analytics-kpi-empty"{% endif %}>{% if participacion.comentarios_publicados %}{{ participacion.comentarios_publicados }}{% else %}Sin comentarios{% endif %}</strong></article>
+      <article class="glass"><span>Comentarios pendientes</span><strong {% if not participacion.comentarios_pendientes %}class="analytics-kpi-empty"{% endif %}>{% if participacion.comentarios_pendientes %}{{ participacion.comentarios_pendientes }}{% else %}Sin pendientes{% endif %}</strong></article>
+    </div>
+    <div class="analytics-grid">
+      {% if participacion.valoraciones %}{% include 'partials/_analytics_bars.html' with titulo='Valoraciones de lectores' filas=valoraciones_lectores nota='Una valoración vigente por usuario y noticia. El voto puede cambiarse o retirarse.' %}{% else %}<section class="analytics-chart glass glass--sheen"><h2>Valoraciones de lectores</h2><p>Aún no hay valoraciones para las publicaciones filtradas.</p></section>{% endif %}
+      {% if participacion.comentarios_total %}{% include 'partials/_analytics_bars.html' with titulo='Estado de los comentarios' filas=comentarios_lectores nota='Sólo los comentarios publicados son visibles para los lectores y cuentan en tendencias.' %}{% else %}<section class="analytics-chart glass glass--sheen"><h2>Estado de los comentarios</h2><p>Aún no hay comentarios para las publicaciones filtradas.</p></section>{% endif %}
+    </div>
+    <p class="analytics-note">Las fechas del filtro corresponden a las publicaciones, no a la fecha de cada interacción.</p>
+  </section>
   <section class="analytics-chart glass glass--sheen" aria-labelledby="timeline-title">
     <h2 id="timeline-title">Evolución de publicaciones</h2><p>Agrupación {% if mensual %}mensual{% else %}diaria{% endif %}. Fecha del medio cuando existe; de lo contrario, fecha de captura. Zona horaria de Argentina. La distancia horizontal es proporcional a los días transcurridos o, en agrupación mensual, a los meses. Los períodos sin registros conservan su espacio, sin agregar puntos ni valores cero.</p>
     <svg class="analytics-line" viewBox="0 0 700 220" role="img" aria-labelledby="timeline-svg-title timeline-svg-desc"><title id="timeline-svg-title">Publicaciones por período</title><desc id="timeline-svg-desc">{{ serie|length }} períodos. Valores exactos en la tabla desplegable.</desc><path d="M30 20V190H680" fill="none" stroke="currentColor" opacity=".25"/><polyline points="{{ puntos }}" fill="none" stroke="#3fd0b4" stroke-width="3"/>{% for fila in serie %}<circle cx="{{ fila.x }}" cy="{{ fila.y }}" r="4" fill="#8eb69b"><title>{{ fila.fecha }}: {{ fila.total }}</title></circle>{% endfor %}</svg>
