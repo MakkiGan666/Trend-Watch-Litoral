@@ -14,6 +14,7 @@ from core.models import (AliasURLPublicacion, Categoria, Etiqueta, Publicacion, 
                          PublicacionTema, RegistroDatos, Tema)
 from core.services import persistencia_multifuente as servicio
 from core.services.extractor_articulos import ArticuloExtraido
+from core.services.persistencia_multifuente import EntradaPersistencia
 from core.services.fuentes_rss import FUENTES_RSS
 from core.services.lector_rss import NoticiaRSS
 
@@ -50,6 +51,22 @@ class PersistenciaMultifuenteTests(TestCase):
         self.assertEqual(RegistroDatos.objects.get().estado, 'EXITO')
         self.assertTrue(PublicacionEtiqueta.objects.filter(publicacion=publicacion).exists())
         self.assertTrue(PublicacionTema.objects.filter(id_publicacion_api=publicacion).exists())
+
+    def test_fallback_de_imagen_rss_admite_cdn_sin_habilitarlo_para_articulos(self):
+        fuente = next(f for f in FUENTES_RSS if f.identificador == 'noticias_de_la_calle')
+        rss = NoticiaRSS(
+            fuente.nombre, fuente.identificador, 'Hospital anuncia nuevas jornadas de salud',
+            'https://www.noticiasdelacalle.com.ar/nota/1',
+            datetime(2026, 11, 5, 12, tzinfo=tz.utc), 'Resumen breve.', '', '',
+            'https://noticiasdelacalle-s3.cdn.net.ar/nota.jpg',
+        )
+        articulo = ArticuloExtraido(
+            fuente.nombre, fuente.identificador, rss.titulo, self.texto, '', rss.fecha,
+            rss.url, True,
+        )
+        _, datos, _, _ = servicio._preparar(EntradaPersistencia(rss, articulo))
+        self.assertEqual(datos['imagen_url'], rss.imagen_principal)
+        self.assertNotIn('noticiasdelacalle-s3.cdn.net.ar', fuente.hosts_permitidos)
 
     def test_mismo_hecho_en_otro_medio_se_conserva(self):
         otra = FUENTES_RSS[1]

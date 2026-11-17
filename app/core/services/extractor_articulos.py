@@ -1,8 +1,9 @@
 """H2.3: extracción local, sin navegador, persistencia ni descargas secundarias.
 
-Las URLs de imágenes usan la misma política de hosts HTTPS que el artículo;
-CDN ajenos no se autorizan implícitamente. Nunca se siguen canonical, base,
-iframes, imágenes, scripts ni contextos JSON-LD. El cuerpo es texto plano.
+Las URLs de artículos y de imágenes tienen allowlists HTTPS separadas. Una URL
+de imagen solo se conserva como referencia; no se descarga. Nunca se siguen
+canonical, base, iframes, imágenes, scripts ni contextos JSON-LD. El cuerpo es
+texto plano.
 """
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,7 +14,8 @@ from urllib.parse import unquote_plus, urljoin, urlsplit
 
 from core.services import descarga_segura
 from core.services.fuentes_rss import FUENTES_RSS
-from core.services.lector_rss import NoticiaRSS, SEGUIMIENTO, _fecha, normalizar_url
+from core.services.lector_rss import (NoticiaRSS, SEGUIMIENTO, _fecha,
+                                      normalizar_url, normalizar_url_imagen)
 
 
 class ErrorExtraccion(ValueError):
@@ -182,7 +184,33 @@ def _deduplicar(partes):
 
 
 def _suficiente(cuerpo):
-    return len(cuerpo) >= 120 and len(cuerpo.split()) >= 20
+    return _calidad_editorial(cuerpo)
+
+
+def _normalizar_comparacion(texto):
+    return ' '.join(re.findall(r'\w+', _limpiar(texto).casefold()))
+
+
+def _calidad_editorial(cuerpo, titulo='', resumen=''):
+    """Valida prosa editorial, no sólo tamaño: evita resumen/titular duplicado y ruido repetido."""
+    if not isinstance(cuerpo, str) or len(cuerpo) < 120:
+        return False
+    palabras = re.findall(r"[\wáéíóúüñ]+", cuerpo.casefold())
+    if len(palabras) < 20 or len(set(palabras)) / len(palabras) < 0.35:
+        return False
+    comparado = _normalizar_comparacion(cuerpo)
+    if not comparado:
+        return False
+    for referencia in (titulo, resumen):
+        normalizada = _normalizar_comparacion(referencia)
+        if normalizada:
+            cuerpo_tokens, referencia_tokens = set(comparado.split()), set(normalizada.split())
+            jaccard = len(cuerpo_tokens & referencia_tokens) / len(cuerpo_tokens | referencia_tokens)
+            if comparado == normalizada or jaccard >= 0.86:
+                return False
+    fragmentos = [p for p in re.split(r'(?<=[.!?])\s+|\n+', cuerpo)
+                  if len(re.findall(r"[\wáéíóúüñ]+", p)) >= 5]
+    return len(fragmentos) >= 1
 
 
 def _titulo(valor):
@@ -190,17 +218,30 @@ def _titulo(valor):
     return valor if valor and len(valor) <= 255 else ''
 
 
-def _url(valor, base, fuente):
+def _url(valor, base, fuente, *, imagen=False):
     if not isinstance(valor, str) or not valor:
         return ''
     # Validar antes de urljoin: éste elimina controles iniciales silenciosamente.
     if '\\' in valor or any(ord(c) <= 32 or ord(c) == 127 for c in valor):
         return ''
     try:
-        url = normalizar_url(urljoin(base, valor), fuente)
+        if imagen:
+            url = normalizar_url_imagen(urljoin(base, valor), fuente)
+        else:
+            url = normalizar_url(urljoin(base, valor), fuente)
     except ValueError:
         return ''
     return url if len(url) <= 500 else ''
+
+
+def _newspaper_desde_bytes(datos, noticia):
+    """Analiza sólo los bytes ya obtenidos; nunca llama a download() ni hace red."""
+    from newspaper import Article
+
+    articulo = Article(noticia.url, language='es', fetch_images=False)
+    articulo.set_html(datos.decode('utf-8', errors='replace'))
+    articulo.parse()
+    return articulo
 
 
 def _identidad_jsonld_sin_fragmento(valor, base, fuente):
@@ -631,9 +672,10 @@ def analizar_articulo(datos, noticia, fuente, *, _metricas=None):
     titulo = next((t for v in candidatos_titulo if (t := _titulo(v))), noticia.titulo)
     cuerpo_json = articulo.get('articleBody')
     cuerpo = _deduplicar(cuerpo_json.splitlines()) if isinstance(cuerpo_json, str) else ''
-    if not _suficiente(cuerpo) and contenedor is not None:
+    if not _calidad_editorial(cuerpo, noticia.titulo, noticia.resumen) and contenedor is not None:
         cuerpo_html = _parrafos(contenedor)
-        if _suficiente(cuerpo_html) or len(cuerpo_html) > len(cuerpo):
+        if (_calidad_editorial(cuerpo_html, noticia.titulo, noticia.resumen)
+                or len(cuerpo_html) > len(cuerpo)):
             cuerpo = cuerpo_html
     fechas = [articulo.get('datePublished'), *meta('article:published_time'),
               *meta('datePublished')]
@@ -641,12 +683,34 @@ def analizar_articulo(datos, noticia, fuente, *, _metricas=None):
         fechas += [n.attrs.get('datetime') for n in _recorrer(contenedor)
                    if n.tag == 'time' and n.attrs.get('itemprop') != 'dateModified']
     fecha = next((f for v in fechas if (f := _fecha_valida(v))), noticia.fecha)
-    imagenes = list(_candidatos_imagen(_imagen_json(articulo.get('image')))) + meta('og:image')
+    imagenes = (list(_candidatos_imagen(_imagen_json(articulo.get('image'))))
+                + meta('og:image') + meta('twitter:image') + meta('twitter:image:src'))
     if contenedor is not None:
         imagenes += [n.attrs.get('src') or n.attrs.get('data-src') for n in _recorrer(contenedor)
                      if n.tag == 'img']
-    imagen = next((u for v in imagenes if (u := _url(v, noticia.url, fuente))), '')
-    suficiente = _suficiente(cuerpo)
+    imagen = next((u for v in imagenes if (u := _url(v, noticia.url, fuente, imagen=True))), '')
+
+    # Newspaper3k se usa sólo como fallback sobre los mismos bytes. No llama
+    # download(), no ejecuta NLP ni recupera imágenes secundarias.
+    if not _calidad_editorial(cuerpo, titulo, noticia.resumen) or not imagen:
+        try:
+            candidato = _newspaper_desde_bytes(datos, noticia)
+        except Exception:
+            candidato = None
+        if candidato is not None:
+            texto_candidato = _deduplicar(candidato.text.splitlines())
+            if (not _calidad_editorial(cuerpo, titulo, noticia.resumen)
+                    and _calidad_editorial(texto_candidato, titulo, noticia.resumen)):
+                cuerpo = texto_candidato
+            if not imagen:
+                imagen = _url(candidato.top_image, noticia.url, fuente, imagen=True)
+            fecha_newspaper = candidato.publish_date
+            if (fecha is None and isinstance(fecha_newspaper, datetime)
+                    and fecha_newspaper.tzinfo and fecha_newspaper.utcoffset() is not None):
+                fecha = fecha_newspaper
+    if not imagen and noticia.imagen_principal:
+        imagen = _url(noticia.imagen_principal, noticia.url, fuente, imagen=True)
+    suficiente = _calidad_editorial(cuerpo, titulo, noticia.resumen)
     return ArticuloExtraido(fuente.nombre, fuente.identificador, titulo, cuerpo, imagen,
                            fecha, url, suficiente)
 

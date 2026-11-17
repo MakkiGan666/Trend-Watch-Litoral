@@ -1,6 +1,7 @@
 """H4.1: integración real de servicios y ORM, transporte HTTP simulado sin red."""
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
+from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,17 +22,18 @@ from django.utils import timezone
 from google.genai import types
 
 from core.models import (AliasURLPublicacion, Publicacion, RegistroDatos,
-                         ProcesamientoIAMultifuente)
+                         ProcesamientoIAMultifuente, ControlSolicitudRSSMetadatos)
 from core.services import (descarga_segura as red, extractor_articulos, fuentes_rss,
-                          gemini_multifuente, persistencia_multifuente, orquestador_multifuente as servicio)
+                          gemini_multifuente, persistencia_multifuente,
+                          persistencia_rss_metadatos, orquestador_multifuente as servicio)
 
 
 class RespuestaHTTP:
-    def __init__(self, cuerpo, status=200, location=None):
-        self.cuerpo, self.status, self.location, self.posicion = cuerpo, status, location, 0
+    def __init__(self, cuerpo, status=200, location=None, retry_after=None):
+        self.cuerpo, self.status, self.location, self.retry_after, self.posicion = cuerpo, status, location, retry_after, 0
 
     def getheader(self, nombre):
-        return self.location if nombre == 'Location' else None
+        return self.location if nombre == 'Location' else self.retry_after if nombre == 'Retry-After' else None
 
     def read1(self, cantidad):
         bloque = self.cuerpo[self.posicion:self.posicion + cantidad]
@@ -48,8 +50,34 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         contexto = ExitStack()
         self.addCleanup(contexto.close)
         # Simula una configuración aprobada al importar, no una activación del comando.
-        for modulo in (fuentes_rss, red, extractor_articulos, persistencia_multifuente, gemini_multifuente):
+        for modulo in (fuentes_rss, red, extractor_articulos, persistencia_multifuente,
+                       persistencia_rss_metadatos, gemini_multifuente):
             contexto.enter_context(patch.object(modulo, 'FUENTES_RSS', self.catalogo))
+        contexto.enter_context(override_settings(
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={
+                fuente.identificador: 60 for fuente in self.original
+            },
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=3600,
+        ))
+        reservar_real = persistencia_rss_metadatos._reservar_solicitud
+
+        def reservar_para_prueba(fuente, _intervalo):
+            control = ControlSolicitudRSSMetadatos.objects.filter(
+                fuente_id=fuente.identificador,
+            ).first()
+            if control and control.estado == ControlSolicitudRSSMetadatos.Estado.ESPERA:
+                # Las pruebas que invocan el comando más de una vez modelan que
+                # ya transcurrió el cooldown; las pruebas H5.6 cubren la espera.
+                control.estado = ControlSolicitudRSSMetadatos.Estado.LIBRE
+                control.retry_after_hasta = None
+                control.ultimo_intento = None
+                control.save(update_fields=['estado', 'retry_after_hasta', 'ultimo_intento'])
+            return reservar_real(fuente, 0)
+
+        contexto.enter_context(patch.object(
+            servicio, '_reservar_solicitud',
+            side_effect=reservar_para_prueba,
+        ))
         for destino in ('socket.socket.connect', 'socket.socket.connect_ex', 'urllib.request.urlopen', 'feedparser.http.get'):
             contexto.enter_context(patch(destino, side_effect=AssertionError('Red real prohibida')))
         publica = (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 443))
@@ -70,10 +98,14 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
             if isinstance(respuesta, Exception):
                 raise respuesta
             if isinstance(respuesta, tuple):
-                cuerpo, status, location = respuesta
+                if len(respuesta) == 4:
+                    cuerpo, status, location, retry_after = respuesta
+                else:
+                    cuerpo, status, location = respuesta
+                    retry_after = None
             else:
-                cuerpo, status, location = respuesta, 200, None
-            conexion.getresponse.return_value = RespuestaHTTP(cuerpo, status, location)
+                cuerpo, status, location, retry_after = respuesta, 200, None, None
+            conexion.getresponse.return_value = RespuestaHTTP(cuerpo, status, location, retry_after)
         conexion.request.side_effect = request
         return conexion
 
@@ -169,6 +201,113 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         self.assertEqual(resultado['estado'], 'PARCIAL')
         self.assertEqual(resultado['nuevas'], 1)
         self.assertEqual(resultado['errores'][0]['fuente'], self.fuente.identificador)
+
+    def test_reserva_h56_esta_confirmada_antes_del_primer_get_y_cierra_el_lote(self):
+        self.feed(self.fuente, ['https://misionesonline.net/nota-control'])
+        original = red.descargar
+        estados_observados = []
+
+        def comprobar_reserva(url, *, fuente):
+            control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=fuente.identificador)
+            estados_observados.append(control.estado)
+            self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.EN_CURSO)
+            return original(url, fuente=fuente)
+
+        with patch.object(red, 'descargar', side_effect=comprobar_reserva):
+            resultado = self.ejecutar()
+        self.assertEqual(resultado['errores'], [])
+        self.assertEqual(estados_observados, [ControlSolicitudRSSMetadatos.Estado.EN_CURSO] * 2)
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.ESPERA)
+        self.assertIsNotNone(control.ultimo_intento)
+
+    def test_intervalo_h56_se_aplica_entre_get_del_feed_y_articulo(self):
+        self.feed(self.fuente, ['https://misionesonline.net/nota-espaciada'])
+        reservar_real = persistencia_rss_metadatos._reservar_solicitud
+
+        def transcurrir_intervalo(segundos):
+            control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+            control.ultimo_intento -= timedelta(seconds=segundos)
+            control.retry_after_hasta = timezone.now() - timedelta(seconds=1)
+            control.save(update_fields=['ultimo_intento', 'retry_after_hasta'])
+
+        with patch.object(servicio, '_reservar_solicitud', side_effect=reservar_real), \
+             patch.object(servicio.time, 'sleep', side_effect=transcurrir_intervalo) as dormir:
+            resultado = self.ejecutar()
+        self.assertEqual(resultado['errores'], [])
+        self.assertEqual(self.peticiones, [
+            self.fuente.feed, 'https://misionesonline.net/nota-espaciada',
+        ])
+        dormir.assert_called_once_with(60)
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.ESPERA)
+        self.assertGreaterEqual(
+            control.retry_after_hasta,
+            control.ultimo_intento + timedelta(seconds=60),
+        )
+
+    def test_h56_falta_intervalo_no_inicia_get(self):
+        with override_settings(RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={}):
+            self.feed(self.fuente, ['https://misionesonline.net/no-debe-consultarse'])
+            resultado = self.ejecutar()
+        self.assertEqual(self.peticiones, [])
+        self.assertEqual(resultado['descargadas'], 0)
+        self.assertEqual(resultado['errores'][0]['etapa'], 'rss')
+
+    def test_intervalo_h56_bloquea_la_ejecucion_siguiente_sin_otro_get(self):
+        self.feed(self.fuente, ['https://misionesonline.net/nota-intervalo'])
+        reservar_real = persistencia_rss_metadatos._reservar_solicitud
+        def transcurrir_intervalo(segundos):
+            control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+            control.ultimo_intento -= timedelta(seconds=segundos)
+            control.retry_after_hasta = timezone.now() - timedelta(seconds=1)
+            control.save(update_fields=['ultimo_intento', 'retry_after_hasta'])
+
+        with patch.object(servicio, '_reservar_solicitud', side_effect=reservar_real), \
+             patch.object(servicio.time, 'sleep', side_effect=transcurrir_intervalo):
+            primera = self.ejecutar()
+            peticiones_primera = list(self.peticiones)
+            segunda = self.ejecutar()
+        self.assertEqual(primera['errores'], [])
+        self.assertEqual(self.peticiones, peticiones_primera)
+        self.assertEqual(segunda['descargadas'], 0)
+        self.assertEqual(segunda['errores'][0]['codigo'], 'FuenteRSSEnEspera')
+
+    def test_http_429_persiste_retry_after_y_no_consulta_otro_articulo(self):
+        self.respuestas[self.fuente.feed] = (b'', 429, None, '45')
+        resultado = self.ejecutar()
+        self.assertEqual(self.peticiones, [self.fuente.feed])
+        self.assertEqual(resultado['errores'][0]['etapa'], 'rss')
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.ESPERA)
+        self.assertGreaterEqual(control.retry_after_hasta, control.ultimo_intento + timedelta(seconds=45))
+
+    def test_http_429_en_articulo_detiene_esa_fuente_y_aisla_la_siguiente(self):
+        primera = 'https://misionesonline.net/articulo-429'
+        segunda = 'https://misionesonline.net/no-consultar-tras-429'
+        self.feed(self.fuente, [primera, segunda])
+        self.respuestas[primera] = (b'', 429, None, '90')
+        self.feed(self.otra, ['https://www.primeraedicion.com.ar/continua'])
+        inicio = timezone.now()
+        resultado = servicio.ejecutar_ingesta_multifuente(
+            [self.fuente.identificador, self.otra.identificador],
+        )
+        self.assertNotIn(segunda, self.peticiones)
+        self.assertIn('https://www.primeraedicion.com.ar/continua', self.peticiones)
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertGreaterEqual(control.retry_after_hasta, inicio + timedelta(seconds=80))
+        self.assertGreaterEqual(resultado['nuevas'], 1)
+
+    def test_http_403_en_articulo_pone_fuente_en_revision_y_detiene_sus_get(self):
+        primera = 'https://misionesonline.net/articulo-403'
+        siguiente = 'https://misionesonline.net/no-consultar-tras-403'
+        self.feed(self.fuente, [primera, siguiente])
+        self.respuestas[primera] = (b'', 403, None)
+        resultado = self.ejecutar()
+        self.assertNotIn(siguiente, self.peticiones)
+        self.assertEqual(resultado['errores'][0]['etapa'], 'articulo')
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL)
 
     def test_rechazos_rss_html_y_persistencia_no_impiden_otras_noticias(self):
         urls = ['https://misionesonline.net/breve', 'https://misionesonline.net/caida', 'https://misionesonline.net/valida']
@@ -344,7 +483,7 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
         sdk.models.generate_content.assert_called_once()
 
 
-    def test_integra_las_18_fuentes_simuladas_sin_activar_catalogo_real(self):
+    def test_integra_las_fuentes_del_catalogo_simuladas_sin_activar_catalogo_real(self):
         habilitadas = tuple(replace(f, habilitada=True) for f in self.original)
         with ExitStack() as contexto:
             for modulo in (fuentes_rss, red, extractor_articulos, persistencia_multifuente, gemini_multifuente):
@@ -355,9 +494,12 @@ class OrquestadorMultifuenteTests(TransactionTestCase):
             for fuente in habilitadas:
                 self.feed(fuente, ['https://' + fuente.hosts_permitidos[0] + '/nota'])
             resultado = servicio.ejecutar_ingesta_multifuente(
-                [f.identificador for f in habilitadas], limite_por_fuente=1, limite_total=18)
+                [f.identificador for f in habilitadas], limite_por_fuente=1, limite_total=100)
         self.assertEqual(resultado['errores'], [])
-        self.assertEqual((resultado['nuevas'], resultado['pendientes_ia'], resultado['descargadas']), (18, 18, 36))
+        self.assertEqual(
+            (resultado['nuevas'], resultado['pendientes_ia'], resultado['descargadas']),
+            (len(habilitadas), len(habilitadas), 2 * len(habilitadas)),
+        )
         self.assertFalse(any(f.habilitada for f in self.original))
         self.gemini_prohibido.assert_not_called()
 

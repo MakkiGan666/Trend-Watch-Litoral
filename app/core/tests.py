@@ -55,6 +55,21 @@ class CatalogoFuentesRSSTestCase(SimpleTestCase):
             'noticias_de_irigoyen': 'https://noticiasdeirigoyen.com.ar/feed/',
         })
 
+    def test_cdn_solo_se_autorizan_como_imagen_y_fuentes_siguen_apagadas(self):
+        from core.services.fuentes_rss import FUENTES_HISTORICAS, FUENTES_RSS
+        esperados = {
+            'noticias_de_la_calle': 'noticiasdelacalle-s3.cdn.net.ar',
+            'stop_en_linea': 'cdn3.stopenlinea.com.ar',
+        }
+        catalogo = {f.identificador: f for f in FUENTES_RSS}
+        for identificador, host in esperados.items():
+            fuente = catalogo[identificador]
+            self.assertIn(host, fuente.hosts_imagenes_permitidos)
+            self.assertNotIn(host, fuente.hosts_permitidos)
+        territorio, = FUENTES_HISTORICAS
+        self.assertIn('elterritorio-s3.cdn.net.ar', territorio.hosts_imagenes_permitidos)
+        self.assertFalse(any(f.habilitada for f in FUENTES_RSS))
+
     def test_habilitacion_y_limites_independientes(self):
         from dataclasses import FrozenInstanceError, replace
         from core.services.fuentes_rss import obtener_fuentes
@@ -76,6 +91,8 @@ class CatalogoFuentesRSSTestCase(SimpleTestCase):
             'hosts_permitidos': ((), ['misionesonline.net'], ('*.net',),
                                  ('localhost',), ('127.0.0.1',), ('https://medio.net',),
                                  ('Medio.net',), ('medio.net:443',), ('medio.net', 'medio.net')),
+            'hosts_imagenes_permitidos': (['cdn.example'], ('*.example',),
+                                          ('CDN.example',), ('cdn.example', 'cdn.example')),
             'limite_noticias': (0, -1, True, 1.5, '10'),
             'max_bytes': (0, -1, False, 1.5, None),
             'timeout_segundos': (0, -1, True, '10', float('inf'), float('nan')),

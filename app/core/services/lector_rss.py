@@ -12,6 +12,7 @@ from io import BytesIO
 import re
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote_plus
+from urllib.parse import urljoin, urlsplit
 
 import feedparser
 
@@ -34,6 +35,7 @@ class NoticiaRSS:
     resumen: str
     contenido_completo: str
     seccion: str
+    imagen_principal: str = ''
 
 
 @dataclass(frozen=True)
@@ -105,6 +107,22 @@ def normalizar_url(url, fuente):
     return base + ('?' + '&'.join(parametros) if parametros else '')
 
 
+def normalizar_url_imagen(url, fuente, *, base=None):
+    """Valida una referencia de imagen sin habilitar su descarga HTTP."""
+    if not isinstance(url, str) or not url or '\\' in url or any(
+        ord(c) <= 32 or ord(c) == 127 for c in url
+    ):
+        raise ValueError('URL de imagen inválida.')
+    absoluta = urljoin(base or fuente.feed, url)
+    partes = urlsplit(absoluta)
+    hosts = set(fuente.hosts_permitidos) | set(fuente.hosts_imagenes_permitidos)
+    if (partes.scheme != 'https' or partes.hostname not in hosts
+            or partes.username is not None or partes.password is not None
+            or partes.port not in (None, 443) or partes.fragment):
+        raise ValueError('Host o URL de imagen no autorizados.')
+    return partes._replace(netloc=partes.hostname, scheme='https').geturl()
+
+
 def _fecha(entrada):
     # No usar *_parsed: feedparser puede completar fechas parciales o corregirlas.
     valor = entrada.get('published') if 'published' in entrada else entrada.get('updated')
@@ -148,8 +166,30 @@ def _normalizar(entrada, fuente, tiene_resumen, nodo):
     resumen = _campo_texto(entrada, 'summary') if tiene_resumen else ''
     etiquetas = entrada.get('tags', [])
     seccion = next((_texto(t.get('term', '')) for t in etiquetas if t.get('term')), '')
+    candidatos_imagen = []
+    for hijo in nodo:
+        etiqueta = hijo.tag.rsplit('}', 1)[-1].lower()
+        namespace = hijo.tag[1:].split('}', 1)[0] if hijo.tag.startswith('{') else ''
+        if etiqueta == 'enclosure' and (hijo.get('type') or '').lower().startswith('image/'):
+            candidatos_imagen.append(hijo.get('url'))
+        elif namespace == 'http://search.yahoo.com/mrss/' and etiqueta in ('content', 'thumbnail'):
+            tipo = (hijo.get('type') or '').lower()
+            medio = (hijo.get('medium') or '').lower()
+            if medio == 'image' or tipo.startswith('image/') or etiqueta == 'thumbnail':
+                candidatos_imagen.append(hijo.get('url'))
+        elif etiqueta == 'link' and hijo.get('rel') == 'enclosure' and (
+            hijo.get('type') or ''
+        ).lower().startswith('image/'):
+            candidatos_imagen.append(hijo.get('href'))
+    imagen = ''
+    for candidata in candidatos_imagen:
+        try:
+            imagen = normalizar_url_imagen(candidata, fuente)
+            break
+        except (TypeError, ValueError):
+            continue
     return NoticiaRSS(fuente.nombre, fuente.identificador, titulo, url,
-                      _fecha(entrada), resumen, contenido, seccion)
+                      _fecha(entrada), resumen, contenido, seccion, imagen)
 
 
 class _XMLSinDTD(ET.TreeBuilder):
