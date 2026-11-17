@@ -3,6 +3,8 @@ import time
 import re
 from dataclasses import replace
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, connection
 
@@ -13,6 +15,13 @@ from core.services.extractor_articulos import analizar_articulo
 from core.services.parametros import entero_positivo
 from core.services.persistencia_multifuente import (EntradaPersistencia, buscar_publicacion_por_url,
                                                    persistir_lote, validar_entrada_persistencia)
+from core.services.persistencia_rss_metadatos import (
+    FuenteBloqueada,
+    FuenteRSSEnEspera,
+    _finalizar_solicitud,
+    _reservar_solicitud,
+)
+from core.services.descarga_segura import RespuestaHTTPError
 
 
 _CONTADORES = ('descargadas', 'feeds_descargados', 'articulos_descargados', 'validas',
@@ -153,6 +162,20 @@ def _error(resumen, etapa, codigo, *, indice=None, url=None):
     resumen['errores'].append(dict(etapa=etapa, codigo=codigo, indice=indice, url=url))
 
 
+def _intervalo_solicitud(fuente):
+    intervalos = getattr(settings, 'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE', {})
+    if (not isinstance(intervalos, dict) or fuente.identificador not in intervalos
+            or type(intervalos[fuente.identificador]) is not int
+            or intervalos[fuente.identificador] <= 0):
+        raise ImproperlyConfigured(
+            f'Falta intervalo mínimo H5.6 para {fuente.identificador}; no se hará HTTP.'
+        )
+    fallback = getattr(settings, 'RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS', None)
+    if type(fallback) is not int or fallback <= 0:
+        raise ImproperlyConfigured('Falta un Retry-After de respaldo positivo H5.6.')
+    return intervalos[fuente.identificador], fallback
+
+
 def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite_total=10,
                                 dry_run=False, procesar_ia=False, limite_ia=5, cliente_ia=None):
     """Descargadas cuenta respuestas RSS+HTML; válidas son entradas reconocidas o aceptadas por H3.1.
@@ -180,16 +203,73 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
     ia_restantes = limite_ia
     cache = {}  # Sólo extracciones persistibles y fallos; los bytes van a cache_http.
     cache_http = {}
+    controles_fuente = {}
 
     def descargar(url, fuente, resumen, tipo):
         clave = (fuente.identificador, url)
         if clave not in cache_http:
+            estado = controles_fuente.setdefault(
+                fuente.identificador, {'solicitudes': 0, 'detener': None}
+            )
+            if estado['detener'] is not None:
+                raise estado['detener']
+            intervalo, fallback_429 = _intervalo_solicitud(fuente)
+            # Cada GET obtiene su propia reserva durable. Tras el primero,
+            # esperamos el intervalo H5.6 antes de reservar el siguiente; en
+            # la primera solicitud de una ejecución, una espera existente
+            # bloquea el trabajo en vez de dormir sin límite.
+            while True:
+                try:
+                    control_id = _reservar_solicitud(fuente, intervalo)
+                    break
+                except FuenteRSSEnEspera as exc:
+                    if estado['solicitudes'] == 0:
+                        raise
+                    time.sleep(exc.segundos)
+                except (FuenteBloqueada, DatabaseError):
+                    raise
             try:
                 cache_http[clave] = descarga_segura.descargar(url, fuente=fuente)
                 resumen['descargadas'] += 1
                 resumen[tipo] += 1
             except Exception as exc:
                 cache_http[clave] = exc
+                retry_after = None
+                revision_manual = False
+                if isinstance(exc, RespuestaHTTPError):
+                    if exc.estado == 429:
+                        retry_after = (exc.retry_after_segundos
+                                       if exc.retry_after_segundos is not None
+                                       else fallback_429)
+                        revision_manual = exc.retry_after_excesivo
+                    elif exc.estado in (401, 403):
+                        # No convertir una denegación explícita en una
+                        # secuencia de consultas a otros artículos del medio.
+                        revision_manual = True
+                        estado['detener'] = exc
+                try:
+                    _finalizar_solicitud(
+                        fuente, control_id, intervalo,
+                        retry_after_segundos=retry_after,
+                        revision_manual=revision_manual,
+                    )
+                    estado['solicitudes'] += 1
+                except Exception as persistencia:
+                    # EN_CURSO durable es el estado seguro si no se pudo
+                    # guardar el intervalo o Retry-After.
+                    estado['detener'] = persistencia
+                    cache_http[clave] = persistencia
+                if isinstance(exc, RespuestaHTTPError) and exc.estado == 429:
+                    estado['detener'] = exc
+            else:
+                try:
+                    _finalizar_solicitud(fuente, control_id, intervalo)
+                    estado['solicitudes'] += 1
+                except Exception as persistencia:
+                    # El GET ocurrió: no continuar el lote si su resultado de
+                    # frecuencia no pudo guardarse durablemente.
+                    estado['detener'] = persistencia
+                    cache_http[clave] = persistencia
         valor = cache_http[clave]
         if isinstance(valor, Exception):
             raise valor
@@ -314,6 +394,7 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
             except Exception as exc:
                 _error(resumen, 'resumen', type(exc).__name__)
         resumen['pendientes_ia_previstas'] = resumen['previstas']
+    # Cada GET ya terminó con su propia transición H5.6 a ESPERA o a revisión.
     resultado = dict(dry_run=dry_run, procesar_ia=procesar_ia and not dry_run, fuentes=resumenes,
                      **{campo: sum(r[campo] for r in resumenes) for campo in _CONTADORES})
     resultado['errores'] = [dict(fuente=r['fuente'], **e) for r in resumenes for e in r['errores']]

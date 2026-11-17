@@ -19,9 +19,9 @@ from core.models import AliasURLPublicacion, ProcesamientoIAMultifuente, Publica
 from core.services import descarga_segura
 from core.services.clasificacion import clasificar_lote, vincular_categoria_por_nombre
 from core.services.etiquetas import sugerir_etiquetas
-from core.services.extractor_articulos import ArticuloExtraido, _suficiente
+from core.services.extractor_articulos import ArticuloExtraido, _calidad_editorial
 from core.services.fuentes_rss import FUENTES_RSS
-from core.services.lector_rss import NoticiaRSS, normalizar_url
+from core.services.lector_rss import NoticiaRSS, normalizar_url, normalizar_url_imagen
 from core.services.scraper import generar_hash
 
 
@@ -71,7 +71,7 @@ def _preparar(entrada):
             raise ValueError('Extracción HTML insuficiente.')
         url = actual.url_canonica
         contenido = actual.cuerpo
-        imagen = actual.imagen_principal
+        imagen = actual.imagen_principal or (rss.imagen_principal if rss is not None else '')
     url = normalizar_url(url, fuente)
     identidad = url
     aliases = {url}
@@ -89,11 +89,12 @@ def _preparar(entrada):
         seccion = _texto(rss.seccion, 'Sección')
     titulo = _texto(actual.titulo, 'Título', obligatorio=True)
     contenido = _texto(contenido, 'Contenido', obligatorio=True)
-    if not _suficiente(contenido) or len(contenido.encode('utf-8')) > fuente.max_bytes:
+    if (not _calidad_editorial(contenido, titulo, rss.resumen if rss is not None else '')
+            or len(contenido.encode('utf-8')) > fuente.max_bytes):
         raise ValueError('Contenido insuficiente o demasiado grande.')
     _texto(imagen, 'Imagen')
     if imagen:
-        imagen = normalizar_url(imagen, fuente)
+        imagen = normalizar_url_imagen(imagen, fuente, base=url)
     datos = dict(fuente=fuente.nombre, titulo=titulo, contenido=contenido,
                  url=url, imagen_url=imagen, fecha_publicacion=_fecha(actual.fecha),
                  procesado_ia=False)

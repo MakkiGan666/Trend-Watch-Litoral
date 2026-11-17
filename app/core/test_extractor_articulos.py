@@ -92,6 +92,69 @@ class ExtractorArticulosTests(SimpleTestCase):
                 html = f'<html><head><meta property="og:image" content="{imagen}"></head><body><article><img src="/permitida.jpg"></article></body></html>'
                 self.assertEqual(self.analizar(html.encode()).imagen_principal, 'https://misionesonline.net/permitida.jpg')
 
+    def test_twitter_image_y_cdn_autorizado_son_solo_referencias(self):
+        fuente = next(f for f in FUENTES_RSS if f.identificador == 'noticias_de_la_calle')
+        noticia = replace(self.noticia, fuente=fuente.nombre, fuente_id=fuente.identificador,
+                          url='https://www.noticiasdelacalle.com.ar/nota')
+        html = b'''<html><head><meta name="twitter:image" content="https://noticiasdelacalle-s3.cdn.net.ar/a.jpg"></head>
+          <body><article><p>Texto editorial no suficiente.</p></article></body></html>'''
+        articulo = extractor.analizar_articulo(html, noticia, fuente)
+        self.assertEqual(articulo.imagen_principal, 'https://noticiasdelacalle-s3.cdn.net.ar/a.jpg')
+        self.assertNotIn('noticiasdelacalle-s3.cdn.net.ar', fuente.hosts_permitidos)
+
+    def test_cdn_de_imagen_no_queda_autorizado_para_descargar_html(self):
+        from core.services import descarga_segura
+
+        fuente = next(f for f in FUENTES_RSS if f.identificador == 'noticias_de_la_calle')
+        self.assertIn('noticiasdelacalle-s3.cdn.net.ar', fuente.hosts_imagenes_permitidos)
+        self.assertNotIn('noticiasdelacalle-s3.cdn.net.ar', fuente.hosts_permitidos)
+        with self.assertRaises(ValueError):
+            descarga_segura.validar_url(
+                'https://noticiasdelacalle-s3.cdn.net.ar/foto.jpg', fuente=fuente,
+            )
+
+    def test_cdn_misiones_online_solo_se_acepta_como_referencia_de_imagen(self):
+        from core.services import descarga_segura
+
+        self.assertIn('static.misionesonline.news', self.fuente.hosts_imagenes_permitidos)
+        self.assertNotIn('static.misionesonline.news', self.fuente.hosts_permitidos)
+        html = '''<html><head>
+          <meta property="og:image" content="https://static.misionesonline.news/nota.jpg">
+          <meta name="twitter:image" content="https://static.misionesonline.news/nota.jpg">
+        </head><body><article><h1>Título RSS</h1>
+          <p>La comunidad provincial presentó el proyecto durante un acto realizado en Posadas con representantes de distintas localidades.</p>
+          <p>Las autoridades explicaron que la iniciativa tendrá nuevas etapas de trabajo y participación ciudadana durante los próximos meses.</p>
+        </article></body></html>'''.encode()
+        articulo = self.analizar(html)
+        self.assertEqual(articulo.imagen_principal,
+                         'https://static.misionesonline.news/nota.jpg')
+        with self.assertRaises(ValueError):
+            descarga_segura.validar_url(
+                'https://static.misionesonline.news/nota.jpg', fuente=self.fuente,
+            )
+
+    def test_calidad_editorial_rechaza_texto_largo_repetido_y_resumen_duplicado(self):
+        texto_repetido = ('La comunidad realizó una actividad importante para todos los vecinos. ' * 8)
+        self.assertFalse(extractor._calidad_editorial(texto_repetido, 'Actividad local'))
+        resumen = ('El municipio anunció una nueva obra en el barrio central. ' * 2).strip()
+        self.assertFalse(extractor._calidad_editorial(resumen, 'Obra municipal', resumen))
+        texto = ('La comunidad abrió un nuevo espacio de lectura para estudiantes y familias.\n\n'
+                 'Durante la jornada, los organizadores presentaron actividades que continuarán durante el año.')
+        self.assertTrue(extractor._calidad_editorial(texto, 'Abrió un espacio de lectura'))
+
+    def test_comparacion_newspaper3k_reutiliza_los_mismos_bytes_sin_red(self):
+        from newspaper import Article
+
+        datos = self.fixture('semantico.html')
+        actual = self.analizar(datos)
+        newspaper = Article(self.noticia.url, language='es', fetch_images=False)
+        newspaper.set_html(datos.decode('utf-8'))
+        newspaper.parse()
+        self.assertTrue(actual.suficiente)
+        self.assertGreater(len(newspaper.text.split()), 20)
+        self.assertTrue(newspaper.top_image.endswith('/fotos/biblioteca.jpg'))
+        # Los parches de setUp hacen fallar cualquier intento de HTTP del parser.
+
     def test_url_canonica_conservadora_e_ignora_base_y_recursos(self):
         html = b'<html><head><base href="https://evil.org/"><link rel="canonical" href="/nota?id=1&amp;id=2&amp;utm_source=x&amp;vista=amp"><script src="https://evil.org/a.js"></script></head><body><article><img src="/foto.jpg"><iframe src="http://169.254.169.254/"></iframe></article></body></html>'
         articulo = self.analizar(html)
@@ -113,7 +176,7 @@ class ExtractorArticulosTests(SimpleTestCase):
         self.assertEqual(self.analizar(html).titulo, 'Uso de <script> en HTML')
         self.assertEqual(self.analizar(b'<html><article><h1>' + b'x' * 256 + b'</h1></article></html>').titulo, self.noticia.titulo)
 
-    def test_18_fuentes_una_descarga_por_articulo(self):
+    def test_fuentes_del_catalogo_una_descarga_por_articulo(self):
         for fuente in FUENTES_RSS:
             noticia = replace(self.noticia, fuente=fuente.nombre, fuente_id=fuente.identificador,
                               url='https://' + fuente.hosts_permitidos[0] + '/nota')

@@ -1,7 +1,8 @@
 """Catálogo H1.1: configuración pura, sin descargas ni persistencia.
 
-Feeds confirmados por la auditoría local del 05/11/2026. El Territorio
-conserva su circuito independiente. Habilitar una fuente aquí no ejecuta ingesta.
+Los feeds previamente auditados se conservan. Los candidatos agregados sin
+verificación técnica continúan deshabilitados. El Territorio conserva su circuito
+independiente. Habilitar una fuente aquí no ejecuta ingesta.
 """
 from dataclasses import dataclass
 import re
@@ -22,6 +23,9 @@ class FuenteRSS:
     max_bytes: int = 1_500_000
     max_redirecciones: int = 4
     solo_importacion_historica: bool = False
+    # Hosts exactos de recursos de imagen. Nunca habilitan descargas HTTP de
+    # artículos; los hosts del propio sitio siguen admitidos como imágenes.
+    hosts_imagenes_permitidos: tuple[str, ...] = ()
 
     def __post_init__(self):
         if not isinstance(self.identificador, str) or not re.fullmatch(
@@ -44,6 +48,16 @@ class FuenteRSS:
                 raise ValueError('Host permitido inválido: usar DNS exacto en minúsculas.')
         if len(set(self.hosts_permitidos)) != len(self.hosts_permitidos):
             raise ValueError('Hosts permitidos duplicados.')
+        if type(self.hosts_imagenes_permitidos) is not tuple:
+            raise ValueError('hosts_imagenes_permitidos debe ser una tupla.')
+        for host in self.hosts_imagenes_permitidos:
+            if not isinstance(host, str) or len(host) > 253 or not re.fullmatch(
+                r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+'
+                r'[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?', host
+            ):
+                raise ValueError('Host de imagen inválido: usar DNS exacto en minúsculas.')
+        if len(set(self.hosts_imagenes_permitidos)) != len(self.hosts_imagenes_permitidos):
+            raise ValueError('Hosts de imagen duplicados.')
         for campo in ('limite_noticias', 'max_bytes'):
             entero_positivo(getattr(self, campo), campo)
         segundos_validos(self.timeout_segundos, 'timeout_segundos')
@@ -94,14 +108,14 @@ def validar_catalogo(fuentes):
 
 
 FUENTES_RSS = validar_catalogo((
-    FuenteRSS('misiones_online', 'Misiones Online', 'https://misionesonline.net/feed/', ('misionesonline.net', 'www.misionesonline.net')),
+    FuenteRSS('misiones_online', 'Misiones Online', 'https://misionesonline.net/feed/', ('misionesonline.net', 'www.misionesonline.net'), hosts_imagenes_permitidos=('static.misionesonline.news',)),
     FuenteRSS('primera_edicion', 'Primera Edición', 'https://www.primeraedicion.com.ar/feed/', ('primeraedicion.com.ar', 'www.primeraedicion.com.ar')),
-    FuenteRSS('noticias_de_la_calle', 'Noticias de la Calle', 'https://www.noticiasdelacalle.com.ar/rss/noticias', ('noticiasdelacalle.com.ar', 'www.noticiasdelacalle.com.ar')),
+    FuenteRSS('noticias_de_la_calle', 'Noticias de la Calle', 'https://www.noticiasdelacalle.com.ar/rss/noticias', ('noticiasdelacalle.com.ar', 'www.noticiasdelacalle.com.ar'), hosts_imagenes_permitidos=('noticiasdelacalle-s3.cdn.net.ar',)),
     FuenteRSS('noticias_del_6', 'Noticias del 6', 'https://noticiasdel6.com/feed/', ('noticiasdel6.com', 'www.noticiasdel6.com')),
     FuenteRSS('infober', 'INFOBER', 'https://infoberdigital.com/feed/', ('infoberdigital.com', 'www.infoberdigital.com')),
     FuenteRSS('obera_online', 'OberaOnline', 'https://oberaonline.com.ar/feed/', ('oberaonline.com.ar', 'www.oberaonline.com.ar')),
     FuenteRSS('obera_inside', 'Oberá Inside', 'https://oberainside.com.ar/?feed=rss2', ('oberainside.com.ar', 'www.oberainside.com.ar')),
-    FuenteRSS('stop_en_linea', 'Stop en Línea', 'https://www.stopenlinea.com.ar/rss/noticias', ('stopenlinea.com.ar', 'www.stopenlinea.com.ar')),
+    FuenteRSS('stop_en_linea', 'Stop en Línea', 'https://www.stopenlinea.com.ar/rss/noticias', ('stopenlinea.com.ar', 'www.stopenlinea.com.ar'), hosts_imagenes_permitidos=('cdn3.stopenlinea.com.ar',)),
     FuenteRSS('e24n', 'E24N', 'https://e24n.com.ar/feed/', ('e24n.com.ar', 'www.e24n.com.ar')),
     FuenteRSS('eldorado_noticias', 'Eldorado Noticias', 'https://eldoradonoticias.com.ar/feed/', ('eldoradonoticias.com.ar', 'www.eldoradonoticias.com.ar')),
     FuenteRSS('norte_misionero', 'Norte Misionero', 'https://nortemisionero.com.ar/feed/', ('nortemisionero.com.ar', 'www.nortemisionero.com.ar')),
@@ -121,6 +135,7 @@ FUENTES_HISTORICAS = validar_catalogo((
         'el_territorio', 'El Territorio', None,
         ('elterritorio.com.ar', 'www.elterritorio.com.ar'),
         solo_importacion_historica=True,
+        hosts_imagenes_permitidos=('elterritorio-s3.cdn.net.ar',),
     ),
 ))
 

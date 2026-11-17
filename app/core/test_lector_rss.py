@@ -40,6 +40,24 @@ class LectorRSSTests(SimpleTestCase):
         self.assertEqual(noticia.contenido_completo, 'Contenido completo diferente.')
         self.assertEqual(noticia.seccion, 'Sociedad')
 
+    def test_imagen_enclosure_y_media_content_solo_usan_hosts_de_imagenes(self):
+        fuente = next(f for f in FUENTES_RSS if f.identificador == 'noticias_de_la_calle')
+        xml = b'''<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+          <channel><item><title>Noticia</title><link>https://noticiasdelacalle.com.ar/nota</link>
+            <enclosure url="https://evil.example/foto.jpg" type="image/jpeg"/>
+            <media:content url="https://noticiasdelacalle-s3.cdn.net.ar/nota.webp" medium="image"/>
+            <media:thumbnail url="http://noticiasdelacalle-s3.cdn.net.ar/insegura.jpg"/>
+          </item></channel></rss>'''
+        noticia, = lector.analizar_rss(xml, fuente).noticias
+        self.assertEqual(noticia.imagen_principal, 'https://noticiasdelacalle-s3.cdn.net.ar/nota.webp')
+
+    def test_imagen_del_mismo_host_sigue_admitida_sin_habilitar_cdn_para_html(self):
+        noticia, = lector.analizar_rss(self.feed(extra=(
+            '<enclosure url="https://misionesonline.net/foto.jpg" type="image/jpeg" />'
+        )).replace(b'<rss version="2.0">',
+                   b'<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">'), self.fuente).noticias
+        self.assertEqual(noticia.imagen_principal, 'https://misionesonline.net/foto.jpg')
+
     def test_atom_y_content_src_sin_descarga(self):
         resultado = lector.analizar_rss(self.fixture('atom.xml'), self.fuente)
         self.assertFalse(resultado.rechazos)
@@ -62,7 +80,7 @@ class LectorRSSTests(SimpleTestCase):
         self.assertEqual(noticia.contenido_completo, 'Completo')
         self.assertEqual(noticia.resumen, '')
 
-    def test_18_fuentes_usan_exclusivamente_transporte_seguro(self):
+    def test_fuentes_del_catalogo_usan_exclusivamente_transporte_seguro(self):
         for fuente in FUENTES_RSS:
             with self.subTest(fuente=fuente.identificador), patch.object(
                 lector.descarga_segura, 'descargar', return_value=self.feed(url='https://' + fuente.hosts_permitidos[0] + '/nota')
