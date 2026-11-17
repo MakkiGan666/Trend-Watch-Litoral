@@ -29,5 +29,6 @@
 .category-trends.trend-card-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-content:start;gap:14px;max-height:min(70vh,690px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--sage) transparent;scrollbar-gutter:stable;padding-right:8px}
 .category-trends .trend-card__layout{grid-template-columns:minmax(0,40%) minmax(0,1fr)}
 @media(max-width:1050px){.landing-page .news-layout{grid-template-columns:minmax(0,1fr) 286px;gap:22px}}
-@media(max-width:760px){.landing-page .news-layout{grid-template-columns:1fr}.news-trends .trend-card-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.category-trends.trend-card-list{grid-template-columns:1fr}}
+@media(max-width:880px){.landing-page .news-layout{grid-template-columns:1fr}}
+@media(max-width:760px){.news-trends .trend-card-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.category-trends.trend-card-list{grid-template-columns:1fr}}
 @media(max-width:520px){.news-trends .trend-card-list{grid-template-columns:1fr}.trend-card__layout{grid-template-columns:minmax(0,38%) minmax(0,1fr)}}

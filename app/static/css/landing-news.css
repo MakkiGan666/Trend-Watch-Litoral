@@ -49,7 +49,11 @@ a.news-card:focus-visible{outline:2px solid var(--aqua);outline-offset:2px;borde
 .news-trends__more{display:inline-flex;font-size:13px;color:var(--aqua);margin-top:16px}
 .news-layout [hidden]{display:none!important}
 @media(max-width:1050px){.news-layout{grid-template-columns:minmax(0,1fr) 250px;gap:22px}.news-track{grid-auto-columns:calc((100% - 16px)/2)}.news-trends{padding:22px 18px}.news-trends__list .trend-card__title{font-size:14px}}
-@media(max-width:760px){.news-layout{grid-template-columns:1fr;margin-top:28px}.news-trends{position:static}.news-trends__list{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}.news-trends__list li+li{border-top:0}.news-trends__list li{border-bottom:1px solid var(--edge)}}
+/* Con 24px de padding lateral y el sidebar efectivo de 286px, 880px dejan
+   ~524px para el feed: dos tarjetas de ~254px. Debajo, el sidebar pasa
+   bajo las noticias antes de que el carrusel se comprima en tablets. */
+@media(max-width:880px){.news-layout{grid-template-columns:1fr;margin-top:28px}.news-trends{position:static}}
+@media(max-width:760px){.news-trends__list{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}.news-trends__list li+li{border-top:0}.news-trends__list li{border-bottom:1px solid var(--edge)}}
 @media(max-width:480px){.news-track{grid-auto-columns:85%}.news-category__preview{gap:10px}.news-trends__list{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.news-card,.news-page-dot::before{transition:none}}
 
