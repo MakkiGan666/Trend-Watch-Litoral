@@ -150,7 +150,8 @@ def _leer_limitado(respuesta, sock, limite, max_bytes=MAX_BYTES):
         bloques.append(bloque)
 
 
-def descargar(url, timeout=10, *, fuente=None, control_solicitud=None):
+def descargar(url, timeout=10, *, fuente=None, control_solicitud=None,
+              observador_respuesta=None):
     """Descarga con hosts fijos por fuente y controles SSRF en cada salto.
 
     Acepta sólo la configuración canónica de FuenteRSS del catálogo H1.1 (también si está deshabilitada: este
@@ -221,6 +222,13 @@ def descargar(url, timeout=10, *, fuente=None, control_solicitud=None):
                     retry_after,
                     retry_after_excesivo,
                 )
+            if observador_respuesta is not None:
+                observador_respuesta({
+                    'cache-control': respuesta.getheader('Cache-Control'),
+                    'expires': respuesta.getheader('Expires'),
+                    'date': respuesta.getheader('Date'),
+                    'age': respuesta.getheader('Age'),
+                })
             contenido = _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
             if control_solicitud is not None:
                 finalizada = True

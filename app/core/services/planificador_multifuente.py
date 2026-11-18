@@ -1,5 +1,6 @@
 """Planificación durable de ingesta reciente, sin worker automático al iniciar Django."""
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 import json
 import math
 import time
@@ -29,6 +30,8 @@ from core.services.persistencia_rss_metadatos import (
 MAX_SNAPSHOT_BYTES = 128 * 1024
 MAX_ROBOTS_BYTES = 256 * 1024
 ROBOTS_TTL = timedelta(hours=12)
+ROBOTS_TTL_MAX = timedelta(hours=24)
+ROBOTS_TTL_MARGEN = timedelta(minutes=5)
 LEASE_SECONDS = 120
 WORKER_LEASE_SECONDS = 300
 MAX_RETRY_SECONDS = 3600
@@ -63,23 +66,50 @@ def _fuente(fuente_id, *, exigir_habilitada=True):
     return fuente
 
 
-def configurar_fuente(fuente_id, *, intervalo_segundos=3600):
-    """Programa sin habilitar: habilitación y aprobaciones son una operación aparte."""
+def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos=None,
+                      intervalo_http_segundos=None):
+    """Programa sin habilitar; admite la interfaz antigua y valores independientes."""
     fuente = _fuente(fuente_id, exigir_habilitada=False)
-    if type(intervalo_segundos) is not int or intervalo_segundos < 60:
-        raise ValueError('La frecuencia debe ser de al menos 60 segundos.')
+    if intervalo_segundos is not None and (
+        frecuencia_segundos is not None or intervalo_http_segundos is not None
+    ):
+        raise ValueError('No combines --intervalo-segundos con los parámetros separados.')
+    if intervalo_segundos is None and frecuencia_segundos is None and intervalo_http_segundos is None:
+        frecuencia_segundos = intervalo_http_segundos = 3600
+    if intervalo_segundos is not None:
+        # Compatibilidad: históricamente este valor gobernaba ambos intervalos.
+        frecuencia_segundos = intervalo_http_segundos = intervalo_segundos
+    for valor, nombre in (
+        (frecuencia_segundos, 'La frecuencia RSS'),
+        (intervalo_http_segundos, 'El intervalo HTTP'),
+    ):
+        if valor is not None and (type(valor) is not int or valor < 60):
+            raise ValueError(f'{nombre} debe ser de al menos 60 segundos.')
     plan, _ = ProgramacionIngestaMultifuente.objects.get_or_create(
         fuente_id=fuente.identificador,
-        defaults={'intervalo_segundos': intervalo_segundos},
+        defaults={
+            'frecuencia_segundos': frecuencia_segundos or 3600,
+            'intervalo_segundos': intervalo_http_segundos or 3600,
+        },
     )
-    intervalo_anterior = plan.intervalo_segundos
-    plan.intervalo_segundos = intervalo_segundos
-    if intervalo_anterior != intervalo_segundos and plan.ultima_ejecucion:
-        minimo = plan.ultima_ejecucion + timedelta(seconds=intervalo_segundos)
+    frecuencia_nueva = (plan.frecuencia_segundos if frecuencia_segundos is None
+                        else frecuencia_segundos)
+    intervalo_nuevo = (plan.intervalo_segundos if intervalo_http_segundos is None
+                       else intervalo_http_segundos)
+    cambio = (frecuencia_nueva != plan.frecuencia_segundos
+              or intervalo_nuevo != plan.intervalo_segundos)
+    plan.frecuencia_segundos = frecuencia_nueva
+    plan.intervalo_segundos = intervalo_nuevo
+    if cambio and plan.ultima_ejecucion:
+        intervalos = getattr(settings, 'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE', {})
+        h56 = intervalos.get(fuente.identificador, 0) if isinstance(intervalos, dict) else 0
+        minimo = plan.ultima_ejecucion + timedelta(
+            seconds=max(plan.frecuencia_segundos, plan.intervalo_segundos, h56),
+        )
         plan.proxima_ejecucion = max(plan.proxima_ejecucion or timezone.now(), minimo)
     # La creación/edición de frecuencia nunca habilita ni aprueba una fuente.
-    campos = ['intervalo_segundos', 'actualizado']
-    if intervalo_anterior != intervalo_segundos and plan.ultima_ejecucion:
+    campos = ['frecuencia_segundos', 'intervalo_segundos', 'actualizado']
+    if cambio and plan.ultima_ejecucion:
         campos.append('proxima_ejecucion')
     plan.save(update_fields=campos)
     return plan
@@ -193,7 +223,9 @@ def _programar_siguiente(fuente_id, ahora=None):
         raise ValueError('El intervalo H5.6 configurado es inválido.')
     ProgramacionIngestaMultifuente.objects.filter(fuente_id=fuente_id).update(
         ultima_ejecucion=ahora,
-        proxima_ejecucion=ahora + timedelta(seconds=max(plan.intervalo_segundos, h56)),
+        proxima_ejecucion=ahora + timedelta(
+            seconds=max(plan.frecuencia_segundos, plan.intervalo_segundos, h56),
+        ),
     )
 
 
@@ -281,20 +313,39 @@ class ControlHTTPConRobots:
         cache = CacheRobotsMultifuente.objects.filter(
             fuente_id=self.fuente.identificador, host=host, expira__gt=ahora,
         ).first()
+        if cache and cache.expira > cache.consultado + ROBOTS_TTL_MAX:
+            cache = None
         if cache is None:
+            if timedelta(seconds=self.intervalo_base) + ROBOTS_TTL_MARGEN > ROBOTS_TTL_MAX:
+                raise ValueError(
+                    'El intervalo HTTP supera la vigencia máxima segura de robots.txt; '
+                    'se requiere revisión manual.'
+                )
             robots_url = f'https://{host}/robots.txt'
             self._cargando.add(host)
+            metadatos_http = {}
             try:
                 texto = descarga_segura.descargar(
                     robots_url, fuente=self.fuente, control_solicitud=self,
+                    observador_respuesta=metadatos_http.update,
                 ).decode('utf-8', errors='replace')
             finally:
                 self._cargando.discard(host)
             if len(texto.encode('utf-8')) > MAX_ROBOTS_BYTES:
                 raise ValueError('robots.txt excede 256 KiB; política no cacheada y fuente detenida.')
+            parser = RobotFileParser()
+            parser.set_url(robots_url)
+            parser.parse(texto.splitlines())
+            intervalo_reglas = self._intervalo_reglas(parser)
+            if timedelta(seconds=intervalo_reglas) + ROBOTS_TTL_MARGEN > ROBOTS_TTL_MAX:
+                raise ValueError(
+                    'Las restricciones de robots.txt exceden la vigencia máxima segura '
+                    'de caché; se requiere revisión manual.'
+                )
+            ttl = self._ttl_cache_robots(intervalo_reglas, metadatos_http)
             CacheRobotsMultifuente.objects.update_or_create(
                 fuente_id=self.fuente.identificador, host=host,
-                defaults={'reglas': texto, 'consultado': ahora, 'expira': ahora + ROBOTS_TTL},
+                defaults={'reglas': texto, 'consultado': ahora, 'expira': ahora + ttl},
             )
             reglas = texto
         else:
@@ -303,6 +354,64 @@ class ControlHTTPConRobots:
         parser.set_url(f'https://{host}/robots.txt')
         parser.parse(reglas.splitlines())
         return parser
+
+    def _ttl_cache_robots(self, intervalo_requerido, metadatos_http):
+        cache_control = metadatos_http.get('cache-control') or ''
+        directivas = {}
+        banderas = set()
+        for parte in cache_control.split(','):
+            nombre, separador, valor = parte.strip().partition('=')
+            nombre = nombre.lower()
+            if separador:
+                directivas[nombre] = valor.strip().strip('"')
+            elif nombre:
+                banderas.add(nombre)
+        requerido = timedelta(seconds=intervalo_requerido) + ROBOTS_TTL_MARGEN
+        if {'no-cache', 'no-store', 'private'} & (banderas | directivas.keys()):
+            raise ValueError(
+                'Cache-Control impide reutilizar robots.txt; se requiere revisión manual.'
+            )
+        directiva_edad = directivas.get('s-maxage', directivas.get('max-age'))
+        if directiva_edad is not None:
+            if not directiva_edad.isascii() or not directiva_edad.isdecimal():
+                raise ValueError('Cache-Control max-age inválido; se requiere revisión manual.')
+            edad = metadatos_http.get('age') or '0'
+            if not edad.isascii() or not edad.isdecimal():
+                raise ValueError('Age de robots.txt inválido; se requiere revisión manual.')
+            restante = max(0, int(directiva_edad) - int(edad))
+            ttl = timedelta(seconds=min(restante, int(ROBOTS_TTL_MAX.total_seconds())))
+        elif metadatos_http.get('expires'):
+            try:
+                expira = parsedate_to_datetime(metadatos_http['expires'])
+                fecha = parsedate_to_datetime(metadatos_http['date']) if metadatos_http.get('date') else timezone.now()
+                if expira.tzinfo is None or fecha.tzinfo is None:
+                    raise ValueError
+                edad = metadatos_http.get('age') or '0'
+                if not edad.isascii() or not edad.isdecimal():
+                    raise ValueError
+                ttl = expira - fecha - timedelta(seconds=int(edad))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError('Expires de robots.txt inválido; se requiere revisión manual.') from exc
+        else:
+            ttl = max(ROBOTS_TTL, requerido)
+        ttl = min(ttl, ROBOTS_TTL_MAX)
+        if ttl < requerido:
+            raise ValueError(
+                'La vigencia HTTP de robots.txt no cubre el intervalo requerido; '
+                'se requiere revisión manual.'
+            )
+        return ttl
+
+    def _intervalo_reglas(self, parser):
+        retrasos = [self.intervalo_base]
+        for agente in ('TrendWatch', USER_AGENT, '*'):
+            demora = parser.crawl_delay(agente)
+            if demora is not None:
+                retrasos.append(int(demora))
+            tasa = parser.request_rate(agente)
+            if tasa and tasa.requests:
+                retrasos.append(math.ceil(tasa.seconds / tasa.requests))
+        return max(retrasos)
 
     def antes(self, url):
         partes = self.fuente.validar_url(url)
@@ -313,15 +422,7 @@ class ControlHTTPConRobots:
             parser = self._parser(host)
             if not parser.can_fetch(USER_AGENT, url):
                 raise ReglasRobotsDeniegan('robots.txt no permite esta ruta; no se hizo GET.')
-            retrasos = [intervalo]
-            for agente in ('TrendWatch', USER_AGENT, '*'):
-                demora = parser.crawl_delay(agente)
-                if demora is not None:
-                    retrasos.append(int(demora))
-                tasa = parser.request_rate(agente)
-                if tasa and tasa.requests:
-                    retrasos.append(math.ceil(tasa.seconds / tasa.requests))
-            intervalo = max(retrasos)
+            intervalo = self._intervalo_reglas(parser)
         reserva = _reservar_solicitud(self.fuente, intervalo)
         self._intervalo_actual = intervalo
         return {'control_id': reserva, 'intervalo': intervalo, 'robots': robots}
@@ -718,7 +819,8 @@ def estado_servicio():
         'heartbeat': control.heartbeat.isoformat() if control and control.heartbeat else None,
         'fuentes': list(ProgramacionIngestaMultifuente.objects.order_by('fuente_id').values(
             'fuente_id', 'habilitada', 'acceso_revisado', 'aprobacion_operativa',
-            'intervalo_segundos', 'proxima_ejecucion', 'ultima_ejecucion',
+            'frecuencia_segundos', 'intervalo_segundos',
+            'proxima_ejecucion', 'ultima_ejecucion',
         )),
         'trabajos_abiertos': list(TrabajoIngestaMultifuente.objects.filter(
             estado__in=ACTIVE_STATES,
