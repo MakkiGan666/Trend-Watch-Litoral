@@ -158,8 +158,15 @@ def _seleccionar(identificadores):
     return seleccionadas
 
 
-def _error(resumen, etapa, codigo, *, indice=None, url=None):
-    resumen['errores'].append(dict(etapa=etapa, codigo=codigo, indice=indice, url=url))
+def _error(resumen, etapa, codigo, *, indice=None, url=None, http_status=None, exc=None):
+    detalle = dict(etapa=etapa, codigo=codigo, indice=indice, url=url)
+    if type(http_status) is int:
+        detalle['http_status'] = http_status
+    if getattr(exc, 'url_reanudacion', None):
+        detalle['url_reanudacion'] = exc.url_reanudacion
+    if getattr(exc, 'espera_hasta', None):
+        detalle['espera_hasta'] = exc.espera_hasta.isoformat()
+    resumen['errores'].append(detalle)
 
 
 def _intervalo_solicitud(fuente):
@@ -177,7 +184,10 @@ def _intervalo_solicitud(fuente):
 
 
 def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite_total=10,
-                                dry_run=False, procesar_ia=False, limite_ia=5, cliente_ia=None):
+                                dry_run=False, procesar_ia=False, limite_ia=5, cliente_ia=None,
+                                snapshots=None, solo_snapshot=False, guardar_snapshot=None,
+                                control_solicitud=None, omitir_conocidas=False,
+                                feed_urls=None, articulo_urls=None):
     """Descargadas cuenta respuestas RSS+HTML; válidas son entradas reconocidas o aceptadas por H3.1.
 
     El límite cuenta entradas RSS admitidas, incluidas repeticiones, y consultas
@@ -194,6 +204,17 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
         raise ValueError('Máximos: 30 noticias/fuente, 100 noticias/ejecución, 20 llamadas IA.')
     if type(dry_run) is not bool or type(procesar_ia) is not bool:
         raise ValueError('dry_run y procesar_ia deben ser booleanos.')
+    if type(solo_snapshot) is not bool or (guardar_snapshot is not None and not callable(guardar_snapshot)):
+        raise ValueError('Configuración de snapshot inválida.')
+    if type(omitir_conocidas) is not bool:
+        raise ValueError('omitir_conocidas debe ser booleano.')
+    if snapshots is not None and not isinstance(snapshots, dict):
+        raise ValueError('snapshots debe ser un mapa por fuente.')
+    for mapa in (feed_urls, articulo_urls):
+        if mapa is not None and (not isinstance(mapa, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str) for k, v in mapa.items()
+        )):
+            raise ValueError('Las URLs de reanudación deben ser un mapa de texto por fuente.')
     seleccionadas = _seleccionar(identificadores)
     if not dry_run and (connection.in_atomic_block or not connection.get_autocommit()):
         raise ValueError('Ejecutá el orquestador sin transacción externa.')
@@ -208,6 +229,19 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
     def descargar(url, fuente, resumen, tipo):
         clave = (fuente.identificador, url)
         if clave not in cache_http:
+            if control_solicitud is not None:
+                try:
+                    cache_http[clave] = descarga_segura.descargar(
+                        url, fuente=fuente, control_solicitud=control_solicitud,
+                    )
+                    resumen['descargadas'] += 1
+                    resumen[tipo] += 1
+                except Exception as exc:
+                    cache_http[clave] = exc
+                valor = cache_http[clave]
+                if isinstance(valor, Exception):
+                    raise valor
+                return valor
             estado = controles_fuente.setdefault(
                 fuente.identificador, {'solicitudes': 0, 'detener': None}
             )
@@ -282,16 +316,28 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
             resumen['limitada'] = True
             continue
         try:
-            datos = descargar(fuente.feed, fuente, resumen, 'feeds_descargados')
-            feed = lector_rss.analizar_rss(datos, fuente)
+            feed_snapshot = snapshots.get(fuente.identificador) if snapshots is not None else None
+            if feed_snapshot is not None:
+                if type(feed_snapshot) is not lector_rss.ResultadoRSS:
+                    raise ValueError('Snapshot RSS no normalizado.')
+                feed = feed_snapshot
+            else:
+                url_feed = (feed_urls or {}).get(fuente.identificador) or fuente.feed
+                datos = descargar(url_feed, fuente, resumen, 'feeds_descargados')
+                feed = lector_rss.analizar_rss(datos, fuente)
             resumen['feed_valido'] = True
         except Exception as exc:
-            _error(resumen, 'rss', type(exc).__name__)
+            _error(resumen, 'rss', type(exc).__name__, http_status=getattr(exc, 'estado', None), exc=exc)
             continue
         resumen['entradas_rss_validas'] = len(feed.noticias)
         resumen['rechazadas'] += len(feed.rechazos)
         for indice, _ in feed.rechazos:
             _error(resumen, 'rss_entrada', 'entrada_invalida', indice=indice)
+        if feed_snapshot is None and guardar_snapshot is not None:
+            guardar_snapshot(fuente.identificador, feed)
+        if solo_snapshot:
+            resumen['limitada'] = bool(feed.truncadas)
+            continue
         cupo = min(limite_por_fuente, fuente.limite_noticias, restantes)
         noticias = feed.noticias[:cupo]
         urls_presupuestadas = {n.url for n in noticias}
@@ -300,18 +346,23 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
         restantes -= len(noticias)
         candidatos, indices, conocidas = [], [], []
         rechazados_rss = {i for i, _ in feed.rechazos}
-        indices_rss = [i for i in range(len(feed.noticias) + len(feed.rechazos)) if i not in rechazados_rss]
+        indices_rss = (list(feed.indices_noticias)
+                       if len(feed.indices_noticias) == len(feed.noticias) else
+                       [i for i in range(len(feed.noticias) + len(feed.rechazos))
+                        if i not in rechazados_rss])
         for indice, noticia in zip(indices_rss, noticias):
             try:
                 pk = buscar_publicacion_por_url(noticia)
-                if pk is not None and AliasURLPublicacion.objects.filter(
-                    publicacion_id=pk, fuente=fuente.identificador, url_normalizada=noticia.url
-                ).exists():
+                if pk is not None and (omitir_conocidas or AliasURLPublicacion.objects.filter(
+                    publicacion_id=pk, fuente=fuente.identificador,
+                    url_normalizada=noticia.url,
+                ).exists()):
                     resumen['validas'] += 1
                     resumen['duplicadas'] += 1
                     conocidas.append(dict(estado='DUPLICADA', publicacion_id=pk))
                     continue
-                actual = noticia
+                url_inicial = (articulo_urls or {}).get(fuente.identificador)
+                actual = replace(noticia, url=url_inicial) if url_inicial else noticia
                 visitadas = set()
                 while True:
                     clave = (fuente.identificador, actual.url)
@@ -357,7 +408,8 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
                 indices.append(indice)
             except Exception as exc:
                 resumen['rechazadas'] += 1
-                _error(resumen, 'articulo', type(exc).__name__, indice=indice, url=noticia.url)
+                _error(resumen, 'articulo', type(exc).__name__, indice=indice, url=noticia.url,
+                       http_status=getattr(exc, 'estado', None), exc=exc)
         recibo = dict(dry_run=dry_run, registro_id=None, noticias=[])
         if candidatos:
             try:

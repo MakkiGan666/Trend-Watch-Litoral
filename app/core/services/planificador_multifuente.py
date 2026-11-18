@@ -1,0 +1,756 @@
+"""Planificación durable de ingesta reciente, sin worker automático al iniciar Django."""
+from datetime import datetime, timedelta
+import json
+import math
+import time
+from urllib.parse import urlsplit
+from urllib.robotparser import RobotFileParser
+from uuid import uuid4
+
+from django.conf import settings
+from django.db import DatabaseError, IntegrityError, transaction
+from django.utils import timezone
+
+from core.models import (
+    CacheRobotsMultifuente,
+    ControlServicioIngestaMultifuente,
+    ControlSolicitudRSSMetadatos,
+    ProgramacionIngestaMultifuente,
+    TrabajoIngestaMultifuente,
+)
+from core.services import descarga_segura, fuentes_rss, lector_rss, orquestador_multifuente
+from core.services.persistencia_rss_metadatos import (
+    FuenteBloqueada,
+    FuenteRSSEnEspera,
+    _finalizar_solicitud,
+    _reservar_solicitud,
+)
+
+MAX_SNAPSHOT_BYTES = 128 * 1024
+MAX_ROBOTS_BYTES = 256 * 1024
+ROBOTS_TTL = timedelta(hours=12)
+LEASE_SECONDS = 120
+WORKER_LEASE_SECONDS = 300
+MAX_RETRY_SECONDS = 3600
+MAX_SNAPSHOT_ENTRIES = 30
+USER_AGENT = 'TrendWatch/1.0'
+ACTIVE_STATES = (
+    TrabajoIngestaMultifuente.Estado.SNAPSHOT_PENDIENTE,
+    TrabajoIngestaMultifuente.Estado.PROCESANDO,
+    TrabajoIngestaMultifuente.Estado.ESPERA,
+    TrabajoIngestaMultifuente.Estado.REVISION_MANUAL,
+)
+
+
+class ReglasRobotsDeniegan(ValueError):
+    pass
+
+
+class LeasePerdido(RuntimeError):
+    pass
+
+
+def _catalogo():
+    return {f.identificador: f for f in fuentes_rss.FUENTES_RSS}
+
+
+def _fuente(fuente_id, *, exigir_habilitada=True):
+    fuente = _catalogo().get(fuente_id)
+    if fuente is None:
+        raise ValueError('Fuente desconocida para ingesta multifuente.')
+    if exigir_habilitada and not fuente.habilitada:
+        raise ValueError('La fuente permanece deshabilitada en el catálogo.')
+    return fuente
+
+
+def configurar_fuente(fuente_id, *, intervalo_segundos=3600):
+    """Programa sin habilitar: habilitación y aprobaciones son una operación aparte."""
+    fuente = _fuente(fuente_id, exigir_habilitada=False)
+    if type(intervalo_segundos) is not int or intervalo_segundos < 60:
+        raise ValueError('La frecuencia debe ser de al menos 60 segundos.')
+    plan, _ = ProgramacionIngestaMultifuente.objects.get_or_create(
+        fuente_id=fuente.identificador,
+        defaults={'intervalo_segundos': intervalo_segundos},
+    )
+    intervalo_anterior = plan.intervalo_segundos
+    plan.intervalo_segundos = intervalo_segundos
+    if intervalo_anterior != intervalo_segundos and plan.ultima_ejecucion:
+        minimo = plan.ultima_ejecucion + timedelta(seconds=intervalo_segundos)
+        plan.proxima_ejecucion = max(plan.proxima_ejecucion or timezone.now(), minimo)
+    # La creación/edición de frecuencia nunca habilita ni aprueba una fuente.
+    campos = ['intervalo_segundos', 'actualizado']
+    if intervalo_anterior != intervalo_segundos and plan.ultima_ejecucion:
+        campos.append('proxima_ejecucion')
+    plan.save(update_fields=campos)
+    return plan
+
+
+def habilitar_fuente(fuente_id, *, confirmar_revision_acceso=False,
+                     confirmar_aprobacion_operativa=False):
+    fuente = _fuente(fuente_id, exigir_habilitada=True)
+    if confirmar_revision_acceso is not True or confirmar_aprobacion_operativa is not True:
+        raise ValueError('Para habilitar se requieren ambas confirmaciones explícitas.')
+    plan = ProgramacionIngestaMultifuente.objects.filter(fuente_id=fuente.identificador).first()
+    if plan is None:
+        raise ValueError('Configurá primero el intervalo de esta fuente.')
+    plan.acceso_revisado = True
+    plan.aprobacion_operativa = True
+    plan.habilitada = True
+    plan.proxima_ejecucion = timezone.now()
+    plan.save(update_fields=(
+        'acceso_revisado', 'aprobacion_operativa', 'habilitada',
+        'proxima_ejecucion', 'actualizado',
+    ))
+    return plan
+
+
+def deshabilitar_fuente(fuente_id):
+    plan = ProgramacionIngestaMultifuente.objects.filter(fuente_id=fuente_id).first()
+    if plan is None:
+        raise ValueError('La fuente no tiene una programación configurada.')
+    plan.habilitada = False
+    plan.proxima_ejecucion = None
+    plan.save(update_fields=['habilitada', 'proxima_ejecucion', 'actualizado'])
+    return plan
+
+
+def _snapshot_item(indice, noticia):
+    if len(noticia.resumen.encode('utf-8')) > 4000:
+        raise ValueError('Resumen RSS excede el límite del snapshot; no se truncó.')
+    return {
+        'indice': indice,
+        'fuente': noticia.fuente,
+        'fuente_id': noticia.fuente_id,
+        'titulo': noticia.titulo,
+        'url': noticia.url,
+        'fecha': noticia.fecha.isoformat() if noticia.fecha else None,
+        'resumen': noticia.resumen,
+        'seccion': noticia.seccion,
+        'imagen_principal': noticia.imagen_principal,
+        'estado': 'PENDIENTE',
+    }
+
+
+def _guardar_snapshot(trabajo_id, token, fencing, fuente_id, feed):
+    indices = feed.indices_noticias
+    if len(indices) != len(feed.noticias):
+        indices = tuple(range(len(feed.noticias)))
+    snapshot = [_snapshot_item(i, n) for i, n in zip(indices, feed.noticias)]
+    payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    if len(payload) > MAX_SNAPSHOT_BYTES:
+        raise ValueError('Snapshot RSS excede 128 KiB; no se truncó ni se procesó parcialmente.')
+    ahora = timezone.now()
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+        _verificar_fence(trabajo, token, fencing)
+        if trabajo.snapshot_capturado is not None:
+            raise ValueError('El snapshot ya fue fijado; no se reemplaza por otro feed.')
+        resultados = [
+            {'indice': i, 'estado': 'RECHAZADA', 'codigo': 'rss_entrada_invalida'}
+            for i, _ in feed.rechazos
+        ]
+        trabajo.snapshot = snapshot
+        trabajo.snapshot_capturado = ahora
+        trabajo.url_feed_reanudacion = ''
+        trabajo.entradas_feed = feed.total_entradas
+        trabajo.entradas_snapshot = len(snapshot)
+        trabajo.entradas_fuera_limite = feed.truncadas
+        trabajo.rechazadas = len(feed.rechazos)
+        trabajo.resultados = resultados
+        trabajo.cursor = len(feed.rechazos)
+        trabajo.estado = (TrabajoIngestaMultifuente.Estado.ESPERA
+                          if snapshot else TrabajoIngestaMultifuente.Estado.COMPLETADO)
+        if not snapshot:
+            trabajo.snapshot = []
+            trabajo.finalizado = ahora
+        trabajo.save()
+    if not snapshot:
+        _programar_siguiente(fuente_id, ahora)
+
+
+def _noticia_desde_snapshot(item):
+    from datetime import datetime
+    fecha = datetime.fromisoformat(item['fecha']) if item.get('fecha') else None
+    return lector_rss.NoticiaRSS(
+        fuente=item['fuente'], fuente_id=item['fuente_id'], titulo=item['titulo'],
+        url=item['url'], fecha=fecha, resumen=item.get('resumen', ''),
+        contenido_completo='', seccion=item.get('seccion', ''),
+        imagen_principal=item.get('imagen_principal', ''),
+    )
+
+
+def _verificar_fence(trabajo, token, fencing):
+    if trabajo.token_arrendamiento != token or trabajo.fencing_token != fencing:
+        raise LeasePerdido('El ejecutor perdió su lease; no puede confirmar checkpoints.')
+
+
+def _programar_siguiente(fuente_id, ahora=None):
+    ahora = ahora or timezone.now()
+    plan = ProgramacionIngestaMultifuente.objects.get(fuente_id=fuente_id)
+    intervalos = getattr(settings, 'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE', {})
+    h56 = intervalos.get(fuente_id, 0) if isinstance(intervalos, dict) else 0
+    if type(h56) is not int or h56 < 0:
+        raise ValueError('El intervalo H5.6 configurado es inválido.')
+    ProgramacionIngestaMultifuente.objects.filter(fuente_id=fuente_id).update(
+        ultima_ejecucion=ahora,
+        proxima_ejecucion=ahora + timedelta(seconds=max(plan.intervalo_segundos, h56)),
+    )
+
+
+def _reservar_trabajo(plan, ahora):
+    try:
+        with transaction.atomic():
+            plan = ProgramacionIngestaMultifuente.objects.select_for_update().get(pk=plan.pk)
+            if not (plan.habilitada and plan.acceso_revisado and plan.aprobacion_operativa):
+                return None
+            fuente = _fuente(plan.fuente_id, exigir_habilitada=True)
+            del fuente
+            trabajo = (TrabajoIngestaMultifuente.objects.select_for_update()
+                       .filter(fuente_id=plan.fuente_id, estado__in=ACTIVE_STATES)
+                       .first())
+            if trabajo is None:
+                if plan.proxima_ejecucion and plan.proxima_ejecucion > ahora:
+                    return None
+                trabajo = TrabajoIngestaMultifuente.objects.create(
+                    fuente_id=plan.fuente_id,
+                    estado=TrabajoIngestaMultifuente.Estado.SNAPSHOT_PENDIENTE,
+                )
+            if trabajo.estado in (
+                TrabajoIngestaMultifuente.Estado.REVISION_MANUAL,
+                TrabajoIngestaMultifuente.Estado.FALLIDO,
+                TrabajoIngestaMultifuente.Estado.CANCELADO,
+            ):
+                return None
+            if trabajo.proxima_accion and trabajo.proxima_accion > ahora:
+                return None
+            if trabajo.arrendamiento_hasta and trabajo.arrendamiento_hasta > ahora:
+                return None
+            token = uuid4()
+            trabajo.fencing_token += 1
+            trabajo.token_arrendamiento = token
+            trabajo.arrendamiento_hasta = ahora + timedelta(seconds=LEASE_SECONDS)
+            trabajo.estado = (TrabajoIngestaMultifuente.Estado.SNAPSHOT_PENDIENTE
+                              if trabajo.snapshot_capturado is None else
+                              TrabajoIngestaMultifuente.Estado.PROCESANDO)
+            trabajo.save(update_fields=(
+                'fencing_token', 'token_arrendamiento', 'arrendamiento_hasta', 'estado', 'actualizado',
+            ))
+            return trabajo.pk, token, trabajo.fencing_token
+    except IntegrityError:
+        # Otra ejecución ganó la restricción única de trabajo abierto.
+        return None
+
+
+def _control_h5(fuente_id):
+    return ControlSolicitudRSSMetadatos.objects.filter(fuente_id=fuente_id).first()
+
+
+def _proxima_por_control(fuente_id, segundos_minimos):
+    control = _control_h5(fuente_id)
+    ahora = timezone.now()
+    if control is None:
+        return ahora + timedelta(seconds=segundos_minimos)
+    if control.estado == ControlSolicitudRSSMetadatos.Estado.ESPERA:
+        return max(ahora, control.retry_after_hasta or ahora)
+    if control.estado in (ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+                          ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL):
+        return None
+    return max(ahora, (control.ultimo_intento or ahora) + timedelta(seconds=segundos_minimos))
+
+
+def _backoff(trabajo):
+    return min(MAX_RETRY_SECONDS, 60 * (2 ** min(trabajo.errores, 5)))
+
+
+class ControlHTTPConRobots:
+    """Reserva H5.6 y robots antes de cada GET, incluyendo cada salto HTTP."""
+    def __init__(self, fuente, intervalo_base):
+        self.fuente = fuente
+        self.intervalo_base = intervalo_base
+        self._cargando = set()
+        self._intervalo_actual = intervalo_base
+        self._fallback_429 = getattr(settings, 'RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS', 86400)
+
+    @staticmethod
+    def _es_robots(url):
+        partes = urlsplit(url)
+        return (partes.path or '/') == '/robots.txt'
+
+    def _parser(self, host):
+        ahora = timezone.now()
+        cache = CacheRobotsMultifuente.objects.filter(
+            fuente_id=self.fuente.identificador, host=host, expira__gt=ahora,
+        ).first()
+        if cache is None:
+            robots_url = f'https://{host}/robots.txt'
+            self._cargando.add(host)
+            try:
+                texto = descarga_segura.descargar(
+                    robots_url, fuente=self.fuente, control_solicitud=self,
+                ).decode('utf-8', errors='replace')
+            finally:
+                self._cargando.discard(host)
+            if len(texto.encode('utf-8')) > MAX_ROBOTS_BYTES:
+                raise ValueError('robots.txt excede 256 KiB; política no cacheada y fuente detenida.')
+            CacheRobotsMultifuente.objects.update_or_create(
+                fuente_id=self.fuente.identificador, host=host,
+                defaults={'reglas': texto, 'consultado': ahora, 'expira': ahora + ROBOTS_TTL},
+            )
+            reglas = texto
+        else:
+            reglas = cache.reglas
+        parser = RobotFileParser()
+        parser.set_url(f'https://{host}/robots.txt')
+        parser.parse(reglas.splitlines())
+        return parser
+
+    def antes(self, url):
+        partes = self.fuente.validar_url(url)
+        host = partes.hostname
+        robots = self._es_robots(url)
+        intervalo = self.intervalo_base
+        if not robots and host not in self._cargando:
+            parser = self._parser(host)
+            if not parser.can_fetch(USER_AGENT, url):
+                raise ReglasRobotsDeniegan('robots.txt no permite esta ruta; no se hizo GET.')
+            retrasos = [intervalo]
+            for agente in ('TrendWatch', USER_AGENT, '*'):
+                demora = parser.crawl_delay(agente)
+                if demora is not None:
+                    retrasos.append(int(demora))
+                tasa = parser.request_rate(agente)
+                if tasa and tasa.requests:
+                    retrasos.append(math.ceil(tasa.seconds / tasa.requests))
+            intervalo = max(retrasos)
+        reserva = _reservar_solicitud(self.fuente, intervalo)
+        self._intervalo_actual = intervalo
+        return {'control_id': reserva, 'intervalo': intervalo, 'robots': robots}
+
+    def respuesta(self, reserva, url, status, retry_after_header):
+        retry = None
+        revision_manual = status in (401, 403) or (reserva['robots'] and status != 200 and status != 429)
+        if status == 429:
+            retry, excesivo = descarga_segura._interpretar_retry_after(retry_after_header)
+            if retry is None and not excesivo:
+                retry = self._fallback_429
+            revision_manual = excesivo
+        estado, hasta = _finalizar_solicitud(
+            self.fuente, reserva['control_id'], reserva['intervalo'],
+            retry_after_segundos=retry, revision_manual=revision_manual,
+        )
+        return {
+            'revision_manual': estado == ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
+            'espera_hasta': hasta if status in (301, 302, 303, 307, 308) else None,
+        }
+
+    def error(self, reserva, url, exc):
+        # Los errores DNS/conexión/read consumen intervalo aunque no haya status HTTP.
+        _finalizar_solicitud(self.fuente, reserva['control_id'], reserva['intervalo'])
+
+
+def _serializar_estado(resultado, fuente_id):
+    fuente_resultado = next((x for x in resultado.get('fuentes', []) if x['fuente'] == fuente_id), {})
+    return fuente_resultado
+
+
+def _marcar_espera(trabajo_id, token, fencing, *, codigo, hasta=None):
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+        _verificar_fence(trabajo, token, fencing)
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+        trabajo.proxima_accion = hasta or timezone.now() + timedelta(seconds=_backoff(trabajo))
+        trabajo.errores += 1
+        trabajo.codigo_error = codigo[:64]
+        trabajo.token_arrendamiento = None
+        trabajo.arrendamiento_hasta = None
+        trabajo.save()
+
+
+def _espera_fecha(detalle):
+    valor = detalle.get('espera_hasta')
+    if not valor:
+        return None
+    try:
+        fecha = datetime.fromisoformat(valor)
+    except (TypeError, ValueError):
+        return None
+    return fecha if timezone.is_aware(fecha) else None
+
+
+def _marcar_espera_continuacion(trabajo_id, token, fencing, *, codigo, hasta,
+                                url_feed=None, indice_articulo=None, url_articulo=None):
+    for url in (url_feed, url_articulo):
+        if url and len(url) > 2048:
+            raise ValueError('La URL de reanudación excede 2048 caracteres.')
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+        _verificar_fence(trabajo, token, fencing)
+        if url_feed:
+            trabajo.url_feed_reanudacion = url_feed
+        if url_articulo and indice_articulo is not None:
+            for item in trabajo.snapshot:
+                if item['indice'] == indice_articulo:
+                    item['url_reanudacion'] = url_articulo
+                    break
+            serializado = json.dumps(trabajo.snapshot, ensure_ascii=False, separators=(',', ':'))
+            if len(serializado.encode('utf-8')) > MAX_SNAPSHOT_BYTES:
+                raise ValueError('El checkpoint con redirección excede 128 KiB; requiere revisión manual.')
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+        trabajo.proxima_accion = hasta or timezone.now() + timedelta(seconds=_backoff(trabajo))
+        trabajo.errores += 1
+        trabajo.codigo_error = codigo[:64]
+        trabajo.token_arrendamiento = None
+        trabajo.arrendamiento_hasta = None
+        trabajo.save()
+
+
+def _marcar_revision(trabajo_id, token, fencing, codigo):
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+        _verificar_fence(trabajo, token, fencing)
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.REVISION_MANUAL
+        trabajo.proxima_accion = None
+        trabajo.codigo_error = codigo[:64]
+        trabajo.errores += 1
+        trabajo.token_arrendamiento = None
+        trabajo.arrendamiento_hasta = None
+        trabajo.save()
+
+
+def _completar(trabajo_id, token, fencing):
+    ahora = timezone.now()
+    fuente_id = None
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+        _verificar_fence(trabajo, token, fencing)
+        fuente_id = trabajo.fuente_id
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.COMPLETADO
+        trabajo.snapshot = []
+        trabajo.proxima_accion = None
+        trabajo.finalizado = ahora
+        trabajo.token_arrendamiento = None
+        trabajo.arrendamiento_hasta = None
+        trabajo.save()
+    _programar_siguiente(fuente_id, ahora)
+
+
+def _guardar_resultado_item(trabajo_id, token, fencing, *, indice, estado, publicacion_id=None, codigo=''):
+    ahora = timezone.now()
+    trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+    _verificar_fence(trabajo, token, fencing)
+    resultados = list(trabajo.resultados)
+    resultados.append({'indice': indice, 'estado': estado,
+                       'publicacion_id': publicacion_id, 'codigo': codigo[:64]})
+    items = list(trabajo.snapshot)
+    for item in items:
+        if item['indice'] == indice:
+            item['estado'] = estado
+            break
+    trabajo.resultados = resultados
+    trabajo.snapshot = items
+    trabajo.cursor += 1
+    trabajo.procesadas += 1
+    if estado == 'PERSISTIDA':
+        trabajo.nuevas += 1
+    elif estado == 'DUPLICADA':
+        trabajo.duplicadas += 1
+    else:
+        trabajo.rechazadas += 1
+    pendientes = [x for x in items if x['estado'] == 'PENDIENTE']
+    if pendientes:
+        siguiente = _proxima_por_control(trabajo.fuente_id, 60)
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+        trabajo.proxima_accion = siguiente or ahora + timedelta(seconds=MAX_RETRY_SECONDS)
+    else:
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.COMPLETADO
+        trabajo.snapshot = []
+        trabajo.proxima_accion = None
+        trabajo.finalizado = ahora
+    fuente_id = trabajo.fuente_id
+    trabajo.token_arrendamiento = None
+    trabajo.arrendamiento_hasta = None
+    trabajo.save()
+    return not pendientes, fuente_id
+
+
+def _resultado_transitorio(detalle):
+    status = detalle.get('http_status')
+    codigo = detalle.get('codigo', '')
+    if status in (401, 403) or codigo in ('ReglasRobotsDeniegan', 'FuenteBloqueada'):
+        return 'revision'
+    if status == 429 or codigo in ('FuenteRSSEnEspera', 'DescargaPausada'):
+        return 'espera'
+    if status is not None and status >= 500:
+        return 'espera'
+    if codigo in ('TimeoutError', 'ConnectionError', 'gaierror', 'OSError', 'DatabaseError'):
+        return 'espera'
+    return 'rechazo'
+
+
+def _procesar_unidad(trabajo_id, token, fencing, config):
+    trabajo = TrabajoIngestaMultifuente.objects.get(pk=trabajo_id)
+    fuente = _fuente(trabajo.fuente_id, exigir_habilitada=True)
+    intervalos_h56 = getattr(settings, 'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE', {})
+    if not isinstance(intervalos_h56, dict):
+        raise ValueError('La configuración H5.6 de intervalos debe ser un mapa.')
+    h56 = intervalos_h56.get(fuente.identificador, 0)
+    if type(h56) is not int or h56 < 0:
+        raise ValueError('El intervalo H5.6 configurado es inválido.')
+    intervalo_efectivo = max(config.intervalo_segundos, h56)
+    control_http = ControlHTTPConRobots(fuente, intervalo_efectivo)
+    if trabajo.snapshot_capturado is None:
+        guardar = lambda fuente_id, feed: _guardar_snapshot(
+            trabajo_id, token, fencing, fuente_id, feed,
+        )
+        try:
+            resultado = orquestador_multifuente.ejecutar_ingesta_multifuente(
+                [fuente.identificador], limite_por_fuente=MAX_SNAPSHOT_ENTRIES,
+                limite_total=MAX_SNAPSHOT_ENTRIES, dry_run=False, procesar_ia=False,
+                solo_snapshot=True, guardar_snapshot=guardar,
+                control_solicitud=control_http,
+                feed_urls={fuente.identificador: trabajo.url_feed_reanudacion}
+                if trabajo.url_feed_reanudacion else None,
+            )
+        except Exception as exc:
+            _marcar_revision(trabajo_id, token, fencing, type(exc).__name__)
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': type(exc).__name__}
+        resumen = _serializar_estado(resultado, fuente.identificador)
+        actual = TrabajoIngestaMultifuente.objects.get(pk=trabajo_id)
+        if actual.snapshot_capturado is not None:
+            if actual.estado == TrabajoIngestaMultifuente.Estado.COMPLETADO:
+                _liberar_lease(trabajo_id, token, fencing)
+                return {'fuente': fuente.identificador, 'estado': 'COMPLETADO', 'snapshot': 0}
+            hasta = _proxima_por_control(fuente.identificador, intervalo_efectivo)
+            _marcar_espera(trabajo_id, token, fencing, codigo='snapshot_capturado', hasta=hasta)
+            return {'fuente': fuente.identificador, 'estado': 'SNAPSHOT_GUARDADO',
+                    'entradas': actual.entradas_snapshot, 'fuera_limite': actual.entradas_fuera_limite}
+        detalle = (resumen.get('errores') or [{}])[0]
+        control = _control_h5(fuente.identificador)
+        if control and control.estado in (
+            ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+            ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
+        ):
+            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'control_h5_pendiente'))
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL',
+                    'error': detalle.get('codigo')}
+        tipo = _resultado_transitorio(detalle)
+        if tipo == 'revision':
+            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'revision_manual'))
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+        if tipo == 'espera':
+            hasta = _espera_fecha(detalle) or _proxima_por_control(
+                fuente.identificador, intervalo_efectivo,
+            )
+            _marcar_espera_continuacion(
+                trabajo_id, token, fencing, codigo=detalle.get('codigo', 'espera'), hasta=hasta,
+                url_feed=detalle.get('url_reanudacion'),
+            )
+            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': detalle.get('codigo')}
+        _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'fallo_feed'))
+        return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+
+    item = next((x for x in trabajo.snapshot if x['estado'] == 'PENDIENTE'), None)
+    if item is None:
+        _completar(trabajo_id, token, fencing)
+        return {'fuente': fuente.identificador, 'estado': 'COMPLETADO'}
+    noticia = _noticia_desde_snapshot(item)
+    feed = lector_rss.ResultadoRSS(
+        noticias=(noticia,), rechazos=(), total_entradas=1, truncadas=0,
+        indices_noticias=(item['indice'],),
+    )
+    resultado = orquestador_multifuente.ejecutar_ingesta_multifuente(
+        [fuente.identificador], limite_por_fuente=1, limite_total=1,
+        dry_run=False, procesar_ia=False,
+        snapshots={fuente.identificador: feed}, control_solicitud=control_http,
+            omitir_conocidas=True,
+        articulo_urls={fuente.identificador: item['url_reanudacion']}
+        if item.get('url_reanudacion') else None,
+    )
+    resumen = _serializar_estado(resultado, fuente.identificador)
+    if resumen.get('nuevas', 0):
+        estado, publicacion_id, codigo = 'PERSISTIDA', None, ''
+        detalles = resultado.get('fuentes', [{}])[0].get('noticias', [])
+        if detalles:
+            publicacion_id = detalles[-1].get('publicacion_id')
+    elif resumen.get('duplicadas', 0):
+        estado, publicacion_id, codigo = 'DUPLICADA', None, ''
+        detalles = resultado.get('fuentes', [{}])[0].get('noticias', [])
+        if detalles:
+            publicacion_id = detalles[-1].get('publicacion_id')
+    else:
+        detalle = (resumen.get('errores') or [{}])[0]
+        tipo = _resultado_transitorio(detalle)
+        control = _control_h5(fuente.identificador)
+        if tipo == 'revision' or (control and control.estado == ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL):
+            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'revision_manual'))
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+        if tipo == 'espera' or (control and control.estado == ControlSolicitudRSSMetadatos.Estado.ESPERA):
+            hasta = _espera_fecha(detalle) or _proxima_por_control(
+                fuente.identificador, intervalo_efectivo,
+            )
+            _marcar_espera_continuacion(
+                trabajo_id, token, fencing, codigo=detalle.get('codigo', 'espera'), hasta=hasta,
+                indice_articulo=item['indice'], url_articulo=detalle.get('url_reanudacion'),
+            )
+            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': detalle.get('codigo')}
+        if resumen.get('persistencia_incierta'):
+            _marcar_espera(trabajo_id, token, fencing, codigo='persistencia_incierta')
+            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': 'persistencia_incierta'}
+        estado, publicacion_id, codigo = 'RECHAZADA', None, detalle.get('codigo', 'datos_invalidos')
+    with transaction.atomic():
+        completo, fuente_id = _guardar_resultado_item(
+            trabajo_id, token, fencing, indice=item['indice'], estado=estado,
+            publicacion_id=publicacion_id, codigo=codigo,
+        )
+    if completo:
+        _programar_siguiente(fuente_id)
+    return {'fuente': fuente.identificador, 'estado': estado,
+            'indice': item['indice'], 'publicacion_id': publicacion_id}
+
+
+def _liberar_lease(trabajo_id, token, fencing):
+    TrabajoIngestaMultifuente.objects.filter(
+        pk=trabajo_id, token_arrendamiento=token, fencing_token=fencing,
+    ).update(token_arrendamiento=None, arrendamiento_hasta=None)
+
+
+def ejecutar_ciclo(*, max_fuentes=5):
+    if type(max_fuentes) is not int or not 1 <= max_fuentes <= 5:
+        raise ValueError('max_fuentes debe estar entre 1 y 5.')
+    ahora = timezone.now()
+    planes = list(ProgramacionIngestaMultifuente.objects.filter(
+        habilitada=True, acceso_revisado=True, aprobacion_operativa=True,
+    ).order_by('proxima_ejecucion', 'fuente_id'))
+    resultados = []
+    unidades_iniciadas = 0
+    for plan in planes:
+        if unidades_iniciadas >= max_fuentes:
+            break
+        try:
+            fuente = _fuente(plan.fuente_id, exigir_habilitada=True)
+        except ValueError as exc:
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'OMITIDA', 'causa': str(exc)})
+            continue
+        trabajo_info = _reservar_trabajo(plan, ahora)
+        if trabajo_info is None:
+            continue
+        unidades_iniciadas += 1
+        trabajo_id, token, fencing = trabajo_info
+        config = ProgramacionIngestaMultifuente.objects.get(pk=plan.pk)
+        try:
+            resultados.append(_procesar_unidad(trabajo_id, token, fencing, config))
+        except LeasePerdido:
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'LEASE_PERDIDO'})
+        except (DatabaseError, OSError, TimeoutError) as exc:
+            try:
+                _marcar_espera(trabajo_id, token, fencing, codigo=type(exc).__name__)
+            except Exception:
+                pass
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'ESPERA', 'error': type(exc).__name__})
+        except Exception as exc:
+            try:
+                _marcar_revision(trabajo_id, token, fencing, type(exc).__name__)
+            except Exception:
+                pass
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'REVISION_MANUAL', 'error': type(exc).__name__})
+    return {'fuentes_consideradas': len(planes), 'resultados': resultados}
+
+
+def _heartbeat(token, fencing):
+    ahora = timezone.now()
+    return ControlServicioIngestaMultifuente.objects.filter(
+        pk=1, activo=True, token_worker=token, fencing_token=fencing,
+    ).update(heartbeat=ahora, worker_hasta=ahora + timedelta(seconds=WORKER_LEASE_SECONDS))
+
+
+def iniciar_worker(*, intervalo_poll=15, max_fuentes=5, stop_event=None):
+    if type(intervalo_poll) is not int or not 5 <= intervalo_poll <= 60:
+        raise ValueError('El polling debe estar entre 5 y 60 segundos.')
+    with transaction.atomic():
+        control, _ = ControlServicioIngestaMultifuente.objects.select_for_update().get_or_create(pk=1)
+        ahora = timezone.now()
+        if (control.activo and control.worker_hasta and control.worker_hasta > ahora):
+            raise ValueError('Ya hay un worker activo; no se inicia otro.')
+        control.activo = True
+        control.parada_solicitada = False
+        control.fencing_token += 1
+        token = uuid4()
+        control.token_worker = token
+        control.heartbeat = ahora
+        control.worker_hasta = ahora + timedelta(seconds=WORKER_LEASE_SECONDS)
+        control.save()
+        fencing = control.fencing_token
+    ciclos = 0
+    try:
+        while True:
+            actual = ControlServicioIngestaMultifuente.objects.get(pk=1)
+            if actual.token_worker != token or actual.fencing_token != fencing:
+                raise LeasePerdido('Otro worker tomó el control; este se detiene.')
+            if actual.parada_solicitada or (stop_event and stop_event.is_set()):
+                break
+            ejecutar_ciclo(max_fuentes=max_fuentes)
+            ciclos += 1
+            _heartbeat(token, fencing)
+            for _ in range(intervalo_poll):
+                actual.refresh_from_db()
+                if actual.parada_solicitada or (stop_event and stop_event.is_set()):
+                    break
+                time.sleep(1)
+    finally:
+        ControlServicioIngestaMultifuente.objects.filter(
+            pk=1, token_worker=token, fencing_token=fencing,
+        ).update(activo=False, token_worker=None, worker_hasta=None, heartbeat=timezone.now())
+    return {'ciclos_completados': ciclos}
+
+
+def solicitar_detencion():
+    control, _ = ControlServicioIngestaMultifuente.objects.get_or_create(pk=1)
+    control.parada_solicitada = True
+    control.save(update_fields=['parada_solicitada', 'actualizado'])
+    return control.activo
+
+
+def estado_servicio():
+    control = ControlServicioIngestaMultifuente.objects.filter(pk=1).first()
+    return {
+        'activo': bool(control and control.activo and control.worker_hasta and control.worker_hasta > timezone.now()),
+        'parada_solicitada': bool(control and control.parada_solicitada),
+        'heartbeat': control.heartbeat.isoformat() if control and control.heartbeat else None,
+        'fuentes': list(ProgramacionIngestaMultifuente.objects.order_by('fuente_id').values(
+            'fuente_id', 'habilitada', 'acceso_revisado', 'aprobacion_operativa',
+            'intervalo_segundos', 'proxima_ejecucion', 'ultima_ejecucion',
+        )),
+        'trabajos_abiertos': list(TrabajoIngestaMultifuente.objects.filter(
+            estado__in=ACTIVE_STATES,
+        ).values('id', 'fuente_id', 'estado', 'entradas_snapshot', 'cursor',
+                 'proxima_accion', 'codigo_error')),
+    }
+
+
+def reanudar_trabajo(trabajo_id, *, confirmar_revision=False):
+    if confirmar_revision is not True:
+        raise ValueError('La recuperación requiere confirmación explícita.')
+    with transaction.atomic():
+        trabajo = TrabajoIngestaMultifuente.objects.select_for_update().filter(pk=trabajo_id).first()
+        if trabajo is None:
+            raise ValueError('Trabajo de automatización inexistente.')
+        if trabajo.estado != TrabajoIngestaMultifuente.Estado.REVISION_MANUAL:
+            raise ValueError('El trabajo no requiere revisión manual.')
+        fuente = _fuente(trabajo.fuente_id, exigir_habilitada=True)
+        plan = ProgramacionIngestaMultifuente.objects.get(fuente_id=fuente.identificador)
+        if not (plan.habilitada and plan.acceso_revisado and plan.aprobacion_operativa):
+            raise ValueError('La política operativa de la fuente sigue incompleta.')
+        control = _control_h5(fuente.identificador)
+        if control and control.estado in (
+            ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
+            ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
+        ):
+            raise ValueError('Resolver primero el bloqueo H5.6 mediante su comando explícito.')
+        if trabajo.snapshot_capturado is None and trabajo.codigo_error.startswith('snapshot_'):
+            raise ValueError('No hay snapshot confiable; la revisión debe decidir si se captura un feed nuevo.')
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+        trabajo.proxima_accion = timezone.now()
+        trabajo.codigo_error = ''
+        trabajo.finalizado = None
+        trabajo.save()
+    return trabajo
