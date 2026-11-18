@@ -10,6 +10,12 @@ máximo cinco fuentes vencidas y procesa como máximo un artículo por fuente en
 ese ciclo. Un snapshot RSS conserva hasta 30 entradas y registra explícitamente
 las que quedaron fuera de ese límite.
 
+La supervisión opcional en Docker se describe en
+[`worker-multifuente-supervision.md`](worker-multifuente-supervision.md). El
+servicio usa el mismo comando, queda bajo el perfil `worker-multifuente` y no
+se inicia con el arranque Compose habitual. El servicio legacy está bajo el
+perfil separado `legacy-ingesta`.
+
 La migración `0027_automatizacion_ingesta_multifuente` agrega únicamente cuatro
 tablas: programación por fuente, trabajos/checkpoints, caché de robots.txt y
 control del worker. No cambia publicaciones, contenido ni registros históricos.
