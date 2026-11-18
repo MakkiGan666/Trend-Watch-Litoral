@@ -37,6 +37,8 @@ services:
       db:
         condition: service_healthy
   ingesta:
+    profiles:
+      - legacy-ingesta
     build: .
     env_file:
       - .env

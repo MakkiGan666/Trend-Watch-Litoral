@@ -47,10 +47,13 @@
 - El servicio Docker `ingesta` ejecuta `ingestar_recientes`: consulta los RSS
   configurados cada 300 segundos, sin IA por defecto, y deduplica por URL/hash.
   Corre separado del servidor web y reintenta en el ciclo siguiente si falla
-  un feed. El registro queda en la base local, no en Git.
+  un feed. El registro queda en la base local, no en Git. El servicio está bajo
+  el perfil opt-in `legacy-ingesta`; el arranque habitual de Compose no lo incluye.
+  Los comandos de comprobación, ejecución puntual y detención están en
+  [Recolector legacy: ejecución explícita](ingesta-legacy-opt-in.md).
 - Para revisar una sola vez, después de aplicar migraciones:
 
-  `docker compose exec web python manage.py ingestar_recientes --una-vez`
+  `docker compose --profile legacy-ingesta run --rm --no-deps ingesta python manage.py ingestar_recientes --una-vez`
 
 - Si el servicio permanece detenido más tiempo que el histórico visible en los
   RSS, puede faltar cobertura. En ese caso se utiliza la ingesta histórica del
@@ -64,7 +67,8 @@ Desde la raíz del proyecto, con la base local respaldada y los contenedores
 1. `docker compose exec web python manage.py migrate`
 2. `docker compose exec web python manage.py check`
 3. `docker compose exec web python manage.py test core.test_portada_regional core.test_comentarios core.test_sentimiento_comentarios core.test_clasificacion core.test_indicadores_inicio --noinput`
-4. `docker compose up -d ingesta`
+4. `docker compose --profile legacy-ingesta up -d ingesta` (solo después de
+   autorizar expresamente el recolector legacy y verificar proyecto/base).
 
 La migración `0013` depende de la migración de unión `0012_merge_20261027_0946`
 que reúne las dos ramas `0011` presentes en el árbol de trabajo actual. Ambas
