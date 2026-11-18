@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import timedelta
 from threading import Event
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -14,7 +15,7 @@ from core.models import (
     TrabajoIngestaMultifuente,
 )
 from core.services import (
-    descarga_segura, fuentes_rss, lector_rss,
+    descarga_segura, fuentes_rss, lector_rss, orquestador_multifuente,
     planificador_multifuente as planificador,
 )
 from core.services.persistencia_rss_metadatos import (
@@ -39,6 +40,7 @@ class AutomatizacionMultifuenteTests(TestCase):
                   revisada=True, aprobada=True):
         return ProgramacionIngestaMultifuente.objects.create(
             fuente_id=fuente_id or self.fuente.identificador,
+            frecuencia_segundos=intervalo,
             intervalo_segundos=intervalo,
             habilitada=habilitada,
             acceso_revisado=revisada,
@@ -63,6 +65,160 @@ class AutomatizacionMultifuenteTests(TestCase):
         self.assertFalse(plan.acceso_revisado)
         self.assertFalse(plan.aprobacion_operativa)
         self.assertEqual(TrabajoIngestaMultifuente.objects.count(), 0)
+
+    def test_configuracion_separa_cadencia_rss_de_minimo_http_y_legacy_preserva_ambos(self):
+        plan = planificador.configurar_fuente(
+            self.fuente.identificador,
+            frecuencia_segundos=86400,
+            intervalo_http_segundos=3600,
+        )
+        self.assertEqual(plan.frecuencia_segundos, 86400)
+        self.assertEqual(plan.intervalo_segundos, 3600)
+        self.assertFalse(plan.habilitada)
+        legacy = planificador.configurar_fuente(self.fuente.identificador, intervalo_segundos=7200)
+        self.assertEqual(legacy.frecuencia_segundos, 7200)
+        self.assertEqual(legacy.intervalo_segundos, 7200)
+        with self.assertRaisesRegex(ValueError, 'No combines'):
+            planificador.configurar_fuente(
+                self.fuente.identificador, intervalo_segundos=7200, frecuencia_segundos=3600,
+            )
+
+    def test_intervalo_http_mayor_que_frecuencia_se_conserva_como_piso_operativo(self):
+        ahora = timezone.now()
+        plan = self.programar(intervalo=3600)
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(
+            frecuencia_segundos=900, intervalo_segundos=7200,
+        )
+        planificador._programar_siguiente(self.fuente.identificador, ahora)
+        plan.refresh_from_db()
+        self.assertEqual(plan.proxima_ejecucion, ahora + timedelta(seconds=7200))
+
+    def test_espera_h56_conserva_fecha_absoluta_para_reanudar_sin_sondeos_prematuros(self):
+        reserva = _reservar_solicitud(self.fuente, 60)
+        _finalizar_solicitud(self.fuente, reserva, 60)
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        deadline = control.ultimo_intento + timedelta(hours=20)
+        # Simula que venció la espera del intervalo base registrada al finalizar
+        # robots.txt; ahora la regla Crawl-delay del recurso fija el plazo mayor.
+        ControlSolicitudRSSMetadatos.objects.filter(pk=control.pk).update(
+            retry_after_hasta=timezone.now() - timedelta(seconds=1),
+        )
+        with self.assertRaises(FuenteRSSEnEspera) as contexto:
+            _reservar_solicitud(self.fuente, 20 * 3600)
+        self.assertEqual(contexto.exception.espera_hasta, deadline)
+
+        resultado = {'errores': []}
+        orquestador_multifuente._error(
+            resultado, 'rss', 'FuenteRSSEnEspera', exc=contexto.exception,
+        )
+        fecha_reanudacion = planificador._espera_fecha(resultado['errores'][0])
+        self.assertEqual(fecha_reanudacion, deadline)
+
+    def test_programacion_usa_cadencia_rss_independiente_del_intervalo_http(self):
+        ahora = timezone.now()
+        plan = self.programar(intervalo=3600)
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(frecuencia_segundos=86400)
+        with patch('core.services.planificador_multifuente.settings.RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE',
+                   {self.fuente.identificador: 7200}):
+            planificador._programar_siguiente(self.fuente.identificador, ahora)
+        plan.refresh_from_db()
+        self.assertEqual(plan.proxima_ejecucion, ahora + timedelta(seconds=86400))
+
+    def test_solicitud_http_usa_minimo_http_y_no_cadencia_rss(self):
+        plan = self.programar(intervalo=60)
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(
+            frecuencia_segundos=86400, intervalo_segundos=7200,
+        )
+        noticia = self.noticia()
+        token = uuid4()
+        trabajo = TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador,
+            estado=TrabajoIngestaMultifuente.Estado.PROCESANDO,
+            snapshot=[planificador._snapshot_item(0, noticia)],
+            snapshot_capturado=timezone.now(),
+            token_arrendamiento=token,
+            fencing_token=1,
+        )
+        with patch('core.services.planificador_multifuente.settings.RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE',
+                   {self.fuente.identificador: 10800}), \
+                patch('core.services.planificador_multifuente.orquestador_multifuente.ejecutar_ingesta_multifuente',
+                      return_value={'fuentes': [{'fuente': self.fuente.identificador, 'nuevas': 1,
+                                                 'duplicadas': 0, 'errores': [], 'noticias': []}]}), \
+                patch.object(planificador, 'ControlHTTPConRobots', wraps=planificador.ControlHTTPConRobots) as control:
+            planificador._procesar_unidad(trabajo.pk, token, 1, ProgramacionIngestaMultifuente.objects.get(pk=plan.pk))
+        self.assertEqual(control.call_args.args[1], 10800)
+
+    def test_cache_robots_se_extiende_solo_hasta_limite_seguro_para_intervalos_largos(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 18 * 3600)
+        reglas = b'User-agent: *\nCrawl-delay: 72000\n'
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   return_value=reglas) as descargar:
+            parser = control._parser(self.fuente.hosts_permitidos[0])
+        descargar.assert_called_once()
+        cache = planificador.CacheRobotsMultifuente.objects.get(
+            fuente_id=self.fuente.identificador, host=self.fuente.hosts_permitidos[0],
+        )
+        self.assertEqual(cache.expira - cache.consultado, timedelta(hours=20, minutes=5))
+        self.assertEqual(control._intervalo_reglas(parser), 72000)
+
+    def test_cache_robots_respeta_max_age_http_y_bloquea_vigencia_insuficiente(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 3600)
+        reglas = b'User-agent: *\nAllow: /\n'
+
+        def descargar_con_max_age(url, **kwargs):
+            kwargs['observador_respuesta']({'cache-control': 'public, max-age=7200', 'age': '120'})
+            return reglas
+
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   side_effect=descargar_con_max_age):
+            control._parser(self.fuente.hosts_permitidos[0])
+        cache = planificador.CacheRobotsMultifuente.objects.get(
+            fuente_id=self.fuente.identificador, host=self.fuente.hosts_permitidos[0],
+        )
+        self.assertEqual(cache.expira - cache.consultado, timedelta(hours=1, minutes=58))
+
+        otro_host = self.fuente.hosts_permitidos[-1]
+        control_corto = planificador.ControlHTTPConRobots(self.fuente, 3600)
+
+        def descargar_vigencia_corta(url, **kwargs):
+            kwargs['observador_respuesta']({'cache-control': 'max-age=1800'})
+            return reglas
+
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   side_effect=descargar_vigencia_corta):
+            with self.assertRaisesRegex(ValueError, 'no cubre el intervalo requerido'):
+                control_corto._parser(otro_host)
+        self.assertFalse(planificador.CacheRobotsMultifuente.objects.filter(host=otro_host).exists())
+
+    def test_cache_robots_no_reutiliza_respuesta_no_store(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+
+        def descargar_no_store(url, **kwargs):
+            kwargs['observador_respuesta']({'cache-control': 'no-store'})
+            return b'User-agent: *\nAllow: /\n'
+
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   side_effect=descargar_no_store):
+            with self.assertRaisesRegex(ValueError, 'Cache-Control impide'):
+                control._parser(self.fuente.hosts_permitidos[0])
+        self.assertFalse(planificador.CacheRobotsMultifuente.objects.exists())
+
+    def test_intervalo_mayor_que_ventana_robots_falla_cerrado_sin_get(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 24 * 3600)
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar') as descargar:
+            with self.assertRaisesRegex(ValueError, 'vigencia máxima segura'):
+                control._parser(self.fuente.hosts_permitidos[0])
+        descargar.assert_not_called()
+
+    def test_regla_robots_superior_a_ventana_no_se_cachea_ni_permite_recurso(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        reglas = b'User-agent: *\nCrawl-delay: 90000\n'
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   return_value=reglas), patch('core.services.planificador_multifuente._reservar_solicitud') as reservar:
+            with self.assertRaisesRegex(ValueError, 'exceden la vigencia máxima segura'):
+                control.antes(self.fuente.feed)
+        reservar.assert_not_called()
+        self.assertFalse(planificador.CacheRobotsMultifuente.objects.exists())
 
     def test_ciclo_omite_fuente_sin_aprobacion_operativa(self):
         self.programar(aprobada=False)

@@ -30,8 +30,9 @@ class AutorizacionMetadatosError(ValueError):
 class FuenteRSSEnEspera(ValueError):
     """No venció el intervalo mínimo o el Retry-After del servidor."""
 
-    def __init__(self, segundos):
+    def __init__(self, segundos, *, espera_hasta=None):
         self.segundos = max(1, int(segundos))
+        self.espera_hasta = espera_hasta or timezone.now() + timedelta(seconds=self.segundos)
         super().__init__('La fuente está dentro de su intervalo de espera.')
 
 
@@ -135,11 +136,15 @@ def _reservar_solicitud(fuente, intervalo_segundos):
             raise FuenteBloqueada('El bloqueo no tiene fecha de liberación; requiere revisión manual.')
         hasta = control.retry_after_hasta
         if hasta and hasta > ahora:
-            raise FuenteRSSEnEspera(math.ceil((hasta - ahora).total_seconds()))
+            raise FuenteRSSEnEspera(
+                math.ceil((hasta - ahora).total_seconds()), espera_hasta=hasta,
+            )
         ultimo = control.ultimo_intento
         siguiente = ultimo + timedelta(seconds=intervalo_segundos) if ultimo else None
         if siguiente and siguiente > ahora:
-            raise FuenteRSSEnEspera(math.ceil((siguiente - ahora).total_seconds()))
+            raise FuenteRSSEnEspera(
+                math.ceil((siguiente - ahora).total_seconds()), espera_hasta=siguiente,
+            )
         control.ultimo_intento = ahora
         control.estado = ControlSolicitudRSSMetadatos.Estado.EN_CURSO
         control.retry_after_hasta = None

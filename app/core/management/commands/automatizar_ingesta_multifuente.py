@@ -21,7 +21,12 @@ class Command(BaseCommand):
         modos.add_argument('--estado', action='store_true')
         modos.add_argument('--reanudar-trabajo', type=int, metavar='ID')
         parser.add_argument('--fuente')
-        parser.add_argument('--intervalo-segundos', type=int)
+        parser.add_argument(
+            '--intervalo-segundos', type=int,
+            help='Compatibilidad: configura frecuencia RSS y mínimo HTTP al mismo valor.',
+        )
+        parser.add_argument('--frecuencia-segundos', type=int, help='Cadencia entre consultas RSS.')
+        parser.add_argument('--intervalo-http-segundos', type=int, help='Mínimo entre solicitudes HTTP.')
         parser.add_argument('--confirmar-revision-acceso', action='store_true')
         parser.add_argument('--confirmar-aprobacion-operativa', action='store_true')
         parser.add_argument('--confirmar-revision', action='store_true')
@@ -35,12 +40,15 @@ class Command(BaseCommand):
                     raise ValueError('--fuente es obligatorio con --configurar.')
                 salida = planificador.configurar_fuente(
                     opts['fuente'],
-                    intervalo_segundos=(3600 if opts['intervalo_segundos'] is None
-                                        else opts['intervalo_segundos']),
+                    intervalo_segundos=opts['intervalo_segundos'],
+                    frecuencia_segundos=opts['frecuencia_segundos'],
+                    intervalo_http_segundos=opts['intervalo_http_segundos'],
                 )
                 resultado = {
                     'fuente_id': salida.fuente_id, 'habilitada': salida.habilitada,
+                    'frecuencia_segundos': salida.frecuencia_segundos,
                     'intervalo_segundos': salida.intervalo_segundos,
+                    'intervalo_http_segundos': salida.intervalo_segundos,
                 }
             elif opts['habilitar']:
                 if not opts['fuente']:

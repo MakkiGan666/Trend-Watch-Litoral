@@ -3712,6 +3712,29 @@ class TransporteMultifuenteTestCase(SimpleTestCase):
                 self.assertEqual(conexion.return_value.request.call_args.args, ('GET', '/otra?x=1'))
                 self.assertEqual(conexion.return_value.close.call_count, 2)
 
+    def test_observador_captura_cabeceras_de_respuesta_exitosa(self):
+        fuente = self.fuentes[0]
+        respuesta = self.respuesta()
+        respuesta.getheader.side_effect = lambda nombre: {
+            'Cache-Control': 'max-age=7200',
+            'Expires': None,
+            'Date': None,
+            'Age': '10',
+        }.get(nombre)
+        observadas = []
+        with patch.object(self.red.socket, 'getaddrinfo', return_value=[self.publica]), patch.object(
+            self.red, '_Conexion'
+        ) as conexion:
+            conexion.return_value.getresponse.return_value = respuesta
+            resultado = self.red.descargar(
+                fuente.feed, fuente=fuente,
+                observador_respuesta=observadas.append,
+            )
+        self.assertEqual(resultado, b'RSS')
+        self.assertEqual(observadas, [{
+            'cache-control': 'max-age=7200', 'expires': None, 'date': None, 'age': '10',
+        }])
+
     def test_destinos_maliciosos_y_otros_medios_sin_dns(self):
         for fuente in self.fuentes:
             host = fuente.hosts_permitidos[0]

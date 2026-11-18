@@ -194,6 +194,7 @@ class ProgramacionIngestaMultifuente(models.Model):
     habilitada = models.BooleanField(default=False)
     acceso_revisado = models.BooleanField(default=False)
     aprobacion_operativa = models.BooleanField(default=False)
+    frecuencia_segundos = models.PositiveIntegerField(default=3600)
     intervalo_segundos = models.PositiveIntegerField(default=3600)
     proxima_ejecucion = models.DateTimeField(null=True, blank=True)
     ultima_ejecucion = models.DateTimeField(null=True, blank=True)
@@ -203,6 +204,10 @@ class ProgramacionIngestaMultifuente(models.Model):
     class Meta:
         db_table = 'core_programacion_ingesta_multifuente'
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(frecuencia_segundos__gte=60),
+                name='programacion_multifuente_frecuencia_minima',
+            ),
             models.CheckConstraint(
                 condition=models.Q(intervalo_segundos__gte=60),
                 name='programacion_multifuente_intervalo_minimo',
