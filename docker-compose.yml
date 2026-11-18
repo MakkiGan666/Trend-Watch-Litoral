@@ -54,6 +54,31 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  worker-multifuente:
+    profiles:
+      - worker-multifuente
+    build: .
+    env_file:
+      - .env
+    container_name: trendwatch_litoral_worker_multifuente
+    command: python manage.py automatizar_ingesta_multifuente --iniciar --max-fuentes 1 --poll-segundos 15
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 7m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_HOST: db
+      DB_PORT: 5432
+    volumes:
+      - ./app:/app
+    depends_on:
+      db:
+        condition: service_healthy
 
 volumes:
   postgres_data:
