@@ -188,6 +188,115 @@ class TrabajoLoteRSSMetadatos(models.Model):
         return f'Lote RSS {self.pk}: {self.fuente_id} ({self.estado})'
 
 
+class ProgramacionIngestaMultifuente(models.Model):
+    """Política operativa por fuente; ausente/deshabilitada significa no ejecutar."""
+    fuente_id = models.CharField(max_length=64, unique=True)
+    habilitada = models.BooleanField(default=False)
+    acceso_revisado = models.BooleanField(default=False)
+    aprobacion_operativa = models.BooleanField(default=False)
+    intervalo_segundos = models.PositiveIntegerField(default=3600)
+    proxima_ejecucion = models.DateTimeField(null=True, blank=True)
+    ultima_ejecucion = models.DateTimeField(null=True, blank=True)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'core_programacion_ingesta_multifuente'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(intervalo_segundos__gte=60),
+                name='programacion_multifuente_intervalo_minimo',
+            ),
+        ]
+
+
+class TrabajoIngestaMultifuente(models.Model):
+    """Snapshot RSS durable y cursor/checkpoints de un ciclo reciente."""
+    class Estado(models.TextChoices):
+        SNAPSHOT_PENDIENTE = 'SNAPSHOT_PENDIENTE', 'Snapshot pendiente'
+        PROCESANDO = 'PROCESANDO', 'Procesando snapshot'
+        ESPERA = 'ESPERA', 'Espera H5.6 o reintento'
+        REVISION_MANUAL = 'REVISION_MANUAL', 'Revisión manual requerida'
+        COMPLETADO = 'COMPLETADO', 'Completado'
+        FALLIDO = 'FALLIDO', 'Fallido'
+        CANCELADO = 'CANCELADO', 'Cancelado'
+
+    fuente_id = models.CharField(max_length=64)
+    estado = models.CharField(max_length=24, choices=Estado.choices, default=Estado.SNAPSHOT_PENDIENTE)
+    snapshot = models.JSONField(default=list)
+    snapshot_capturado = models.DateTimeField(null=True, blank=True)
+    url_feed_reanudacion = models.CharField(max_length=2048, blank=True, default='')
+    entradas_feed = models.PositiveIntegerField(default=0)
+    entradas_snapshot = models.PositiveIntegerField(default=0)
+    entradas_fuera_limite = models.PositiveIntegerField(default=0)
+    cursor = models.PositiveIntegerField(default=0)
+    resultados = models.JSONField(default=list)
+    procesadas = models.PositiveIntegerField(default=0)
+    nuevas = models.PositiveIntegerField(default=0)
+    duplicadas = models.PositiveIntegerField(default=0)
+    rechazadas = models.PositiveIntegerField(default=0)
+    errores = models.PositiveIntegerField(default=0)
+    proxima_accion = models.DateTimeField(null=True, blank=True)
+    codigo_error = models.CharField(max_length=64, blank=True, default='')
+    token_arrendamiento = models.UUIDField(null=True, blank=True)
+    arrendamiento_hasta = models.DateTimeField(null=True, blank=True)
+    fencing_token = models.PositiveBigIntegerField(default=0)
+    creado = models.DateTimeField(auto_now_add=True)
+    actualizado = models.DateTimeField(auto_now=True)
+    finalizado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'core_trabajo_ingesta_multifuente'
+        ordering = ['creado', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(estado__in=[
+                    'SNAPSHOT_PENDIENTE', 'PROCESANDO', 'ESPERA',
+                    'REVISION_MANUAL', 'COMPLETADO', 'FALLIDO', 'CANCELADO',
+                ]),
+                name='trabajo_ingesta_multifuente_estado_valido',
+            ),
+            models.UniqueConstraint(
+                fields=['fuente_id'],
+                condition=models.Q(estado__in=[
+                    'SNAPSHOT_PENDIENTE', 'PROCESANDO', 'ESPERA', 'REVISION_MANUAL',
+                ]),
+                name='trabajo_ingesta_multifuente_unico_abierto',
+            ),
+        ]
+
+
+class CacheRobotsMultifuente(models.Model):
+    """Reglas robots por host exacto, con expiración acotada y fail-closed."""
+    fuente_id = models.CharField(max_length=64)
+    host = models.CharField(max_length=253)
+    reglas = models.TextField()
+    consultado = models.DateTimeField()
+    expira = models.DateTimeField()
+
+    class Meta:
+        db_table = 'core_cache_robots_multifuente'
+        constraints = [
+            models.UniqueConstraint(fields=['fuente_id', 'host'], name='robots_fuente_host_unico'),
+            models.CheckConstraint(condition=models.Q(expira__gt=models.F('consultado')),
+                                   name='robots_cache_expiracion_posterior'),
+        ]
+
+
+class ControlServicioIngestaMultifuente(models.Model):
+    """Control singleton para arranque, parada solicitada y fencing del worker."""
+    activo = models.BooleanField(default=False)
+    parada_solicitada = models.BooleanField(default=False)
+    token_worker = models.UUIDField(null=True, blank=True)
+    worker_hasta = models.DateTimeField(null=True, blank=True)
+    fencing_token = models.PositiveBigIntegerField(default=0)
+    heartbeat = models.DateTimeField(null=True, blank=True)
+    actualizado = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'core_control_servicio_ingesta_multifuente'
+
+
 class PublicacionQuerySet(models.QuerySet):
     def con_cuerpo_completo(self):
         """Sólo artículos con bandera y texto no blanco; excluye legacy vacíos."""

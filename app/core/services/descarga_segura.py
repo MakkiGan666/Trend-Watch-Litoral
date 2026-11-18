@@ -25,6 +25,15 @@ class RespuestaHTTPError(OSError):
         super().__init__(f'HTTP {self.estado}')
 
 
+class DescargaPausada(OSError):
+    """Redirección validada que debe continuar tras vencer el intervalo H5.6."""
+
+    def __init__(self, url_reanudacion, espera_hasta=None):
+        self.url_reanudacion = url_reanudacion
+        self.espera_hasta = espera_hasta
+        super().__init__('La redirección requiere respetar el intervalo entre solicitudes.')
+
+
 def _interpretar_retry_after(valor, *, ahora=None):
     if not isinstance(valor, str) or not valor.strip():
         return None, False
@@ -141,7 +150,7 @@ def _leer_limitado(respuesta, sock, limite, max_bytes=MAX_BYTES):
         bloques.append(bloque)
 
 
-def descargar(url, timeout=10, *, fuente=None):
+def descargar(url, timeout=10, *, fuente=None, control_solicitud=None):
     """Descarga con hosts fijos por fuente y controles SSRF en cada salto.
 
     Acepta sólo la configuración canónica de FuenteRSS del catálogo H1.1 (también si está deshabilitada: este
@@ -160,11 +169,14 @@ def descargar(url, timeout=10, *, fuente=None):
     limite = time.monotonic() + timeout
     for salto in range(max_redirecciones + 1):
         partes = validar_url(url, fuente=fuente)
-        destinos = socket.getaddrinfo(partes.hostname, 443, type=socket.SOCK_STREAM)
-        if not destinos or any(not _direccion_publica(d[4][0]) for d in destinos):
-            raise ValueError('Resolución DNS no pública')
-        conexion = _Conexion(partes.hostname, destinos[0], _restante(limite))
+        reserva = control_solicitud.antes(url) if control_solicitud is not None else None
+        conexion = None
+        finalizada = False
         try:
+            destinos = socket.getaddrinfo(partes.hostname, 443, type=socket.SOCK_STREAM)
+            if not destinos or any(not _direccion_publica(d[4][0]) for d in destinos):
+                raise ValueError('Resolución DNS no pública')
+            conexion = _Conexion(partes.hostname, destinos[0], _restante(limite))
             ruta = partes.path or '/'
             if partes.query:
                 ruta += '?' + partes.query
@@ -176,19 +188,50 @@ def descargar(url, timeout=10, *, fuente=None):
             if respuesta.status in (301, 302, 303, 307, 308):
                 ubicacion = respuesta.getheader('Location')
                 if not ubicacion:
+                    if control_solicitud is not None:
+                        finalizada = True
+                        control_solicitud.respuesta(reserva, url, respuesta.status,
+                                                    respuesta.getheader('Retry-After'))
                     raise ValueError('Redirección sin destino')
-                url = urljoin(url, ubicacion)
+                if control_solicitud is not None:
+                    finalizada = True
+                    decision = control_solicitud.respuesta(
+                        reserva, url, respuesta.status, respuesta.getheader('Retry-After'),
+                    )
+                else:
+                    decision = None
+                destino = urljoin(url, ubicacion)
+                validar_url(destino, fuente=fuente)
+                if decision and decision.get('revision_manual'):
+                    raise ValueError('La política del recurso requiere revisión manual.')
+                if decision and decision.get('espera_hasta'):
+                    raise DescargaPausada(destino, decision['espera_hasta'])
+                url = destino
                 continue  # Cada salto vuelve a validar URL y resolución.
             if respuesta.status != 200:
+                retry_after_header = respuesta.getheader('Retry-After')
                 retry_after, retry_after_excesivo = _interpretar_retry_after(
-                    respuesta.getheader('Retry-After'),
+                    retry_after_header,
                 )
+                if control_solicitud is not None:
+                    finalizada = True
+                    control_solicitud.respuesta(reserva, url, respuesta.status, retry_after_header)
                 raise RespuestaHTTPError(
                     respuesta.status,
                     retry_after,
                     retry_after_excesivo,
                 )
-            return _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
+            contenido = _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
+            if control_solicitud is not None:
+                finalizada = True
+                control_solicitud.respuesta(reserva, url, respuesta.status, None)
+            return contenido
+        except Exception as exc:
+            if control_solicitud is not None and not finalizada:
+                finalizada = True
+                control_solicitud.error(reserva, url, exc)
+            raise
         finally:
-            conexion.close()
+            if conexion is not None:
+                conexion.close()
     raise ValueError('Demasiadas redirecciones')
