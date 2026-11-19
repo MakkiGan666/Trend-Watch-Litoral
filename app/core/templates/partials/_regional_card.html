@@ -1,7 +1,7 @@
 <article class="news-card news-card--keywords">
   <a class="news-card__overlay" href="{% url 'noticia' publicacion.pk %}" aria-label="Leer noticia: {{ publicacion.titulo }}"></a>
-  <div class="news-card__media">
-    {% if publicacion.imagen_publica_url %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy">
+  <div class="news-card__media" data-news-image-container>
+    {% if publicacion.imagen_publica_url %}{% include "partials/_news_image_fallback.html" with oculto=True %}<img src="{{ publicacion.imagen_publica_url }}" alt="" loading="lazy" data-news-image-fallback>
     {% else %}{% include "partials/_news_image_fallback.html" %}{% endif %}
   </div>
   <div class="news-card__body">

@@ -59,19 +59,23 @@
     }
     const media = document.createElement('div');
     media.className = 'news-card__media';
+    media.dataset.newsImageContainer = '';
     const fallback = document.createElement('span');
     fallback.className = 'news-card__fallback';
-    fallback.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span>El Territorio</span>';
+    fallback.dataset.newsImagePlaceholder = '';
+    fallback.classList.add('news-image-fallback');
+    fallback.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></svg><span>Sin fotografía disponible</span>';
     media.append(fallback);
     const imageUrl = safeUrl(publication.imagen_url);
     if (imageUrl) {
       const image = document.createElement('img');
       image.alt = ''; // El título contiguo identifica la noticia.
       image.loading = 'lazy';
+      image.dataset.newsImageFallback = '';
       const credit = document.createElement('span');
       credit.className = 'photo-credit';
       credit.textContent = '© Foto: ' + sourceName(publication.fuente);
-      image.addEventListener('error', () => { image.remove(); credit.remove(); }, { once: true });
+      credit.dataset.newsImageCredit = '';
       image.src = imageUrl;
       media.append(image, credit);
     }
