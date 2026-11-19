@@ -541,6 +541,187 @@ class AliasURLPublicacion(models.Model):
         ]
 
 
+class GrupoEditorial(models.Model):
+    """Agrupación editorial revisada; nunca modifica sus publicaciones."""
+
+    class Estado(models.TextChoices):
+        BORRADOR = 'BORRADOR', 'En revisión'
+        ACTIVO = 'ACTIVO', 'Aprobado'
+        REVOCADO = 'REVOCADO', 'Revocado'
+
+    representante = models.ForeignKey(
+        Publicacion, on_delete=models.PROTECT, related_name='grupos_editoriales_representados',
+    )
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.BORRADOR)
+    version_detector = models.CharField(max_length=40, blank=True, default='')
+    criterio_representante = models.JSONField(default=dict, blank=True)
+    creado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='grupos_editoriales_creados',
+    )
+    creado = models.DateTimeField(default=timezone.now)
+    aprobado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='grupos_editoriales_aprobados',
+    )
+    aprobado = models.DateTimeField(null=True, blank=True)
+    motivo_aprobacion = models.CharField(max_length=500, blank=True, default='')
+    revocado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='grupos_editoriales_revocados',
+    )
+    revocado = models.DateTimeField(null=True, blank=True)
+    motivo_revocacion = models.CharField(max_length=500, blank=True, default='')
+
+    class Meta:
+        db_table = 'core_grupo_editorial'
+        permissions = [
+            ('revisar_candidatos_editoriales', 'Puede revisar candidatos de agrupación editorial'),
+            ('aprobar_agrupacion_editorial', 'Puede aprobar agrupaciones editoriales'),
+            ('revocar_agrupacion_editorial', 'Puede revocar agrupaciones editoriales'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(estado__in=['BORRADOR', 'ACTIVO', 'REVOCADO']),
+                name='grupo_editorial_estado_valido',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        estado='ACTIVO', aprobado_por__isnull=False, aprobado__isnull=False,
+                        motivo_aprobacion__gt='',
+                    )
+                    | ~models.Q(estado='ACTIVO')
+                ), name='grupo_editorial_activo_aprobado',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        estado='REVOCADO', revocado_por__isnull=False, revocado__isnull=False,
+                        motivo_revocacion__gt='',
+                    )
+                    | ~models.Q(estado='REVOCADO')
+                ), name='grupo_editorial_revocado_auditado',
+            ),
+        ]
+        indexes = [models.Index(fields=['estado', 'representante'], name='grupo_editorial_estado_rep_idx')]
+        constraints += [models.UniqueConstraint(
+            fields=['representante'], condition=models.Q(estado='ACTIVO'),
+            name='grupo_editorial_representante_activo_unico',
+        )]
+
+
+class MiembroGrupoEditorial(models.Model):
+    """Decisión individual, siempre evaluada directamente contra la representante."""
+
+    class Rol(models.TextChoices):
+        REPRESENTANTE = 'REPRESENTANTE', 'Representante'
+        MIEMBRO = 'MIEMBRO', 'Miembro'
+
+    class Decision(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        APROBADO = 'APROBADO', 'Aprobado'
+        RECHAZADO = 'RECHAZADO', 'Rechazado'
+
+    grupo = models.ForeignKey(GrupoEditorial, on_delete=models.PROTECT, related_name='miembros')
+    publicacion = models.ForeignKey(Publicacion, on_delete=models.PROTECT, related_name='membresias_editoriales')
+    rol = models.CharField(max_length=14, choices=Rol.choices)
+    decision = models.CharField(max_length=10, choices=Decision.choices, default=Decision.PENDIENTE)
+    evidencia = models.JSONField(default=dict, blank=True)
+    huella_publicacion = models.CharField(max_length=64)
+    version_detector = models.CharField(max_length=40, blank=True, default='')
+    revisado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='membresias_editoriales_revisadas',
+    )
+    revisado = models.DateTimeField(null=True, blank=True)
+    motivo_revision = models.CharField(max_length=500, blank=True, default='')
+    vigente = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'core_miembro_grupo_editorial'
+        constraints = [
+            models.UniqueConstraint(fields=['grupo', 'publicacion'], name='miembro_editorial_publicacion_unica'),
+            models.CheckConstraint(
+                condition=models.Q(rol__in=['REPRESENTANTE', 'MIEMBRO']),
+                name='miembro_editorial_rol_valido',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(decision__in=['PENDIENTE', 'APROBADO', 'RECHAZADO']),
+                name='miembro_editorial_decision_valida',
+            ),
+            models.CheckConstraint(
+                condition=(~models.Q(vigente=True) | models.Q(decision='APROBADO')),
+                name='miembro_editorial_vigente_aprobado',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        decision='PENDIENTE', revisado_por__isnull=True,
+                        revisado__isnull=True, motivo_revision='',
+                    )
+                    | models.Q(
+                        decision__in=['APROBADO', 'RECHAZADO'], revisado_por__isnull=False,
+                        revisado__isnull=False, motivo_revision__gt='',
+                    )
+                ), name='miembro_editorial_decision_auditada',
+            ),
+            models.UniqueConstraint(
+                fields=['publicacion'], condition=models.Q(vigente=True),
+                name='miembro_editorial_publicacion_vigente_unica',
+            ),
+            models.UniqueConstraint(
+                fields=['grupo'], condition=models.Q(rol='REPRESENTANTE'),
+                name='miembro_editorial_un_representante_grupo',
+            ),
+        ]
+        indexes = [models.Index(fields=['grupo', 'decision'], name='miembro_editorial_revision_idx')]
+
+
+class EventoRevisionEditorial(models.Model):
+    """Bitácora append-only de decisiones editoriales."""
+
+    class Tipo(models.TextChoices):
+        CREADO = 'CREADO', 'Grupo creado'
+        APROBADO = 'APROBADO', 'Miembro aprobado'
+        RECHAZADO = 'RECHAZADO', 'Miembro rechazado'
+        REPRESENTANTE = 'REPRESENTANTE', 'Representante seleccionada'
+        ACTIVADO = 'ACTIVADO', 'Grupo activado'
+        REVOCADO = 'REVOCADO', 'Grupo revocado'
+
+    class QuerySet(models.QuerySet):
+        def update(self, **kwargs):
+            raise ValidationError('Los eventos de revisión son inmutables.')
+
+        def delete(self):
+            raise ValidationError('Los eventos de revisión no se pueden eliminar.')
+
+    objects = models.Manager.from_queryset(QuerySet)()
+
+    grupo = models.ForeignKey(GrupoEditorial, on_delete=models.PROTECT, related_name='eventos_revision')
+    miembro = models.ForeignKey(
+        MiembroGrupoEditorial, null=True, blank=True, on_delete=models.PROTECT, related_name='eventos_revision',
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='eventos_revision_editorial',
+    )
+    tipo = models.CharField(max_length=24, choices=Tipo.choices)
+    motivo = models.CharField(max_length=500)
+    evidencia = models.JSONField(default=dict, blank=True)
+    creado = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'core_evento_revision_editorial'
+        ordering = ['creado', 'pk']
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError('Los eventos de revisión son inmutables.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Los eventos de revisión no se pueden eliminar.')
+
+
 class ProcesamientoIAMultifuente(models.Model):
     """Reserva durable de un único envío: un fallo incierto no habilita reenvío."""
     class Estado(models.TextChoices):
