@@ -16,8 +16,11 @@
     {% if resultados %}
     <ol class="search-results" aria-label="Noticias encontradas">
       {% for resultado in resultados %}
-      <li><article class="search-result glass{% if resultado.imagen_url %} search-result--image{% endif %}">
-        {% if resultado.imagen_url %}<div class="search-result__image"><img src="{{ resultado.imagen_url }}" alt="" loading="lazy" width="140" height="104" data-search-image></div>{% endif %}
+      <li><article class="search-result glass search-result--image">
+        <div class="search-result__image" data-news-image-container>
+          {% if resultado.imagen_url %}<span class="news-image-fallback" data-news-image-placeholder hidden aria-hidden="true">Sin fotografía disponible</span><img src="{{ resultado.imagen_url }}" alt="" loading="lazy" width="140" height="104" data-news-image-fallback>
+          {% else %}<span class="news-image-fallback" data-news-image-placeholder aria-hidden="true">Sin fotografía disponible</span>{% endif %}
+        </div>
         <div class="search-result__body">
           <div class="search-result__meta"><span>{{ resultado.fuente }}</span>{% if resultado.fecha %}<span>{% if resultado.fecha_origen == 'captura' %}Capturada el{% else %}Publicada el{% endif %} <time datetime="{{ resultado.fecha_efectiva }}">{{ resultado.fecha|date:"j M Y" }}{% if resultado.fecha_precision == 'instante' %} · {{ resultado.fecha|date:"H:i" }}{% endif %}</time></span>{% endif %}</div>
           <h3><a href="{{ resultado.detalle_url }}">{% include "partials/_search_segments.html" with segmentos=resultado.titulo %}</a></h3>

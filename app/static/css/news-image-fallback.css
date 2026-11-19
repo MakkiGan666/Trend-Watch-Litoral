@@ -1,0 +1,35 @@
+/* Evita que estilos de componentes anulen el estado nativo hidden. */
+img[data-news-image-fallback][hidden],
+[data-news-image-placeholder][hidden],
+[data-news-image-credit][hidden] {
+  display: none !important;
+}
+
+.news-image-fallback {
+  box-sizing: border-box;
+}
+
+.news-detail__media .news-detail__placeholder {
+  width: min(100%, 720px);
+  min-width: min(100%, 320px);
+  margin: 0;
+}
+
+.search-result__image .news-image-fallback {
+  display: grid;
+  width: 100%;
+  min-height: 104px;
+  place-items: center;
+  padding: 10px;
+  background: linear-gradient(145deg, rgba(26, 78, 68, .8), var(--ink-800));
+  color: var(--sage);
+  font-size: 11px;
+  text-align: center;
+}
+
+@media (max-width: 660px) {
+  .search-result__image .news-image-fallback {
+    min-height: 76px;
+    font-size: 10px;
+  }
+}

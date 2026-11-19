@@ -1,11 +1,13 @@
 <li class="trend-card{% if destacada %} trend-card--lead{% endif %}">
   <div class="trend-card__layout{% if not tendencia.publicacion.contenido_completo %} trend-card__layout--metadata{% endif %}">
-    {% if tendencia.publicacion.contenido_completo %}<a class="trend-card__media" href="{% url 'noticia' tendencia.publicacion.pk %}" aria-label="Leer tendencia {{ numero }}: {{ tendencia.publicacion.titulo }}">
+    {% if tendencia.publicacion.contenido_completo %}<a class="trend-card__media" data-news-image-container href="{% url 'noticia' tendencia.publicacion.pk %}" aria-label="Leer tendencia {{ numero }}: {{ tendencia.publicacion.titulo }}">
       {% if tendencia.publicacion.imagen_publica_url %}
-        <img src="{{ tendencia.publicacion.imagen_publica_url }}" alt="" loading="lazy">
+        <span class="trend-card__fallback news-image-fallback" data-news-image-placeholder aria-hidden="true" hidden><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="26" height="22" rx="4"/><circle cx="11" cy="12" r="2"/><path d="m5 24 8-8 5 5 4-4 6 6"/></svg><span>Sin fotografía disponible</span></span>
+        <img src="{{ tendencia.publicacion.imagen_publica_url }}" alt="" loading="lazy" data-news-image-fallback>
       {% else %}
-        <span class="trend-card__fallback" aria-hidden="true">
+        <span class="trend-card__fallback news-image-fallback" data-news-image-placeholder aria-hidden="true">
           <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="26" height="22" rx="4"/><circle cx="11" cy="12" r="2"/><path d="m5 24 8-8 5 5 4-4 6 6"/></svg>
+          <span>Sin fotografía disponible</span>
         </span>
       {% endif %}
       <span class="trend-card__rank" aria-hidden="true">{{ numero }}</span>

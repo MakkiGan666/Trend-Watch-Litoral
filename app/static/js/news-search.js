@@ -33,11 +33,6 @@
       control.addEventListener('click', () => { if (!row.hidden) close(false); });
     });
   }
-  document.querySelectorAll('[data-search-image]').forEach(img => {
-    const hide = () => { img.closest('.search-result__image').hidden = true; };
-    img.addEventListener('error', hide);
-    if (img.complete && img.naturalWidth === 0) hide();
-  });
 }());
 
 /* Cada campo conserva su controlador: no comparte respuestas ni selección. */

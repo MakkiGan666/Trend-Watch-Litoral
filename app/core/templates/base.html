@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{% static 'css/news-image-fallback.css' %}?v=1">
   <meta name="description" content="TrendWatch · Plataforma de escucha y análisis de tendencias del Litoral argentino.">
   <title>{% block title %}TrendWatch{% endblock %}</title>
 
@@ -116,6 +117,7 @@
   <script src="{% static 'js/auth-flow.js' %}?v=4" defer></script>
   <script src="{% static 'js/notification-prompt.js' %}?v=2" defer></script>
   <script src="{% static 'js/news-search.js' %}?v=3" defer></script>
+  <script src="{% static 'js/news-image-fallback.js' %}?v=1" defer></script>
   {% block extra_js %}{% endblock %}
 </body>
 </html>
