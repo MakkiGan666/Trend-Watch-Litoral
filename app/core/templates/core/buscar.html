@@ -8,7 +8,7 @@
   <p class="search-intro">Encontrá las palabras que te interesan en el título, la fuente y el contenido disponible.</p>
   </header>
   <div class="search-page-form glass glass--sheen">
-    {% include "partials/_search_form.html" with search_prefix="page-search" %}
+    {% include "partials/_search_form.html" with search_prefix="page-search" incluir_filtros=True filtros=filtros %}
     {% if error %}<p class="search-error" id="search-error" role="alert" data-error-code="{{ error_codigo }}">{{ error }}</p>{% endif %}
   </div>
   {% if busqueda_realizada %}
@@ -26,6 +26,8 @@
           <h3><a href="{{ resultado.detalle_url }}">{% include "partials/_search_segments.html" with segmentos=resultado.titulo %}</a></h3>
           {% if not resultado.es_ficha_rss %}<p class="search-result__excerpt">{% include "partials/_search_segments.html" with segmentos=resultado.extracto %}</p>
           {% else %}<p class="search-result__excerpt"><span class="tag tag--soft">Ficha RSS · sin cuerpo completo</span></p>{% endif %}
+          {% if resultado.coincidencia %}<p class="search-result__match">La coincidencia aparece en <a href="{{ resultado.coincidencia.detalle_url }}">{{ resultado.coincidencia.titulo }} · {{ resultado.coincidencia.fuente }}</a>.</p>{% endif %}
+          {% if resultado.versiones_originales %}<details class="search-result__versions"><summary>Ver versiones originales ({{ resultado.versiones_originales|length }})</summary><ul>{% for version in resultado.versiones_originales %}<li><a href="{{ version.detalle_url }}">{{ version.titulo }} · {{ version.fuente }}</a></li>{% endfor %}</ul></details>{% endif %}
         </div>
       </article></li>
       {% endfor %}

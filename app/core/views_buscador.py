@@ -6,10 +6,21 @@ from .fechas import datos_fecha
 from .services.buscador import EntradaInvalida, TAMANO, buscar, extracto
 
 
+def _versiones_originales(publicacion):
+    return [{
+        'id_publicacion_api': version.pk,
+        'titulo': version.titulo,
+        'fuente': version.fuente,
+        'detalle_url': reverse('noticia', kwargs={'pk': version.pk}),
+    } for version in publicacion._versiones_originales]
+
+
 @require_GET
 def buscar_publicaciones(request):
     try:
-        consulta, terminos, pagina = buscar(request.GET.get('q'), request.GET.get('page', '1'))
+        consulta, terminos, pagina = buscar(
+            request.GET.get('q'), request.GET.get('page', '1'), request.GET,
+        )
     except EntradaInvalida as error:
         return JsonResponse({'error': {'codigo': error.codigo, 'mensaje': str(error)}}, status=400)
 
@@ -21,7 +32,8 @@ def buscar_publicaciones(request):
 
     resultados = []
     for publicacion in pagina.object_list:
-        resultados.append({
+        coincidencia = publicacion._coincidencia
+        resultado = {
             'id_publicacion_api': publicacion.pk,
             'titulo': publicacion.titulo,
             'fuente': publicacion.fuente,
@@ -29,8 +41,19 @@ def buscar_publicaciones(request):
             'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
             'imagen_url': (publicacion.imagen_publica_url or None)
                 if publicacion.tiene_cuerpo_completo else None,
-            'extracto': extracto(publicacion.contenido, terminos) if publicacion.tiene_cuerpo_completo else '',
-        })
+            'extracto': extracto(coincidencia.contenido, terminos)
+                if coincidencia.tiene_cuerpo_completo else '',
+        }
+        if publicacion._grupo_editorial_id:
+            resultado['versiones_originales'] = _versiones_originales(publicacion)
+        if coincidencia.pk != publicacion.pk:
+            resultado['coincidencia'] = {
+                'id_publicacion_api': coincidencia.pk,
+                'titulo': coincidencia.titulo,
+                'fuente': coincidencia.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': coincidencia.pk}),
+            }
+        resultados.append(resultado)
     return JsonResponse({
         'consulta': consulta, 'total': pagina.paginator.count,
         'pagina': pagina.number, 'tamano_pagina': TAMANO,
@@ -57,12 +80,13 @@ def buscar_noticias(request):
     if vacia:
         return render(request, 'core/buscar.html', contexto)
     try:
-        consulta, terminos, pagina = buscar(raw, request.GET.get('page', '1'))
+        consulta, terminos, pagina = buscar(raw, request.GET.get('page', '1'), request.GET)
     except EntradaInvalida as error:
-        contexto.update(error=str(error), error_codigo=error.codigo)
+        contexto.update(error=str(error), error_codigo=error.codigo, filtros=request.GET)
         return render(request, 'core/buscar.html', contexto, status=400)
     resultados = []
     for publicacion in pagina.object_list:
+        coincidencia = publicacion._coincidencia
         fecha = datos_fecha(publicacion)
         valor_fecha = fecha['fecha_efectiva']
         presentacion_fecha = (date.fromisoformat(valor_fecha) if fecha['fecha_precision'] == 'dia'
@@ -70,20 +94,36 @@ def buscar_noticias(request):
         resultados.append({
             'titulo': segmentos_resaltados(publicacion.titulo, terminos),
             'es_ficha_rss': publicacion.contenido_completo is False,
-            'extracto': (segmentos_resaltados(extracto(publicacion.contenido, terminos), terminos)
-                         if publicacion.tiene_cuerpo_completo else None),
+            'extracto': (segmentos_resaltados(extracto(coincidencia.contenido, terminos), terminos)
+                         if coincidencia.tiene_cuerpo_completo else None),
             'fuente': publicacion.fuente,
             'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
             'imagen_url': (imagen_segura(publicacion.imagen_publica_url)
                            if publicacion.tiene_cuerpo_completo else None),
             'fecha': presentacion_fecha, **fecha,
         })
+        if publicacion._grupo_editorial_id:
+            resultados[-1]['versiones_originales'] = _versiones_originales(publicacion)
+        if coincidencia.pk != publicacion.pk:
+            resultados[-1]['coincidencia'] = {
+                'titulo': coincidencia.titulo,
+                'fuente': coincidencia.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': coincidencia.pk}),
+            }
 
     def enlace(numero):
-        return reverse('buscar_noticias') + '?' + urlencode({'q': consulta, 'page': numero})
+        parametros = {'q': consulta, 'page': numero}
+        parametros.update({clave: valor.isoformat() if hasattr(valor, 'isoformat') else valor
+                           for clave, valor in pagina.filtros.items() if valor})
+        return reverse('buscar_noticias') + '?' + urlencode(parametros)
 
+    filtros_plantilla = {
+        clave: valor.isoformat() if hasattr(valor, 'isoformat') else valor
+        for clave, valor in pagina.filtros.items()
+    }
     contexto.update(consulta=consulta, search_query=consulta, busqueda_realizada=True,
                     resultados=resultados, pagina=pagina, total=pagina.paginator.count,
+                    filtros=filtros_plantilla,
                     anterior=enlace(pagina.previous_page_number()) if pagina.has_previous() else None,
                     siguiente=enlace(pagina.next_page_number()) if pagina.has_next() else None)
     return render(request, 'core/buscar.html', contexto)
@@ -93,7 +133,7 @@ def buscar_noticias(request):
 def sugerencias_publicaciones(request):
     from .services.sugerencias import sugerir
     try:
-        datos = sugerir(request.GET.get('q'))
+        datos = sugerir(request.GET.get('q'), request.GET)
     except EntradaInvalida as error:
         respuesta = JsonResponse({'error': {'codigo': error.codigo, 'mensaje': str(error)}}, status=400)
         respuesta['Cache-Control'] = 'no-store'
