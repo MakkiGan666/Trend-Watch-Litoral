@@ -1,0 +1,11 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% block content %}
+  <h1>{{ title }}</h1>
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="default">Guardar revisión</button>
+    <a href="{% url 'admin:core_grupoeditorial_changelist' %}">Cancelar</a>
+  </form>
+{% endblock %}
