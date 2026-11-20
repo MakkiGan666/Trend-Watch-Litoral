@@ -130,6 +130,9 @@
       try {
         const url = new URL(this.form.dataset.suggestionsUrl, root.location.origin);
         url.searchParams.set('q', q);
+        this.form.querySelectorAll('[data-search-filter]').forEach(input => {
+          if (input.value) url.searchParams.set(input.name, input.value);
+        });
         const response = await this.fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
         if (!response.ok) throw new Error('Sugerencias no disponibles');
         const data = await response.json();

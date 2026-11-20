@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../app/static/js/news-search.js'), 'utf8');
 function setup() {
-  const dom = new JSDOM('<form data-suggestions-url="/api/publicaciones/sugerencias/"><input id="q" name="q"><button>Buscar</button></form>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const dom = new JSDOM('<form data-suggestions-url="/api/publicaciones/sugerencias/"><input id="q" name="q"><input name="fuente" data-search-filter><input name="desde" data-search-filter><button>Buscar</button></form>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const requests = [], timers = new Map(); let id = 0;
   const win = dom.window;
   win.fetch = (url, options) => new Promise(resolve => requests.push({ url: String(url), options, resolve }));
@@ -32,6 +32,16 @@ test('mínimo, debounce y cancelación', async () => {
  await s.respond(1,s.data('Ministerio'));await s.respond(0,s.data('Misiones'));
  assert.match(s.form.textContent,/Ministerio/);assert.doesNotMatch(s.form.textContent,/Misiones/);
  s.change('');assert.equal(s.form.querySelector('[role=listbox]').hidden,true);
+});
+test('el autocompletado conserva los filtros activos de la búsqueda', async () => {
+ const s=setup();
+ s.form.querySelector('[name="fuente"]').value='Noticias del 6';
+ s.form.querySelector('[name="desde"]').value='2026-11-01';
+ s.change('mi');s.tick();
+ const url=new URL(s.requests[0].url);
+ assert.equal(url.searchParams.get('q'),'mi');
+ assert.equal(url.searchParams.get('fuente'),'Noticias del 6');
+ assert.equal(url.searchParams.get('desde'),'2026-11-01');
 });
 test('teclado, Enter sin selección y Escape', async () => {
  const s=setup();s.change('mi');s.tick();await s.respond(0,s.data('Misiones'));

@@ -5,4 +5,15 @@
     <button class="btn btn--primary" type="submit">Buscar</button>
   </div>
   <p id="{{ search_prefix }}-hint" class="news-search-hint">Todas las noticias · Entre 2 y 150 caracteres, hasta 10 palabras.</p>
+  {% if incluir_filtros %}
+  <details class="search-filters" {% if filtros.desde or filtros.hasta or filtros.fuente or filtros.categoria %}open{% endif %}>
+    <summary>Filtrar resultados</summary>
+    <div class="search-filters__fields">
+      <label>Desde<input type="date" name="desde" value="{{ filtros.desde|default:'' }}" data-search-filter></label>
+      <label>Hasta<input type="date" name="hasta" value="{{ filtros.hasta|default:'' }}" data-search-filter></label>
+      <label>Fuente<input type="text" name="fuente" maxlength="100" value="{{ filtros.fuente|default:'' }}" data-search-filter></label>
+      <label>Categoría<input type="text" name="categoria" maxlength="100" value="{{ filtros.categoria|default:'' }}" data-search-filter></label>
+    </div>
+  </details>
+  {% endif %}
 </form>

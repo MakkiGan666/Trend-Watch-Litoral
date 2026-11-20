@@ -95,12 +95,15 @@ class SugerenciasTests(TestCase):
         self.assertEqual(self.get('i\u0307').json()['terminos'], [])
 
     def test_origen_publico_compartido_sin_clasificacion(self):
-        from core.services.buscador import publicaciones_coincidentes
+        from core.services.buscador import _coincidencias, publicaciones_coincidentes
         visible = self.crear('Misiones público', contenido='economía', departamento='', procesado_ia=False)
         self.crear('Ministerio excluido')
-        def alcance(terminos):
+        def alcance(terminos, filtros=None):
+            return _coincidencias(terminos, filtros).filter(pk=visible.pk)
+        def alcance_representantes(terminos):
             return publicaciones_coincidentes(terminos).filter(pk=visible.pk)
-        with patch('core.services.sugerencias.publicaciones_coincidentes', side_effect=alcance):
+        with patch('core.services.sugerencias._coincidencias', side_effect=alcance), \
+             patch('core.services.sugerencias.publicaciones_coincidentes', side_effect=alcance_representantes):
             data = self.get('mi').json()
             self.assertEqual([n['url'] for n in data['noticias']], [reverse('noticia', args=[visible.pk])])
             self.assertNotIn('Ministerio', [t['texto'] for t in data['terminos']])
