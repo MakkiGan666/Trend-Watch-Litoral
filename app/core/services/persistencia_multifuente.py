@@ -11,11 +11,15 @@ from datetime import datetime
 import json
 import hashlib
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.utils import timezone
 
-from core.models import AliasURLPublicacion, ProcesamientoIAMultifuente, Publicacion, RegistroDatos
+from core.models import (
+    AliasURLPublicacion, ProcesamientoIAMultifuente, Publicacion, RegistroDatos,
+    TrabajoDeteccionSombraEditorial,
+)
 from core.services import descarga_segura
 from core.services.clasificacion import clasificar_lote, vincular_categoria_por_nombre
 from core.services.etiquetas import sugerir_etiquetas
@@ -235,6 +239,10 @@ def _guardar(fuente, datos, aliases, seccion, registro):
                     vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
                 # Cola durable sólo para altas nuevas; comparte commit/rollback con H3.1.
                 ProcesamientoIAMultifuente.objects.create(publicacion=publicacion)
+                if getattr(settings, 'DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA', False):
+                    # Outbox atómico: si no se puede registrar el trabajo, esta
+                    # alta se revierte y no queda una publicación sin evaluar.
+                    TrabajoDeteccionSombraEditorial.objects.create(publicacion=publicacion)
                 return publicacion.pk, True
         except DatabaseError as exc:
             codigo = getattr(exc.__cause__, 'sqlstate', None) or getattr(exc.__cause__, 'pgcode', None)
