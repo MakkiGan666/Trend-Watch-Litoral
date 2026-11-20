@@ -23,7 +23,7 @@ class SugerenciasTests(TestCase):
     def test_prefijo_frecuencia_y_limites(self):
         self.crear('Misiones Misiones Minerva Ministerio Minería Militancia Militar Mirada')
         self.crear('Misiones crece')
-        with self.assertNumQueries(2):
+        with self.assertNumQueries(3):
             data = self.get('Mi').json()
         self.assertEqual(len(data['terminos']), 5)
         self.assertEqual(data['terminos'][0]['texto'], 'Misiones')
@@ -68,7 +68,7 @@ class SugerenciasTests(TestCase):
         p = self.crear('Misiones <script>alert(1)</script>')
         for q in ['%_', "mi' OR 1=1 --", '\\\\mi']:
             self.assertEqual(self.get(q).json()['noticias'], [])
-        with self.assertNumQueries(2), patch.object(Publicacion, 'save', side_effect=AssertionError('escritura')):
+        with self.assertNumQueries(3), patch.object(Publicacion, 'save', side_effect=AssertionError('escritura')):
             respuesta = self.get('mi')
         self.assertEqual(respuesta['Cache-Control'], 'no-store')
         Publicacion.objects.filter(pk=p.pk).update(titulo='Minería')
@@ -98,9 +98,9 @@ class SugerenciasTests(TestCase):
         from core.services.buscador import _coincidencias, publicaciones_coincidentes
         visible = self.crear('Misiones público', contenido='economía', departamento='', procesado_ia=False)
         self.crear('Ministerio excluido')
-        def alcance(terminos, filtros=None):
+        def alcance(terminos, filtros=None, *, grupos_activos=None):
             return _coincidencias(terminos, filtros).filter(pk=visible.pk)
-        def alcance_representantes(terminos):
+        def alcance_representantes(terminos, filtros=None, *, grupos_activos=None):
             return publicaciones_coincidentes(terminos).filter(pk=visible.pk)
         with patch('core.services.sugerencias._coincidencias', side_effect=alcance), \
              patch('core.services.sugerencias.publicaciones_coincidentes', side_effect=alcance_representantes):
@@ -116,7 +116,7 @@ class SugerenciasTests(TestCase):
         self.crear('Misiones')
         with patch('requests.sessions.Session.request', side_effect=AssertionError('HTTP externo')), CaptureQueriesContext(connection) as queries:
             self.assertEqual(self.get('mi').status_code, 200)
-        self.assertEqual(len(queries), 2)
+        self.assertEqual(len(queries), 3)
         self.assertTrue(all(q['sql'].lstrip().startswith(('WITH', 'SELECT')) for q in queries))
         with patch('core.services.sugerencias.sugerir', side_effect=RuntimeError('interno')):
             with self.assertRaises(RuntimeError): self.get('mi')

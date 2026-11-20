@@ -1,24 +1,30 @@
 """Sugerencias públicas: títulos tokenizados en SQL, nunca corpus en Python."""
 from django.db import connection
-from django.db.models import Case, IntegerField, OuterRef, Q, Subquery, Value, When
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.urls import reverse
 
-from core.models import Publicacion
+from core.models import GrupoEditorial, MiembroGrupoEditorial
 from core.busqueda_texto_v1 import BASES_V1, VOCALES_V1
 from core.busqueda_texto_v1 import plegar_v1
-from .buscador import _coincidencias, publicaciones_coincidentes, validar_consulta
+from .buscador import (
+    _coincidencias, grupos_editoriales_activos,
+    publicaciones_coincidentes, validar_consulta,
+)
 
 
 def sugerir(valor, filtros=None):
     consulta, terminos = validar_consulta(valor)
     filtros = filtros or {}
+    grupos_activos = grupos_editoriales_activos()
     # La búsqueda tradicional exige todos los términos. Completar sólo la última
     # palabra conserva ese contexto; las anteriores se mantienen en la selección.
     palabras_consulta = consulta.split()
     prefijo = plegar_v1(palabras_consulta[-1])
     contexto = palabras_consulta[:-1]
     terminos_contexto = list(dict.fromkeys(plegar_v1(p) for p in contexto))
-    anteriores = _coincidencias(terminos_contexto, filtros)
+    anteriores = _coincidencias(
+        terminos_contexto, filtros, grupos_activos=grupos_activos,
+    )
     longitud_disponible = 150 - len(' '.join(contexto)) - bool(contexto)
     origen, parametros = anteriores.order_by().values(
         '_representante_editorial', 'titulo', 'fecha_publicacion', 'fecha_captura',
@@ -66,26 +72,32 @@ def sugerir(valor, filtros=None):
     puntuacion = Value(0, output_field=IntegerField())
     for termino in terminos:
         puntuacion = puntuacion + Case(When(Q(titulo_busqueda__contains=termino), then=Value(1)), default=Value(0), output_field=IntegerField())
-    filtros_activos = any(str(filtros.get(clave, '') or '').strip()
-                          for clave in ('desde', 'hasta', 'fuente', 'categoria'))
-    noticias = (publicaciones_coincidentes(terminos, filtros) if filtros_activos
-                else publicaciones_coincidentes(terminos)).annotate(puntos=puntuacion)
-    titulo_presentacion = Publicacion.objects.filter(pk=OuterRef('_coincidencia_id')).order_by().values('titulo')[:1]
-    noticias = list(noticias.order_by('-puntos', *noticias.query.order_by).annotate(
-        _titulo_presentacion=Subquery(titulo_presentacion),
-    ).values(
-        'pk', '_coincidencia_id', '_grupo_editorial_id', '_titulo_presentacion',
-    )[:4])
+    consulta_noticias = publicaciones_coincidentes(
+        terminos, filtros, grupos_activos=grupos_activos,
+    )
+    noticias = list(consulta_noticias.annotate(puntos=puntuacion).order_by(
+        '-puntos', *consulta_noticias.query.order_by,
+    ).values('pk', '_representante_editorial', 'titulo')[:4])
+    grupos_por_publicacion = {}
+    if grupos_activos and noticias:
+        membresias = MiembroGrupoEditorial.objects.filter(
+            publicacion_id__in=[noticia['pk'] for noticia in noticias],
+            vigente=True,
+            decision=MiembroGrupoEditorial.Decision.APROBADO,
+            grupo__estado=GrupoEditorial.Estado.ACTIVO,
+        ).values_list('publicacion_id', 'grupo_id')
+        grupos_por_publicacion = dict(membresias)
     noticias_presentacion = []
     for noticia in noticias:
-        seleccionada = noticia['_coincidencia_id']
+        seleccionada = noticia['pk']
+        representante_id = noticia['_representante_editorial']
         resultado = {
-            'titulo': noticia['_titulo_presentacion'],
+            'titulo': noticia['titulo'],
             'url': reverse('noticia', kwargs={'pk': seleccionada}),
         }
-        if noticia['_grupo_editorial_id']:
-            resultado['id_publicacion_api'] = noticia['pk']
-            resultado['representante_url'] = reverse('noticia', kwargs={'pk': noticia['pk']})
+        if grupos_por_publicacion.get(seleccionada):
+            resultado['id_publicacion_api'] = representante_id
+            resultado['representante_url'] = reverse('noticia', kwargs={'pk': representante_id})
         noticias_presentacion.append(resultado)
     return {
         'consulta': consulta,
