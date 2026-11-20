@@ -1,5 +1,5 @@
 """Planificación durable de ingesta reciente, sin worker automático al iniciar Django."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from email.utils import parsedate_to_datetime
 import json
 import math
@@ -17,6 +17,7 @@ from core.models import (
     ControlServicioIngestaMultifuente,
     ControlSolicitudRSSMetadatos,
     ProgramacionIngestaMultifuente,
+    RegistroDatos,
     TrabajoIngestaMultifuente,
 )
 from core.services import descarga_segura, fuentes_rss, lector_rss, orquestador_multifuente
@@ -36,6 +37,7 @@ LEASE_SECONDS = 120
 WORKER_LEASE_SECONDS = 300
 MAX_RETRY_SECONDS = 3600
 MAX_SNAPSHOT_ENTRIES = 30
+MAX_METADATA_ITEMS_PER_CYCLE = 5
 USER_AGENT = 'TrendWatch/1.0'
 ACTIVE_STATES = (
     TrabajoIngestaMultifuente.Estado.SNAPSHOT_PENDIENTE,
@@ -66,8 +68,9 @@ def _fuente(fuente_id, *, exigir_habilitada=True):
     return fuente
 
 
+@transaction.atomic
 def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos=None,
-                      intervalo_http_segundos=None):
+                      intervalo_http_segundos=None, solo_metadatos=None):
     """Programa sin habilitar; admite la interfaz antigua y valores independientes."""
     fuente = _fuente(fuente_id, exigir_habilitada=False)
     if intervalo_segundos is not None and (
@@ -85,6 +88,8 @@ def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos
     ):
         if valor is not None and (type(valor) is not int or valor < 60):
             raise ValueError(f'{nombre} debe ser de al menos 60 segundos.')
+    if solo_metadatos is not None and type(solo_metadatos) is not bool:
+        raise ValueError('El modo de ingesta debe ser booleano.')
     plan, _ = ProgramacionIngestaMultifuente.objects.get_or_create(
         fuente_id=fuente.identificador,
         defaults={
@@ -92,12 +97,19 @@ def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos
             'intervalo_segundos': intervalo_http_segundos or 3600,
         },
     )
+    plan = ProgramacionIngestaMultifuente.objects.select_for_update().get(pk=plan.pk)
     frecuencia_nueva = (plan.frecuencia_segundos if frecuencia_segundos is None
                         else frecuencia_segundos)
     intervalo_nuevo = (plan.intervalo_segundos if intervalo_http_segundos is None
                        else intervalo_http_segundos)
     cambio = (frecuencia_nueva != plan.frecuencia_segundos
               or intervalo_nuevo != plan.intervalo_segundos)
+    if solo_metadatos is not None and solo_metadatos != plan.solo_metadatos:
+        if TrabajoIngestaMultifuente.objects.filter(
+            fuente_id=fuente.identificador, estado__in=ACTIVE_STATES,
+        ).exists():
+            raise ValueError('No se puede cambiar el modo mientras haya un trabajo abierto.')
+        plan.solo_metadatos = solo_metadatos
     plan.frecuencia_segundos = frecuencia_nueva
     plan.intervalo_segundos = intervalo_nuevo
     if cambio and plan.ultima_ejecucion:
@@ -109,6 +121,8 @@ def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos
         plan.proxima_ejecucion = max(plan.proxima_ejecucion or timezone.now(), minimo)
     # La creación/edición de frecuencia nunca habilita ni aprueba una fuente.
     campos = ['frecuencia_segundos', 'intervalo_segundos', 'actualizado']
+    if solo_metadatos is not None:
+        campos.append('solo_metadatos')
     if cambio and plan.ultima_ejecucion:
         campos.append('proxima_ejecucion')
     plan.save(update_fields=campos)
@@ -161,20 +175,37 @@ def _snapshot_item(indice, noticia):
     }
 
 
+def _snapshot_metadata_item(indice, noticia):
+    """Snapshot privado de metadatos; no conserva resumen, imagen ni cuerpo."""
+    return {
+        'indice': indice, 'fuente': noticia.fuente,
+        'fuente_id': noticia.fuente_id, 'titulo': noticia.titulo,
+        'url': noticia.url,
+        'fecha': noticia.fecha.isoformat() if noticia.fecha else None,
+        'estado': 'PENDIENTE',
+    }
+
+
 def _guardar_snapshot(trabajo_id, token, fencing, fuente_id, feed):
     indices = feed.indices_noticias
     if len(indices) != len(feed.noticias):
         indices = tuple(range(len(feed.noticias)))
-    snapshot = [_snapshot_item(i, n) for i, n in zip(indices, feed.noticias)]
-    payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-    if len(payload) > MAX_SNAPSHOT_BYTES:
-        raise ValueError('Snapshot RSS excede 128 KiB; no se truncó ni se procesó parcialmente.')
     ahora = timezone.now()
     with transaction.atomic():
         trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
         _verificar_fence(trabajo, token, fencing)
         if trabajo.snapshot_capturado is not None:
             raise ValueError('El snapshot ya fue fijado; no se reemplaza por otro feed.')
+        snapshot_fn = _snapshot_metadata_item if trabajo.solo_metadatos else _snapshot_item
+        snapshot = [snapshot_fn(i, n) for i, n in zip(indices, feed.noticias)]
+        payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        if len(payload) > MAX_SNAPSHOT_BYTES:
+            raise ValueError('Snapshot RSS excede 128 KiB; no se truncó ni se procesó parcialmente.')
+        if trabajo.solo_metadatos:
+            trabajo.registro = RegistroDatos.objects.create(
+                fuentes_api=fuente_id, fecha_ejecucion=ahora,
+                estado='EN_PROGRESO', lenguaje='RSS metadata-only',
+            )
         resultados = [
             {'indice': i, 'estado': 'RECHAZADA', 'codigo': 'rss_entrada_invalida'}
             for i, _ in feed.rechazos
@@ -193,6 +224,9 @@ def _guardar_snapshot(trabajo_id, token, fencing, fuente_id, feed):
         if not snapshot:
             trabajo.snapshot = []
             trabajo.finalizado = ahora
+            if trabajo.registro_id:
+                trabajo.registro.estado = 'COMPLETADO'
+                trabajo.registro.save(update_fields=['estado'])
         trabajo.save()
     if not snapshot:
         _programar_siguiente(fuente_id, ahora)
@@ -206,6 +240,15 @@ def _noticia_desde_snapshot(item):
         url=item['url'], fecha=fecha, resumen=item.get('resumen', ''),
         contenido_completo='', seccion=item.get('seccion', ''),
         imagen_principal=item.get('imagen_principal', ''),
+    )
+
+
+def _noticia_desde_snapshot_metadata(item):
+    noticia = _noticia_desde_snapshot(item)
+    return lector_rss.NoticiaRSS(
+        fuente=noticia.fuente, fuente_id=noticia.fuente_id,
+        titulo=noticia.titulo, url=noticia.url, fecha=noticia.fecha,
+        resumen='', contenido_completo='', seccion='', imagen_principal='',
     )
 
 
@@ -245,6 +288,7 @@ def _reservar_trabajo(plan, ahora):
                     return None
                 trabajo = TrabajoIngestaMultifuente.objects.create(
                     fuente_id=plan.fuente_id,
+                    solo_metadatos=plan.solo_metadatos,
                     estado=TrabajoIngestaMultifuente.Estado.SNAPSHOT_PENDIENTE,
                 )
             if trabajo.estado in (
@@ -413,6 +457,70 @@ class ControlHTTPConRobots:
                 retrasos.append(math.ceil(tasa.seconds / tasa.requests))
         return max(retrasos)
 
+    @staticmethod
+    def _ventanas_visit_time(reglas):
+        """Devuelve ventanas UTC aplicables; una directiva malformada falla cerrado."""
+        grupos = []
+        actual = None
+        for linea in reglas.splitlines():
+            linea = linea.split('#', 1)[0].strip()
+            if not linea or ':' not in linea:
+                continue
+            clave, valor = (parte.strip() for parte in linea.split(':', 1))
+            clave = clave.lower()
+            if clave == 'user-agent':
+                if actual is None or actual['directivas']:
+                    actual = {'agentes': [], 'directivas': []}
+                    grupos.append(actual)
+                actual['agentes'].append(valor.lower())
+            elif actual is not None:
+                actual['directivas'].append((clave, valor))
+        prioridad = -1
+        valores = []
+        for grupo in grupos:
+            ids = grupo['agentes']
+            puntuacion = 2 if any(a in ('trendwatch/1.0', 'trendwatch') for a in ids) else (
+                1 if '*' in ids else -1
+            )
+            if puntuacion > prioridad:
+                prioridad, valores = puntuacion, []
+            if puntuacion == prioridad:
+                valores.extend(v for k, v in grupo['directivas'] if k == 'visit-time')
+        ventanas = []
+        for valor in valores:
+            if not valor.isascii() or len(valor) != 9 or valor[4] != '-':
+                raise ValueError('Visit-time de robots.txt inválido; acceso detenido.')
+            inicio, fin = valor[:4], valor[5:]
+            if (not inicio.isdecimal() or not fin.isdecimal()
+                    or int(inicio[:2]) > 23 or int(inicio[2:]) > 59
+                    or int(fin[:2]) > 24 or int(fin[2:]) > 59
+                    or (fin[:2] == '24' and fin[2:] != '00')):
+                raise ValueError('Visit-time de robots.txt inválido; acceso detenido.')
+            ventanas.append((int(inicio[:2]) * 60 + int(inicio[2:]),
+                             int(fin[:2]) * 60 + int(fin[2:])))
+        return ventanas
+
+    def _espera_visit_time(self, reglas, ahora=None):
+        ventanas = self._ventanas_visit_time(reglas)
+        if not ventanas:
+            return None
+        ahora = ahora or timezone.now()
+        utc = ahora.astimezone(dt_timezone.utc)
+
+        def permitido(m):
+            return all((inicio <= m < fin) if inicio < fin else (m >= inicio or m < fin)
+                       for inicio, fin in ventanas)
+
+        minuto = utc.hour * 60 + utc.minute
+        if permitido(minuto):
+            return None
+        base = utc.replace(second=0, microsecond=0)
+        for delta in range(1, 2881):
+            candidato = base + timedelta(minutes=delta)
+            if permitido(candidato.hour * 60 + candidato.minute):
+                return candidato.astimezone(ahora.tzinfo)
+        raise ValueError('Visit-time no contiene una ventana alcanzable; acceso detenido.')
+
     def antes(self, url):
         partes = self.fuente.validar_url(url)
         host = partes.hostname
@@ -422,6 +530,14 @@ class ControlHTTPConRobots:
             parser = self._parser(host)
             if not parser.can_fetch(USER_AGENT, url):
                 raise ReglasRobotsDeniegan('robots.txt no permite esta ruta; no se hizo GET.')
+            reglas_cache = CacheRobotsMultifuente.objects.get(
+                fuente_id=self.fuente.identificador, host=host,
+            ).reglas
+            espera_visit = self._espera_visit_time(reglas_cache)
+            if espera_visit is not None:
+                raise FuenteRSSEnEspera(max(1, math.ceil(
+                    (espera_visit - timezone.now()).total_seconds(),
+                )))
             intervalo = self._intervalo_reglas(parser)
         reserva = _reservar_solicitud(self.fuente, intervalo)
         self._intervalo_actual = intervalo
@@ -588,6 +704,99 @@ def _resultado_transitorio(detalle):
     return 'rechazo'
 
 
+def _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente):
+    """Persiste hasta cinco fichas y sus checkpoints en transacciones atómicas."""
+    from core.services.persistencia_rss_metadatos import (
+        _codigo_rechazo, _fuente_canonica, _persistir_item, _validar_item,
+    )
+
+    fuente_persistencia = _fuente_canonica(fuente.identificador)
+    persistidas = duplicadas = rechazadas = 0
+    indices = []
+    finalizado = False
+    for _ in range(MAX_METADATA_ITEMS_PER_CYCLE):
+        with transaction.atomic():
+            trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+            _verificar_fence(trabajo, token, fencing)
+            item = next((x for x in trabajo.snapshot if x['estado'] == 'PENDIENTE'), None)
+            if item is None:
+                finalizado = True
+                break
+            noticia = _noticia_desde_snapshot_metadata(item)
+            codigo = ''
+            publicacion_id = None
+            try:
+                campos = _validar_item(noticia, fuente_persistencia)
+            except (TypeError, ValueError) as exc:
+                estado, codigo = 'RECHAZADA', _codigo_rechazo(exc)
+            else:
+                publicacion_id, creada = _persistir_item(
+                    fuente_persistencia, noticia, campos, trabajo.registro,
+                )
+                estado = 'PERSISTIDA' if creada else 'DUPLICADA'
+            # La escritura de la publicación arriba y este avance de snapshot
+            # comparten la transacción exterior: jamás se adelanta el cursor.
+            item['estado'] = estado
+            resultados = list(trabajo.resultados)
+            resultados.append({
+                'indice': item['indice'], 'estado': estado,
+                'publicacion_id': publicacion_id, 'codigo': codigo,
+            })
+            trabajo.resultados = resultados
+            trabajo.procesadas += 1
+            trabajo.cursor += 1
+            if estado == 'PERSISTIDA':
+                trabajo.nuevas += 1
+                persistidas += 1
+            elif estado == 'DUPLICADA':
+                trabajo.duplicadas += 1
+                duplicadas += 1
+            else:
+                trabajo.rechazadas += 1
+                rechazadas += 1
+            indices.append(item['indice'])
+            pendientes = any(x['estado'] == 'PENDIENTE' for x in trabajo.snapshot)
+            if pendientes:
+                trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+                trabajo.proxima_accion = timezone.now() + timedelta(seconds=15)
+            else:
+                trabajo.estado = TrabajoIngestaMultifuente.Estado.COMPLETADO
+                trabajo.snapshot = []
+                trabajo.proxima_accion = None
+                trabajo.finalizado = timezone.now()
+                trabajo.token_arrendamiento = None
+                trabajo.arrendamiento_hasta = None
+                finalizado = True
+                if trabajo.registro_id:
+                    trabajo.registro.estado = 'COMPLETADO'
+                    trabajo.registro.save(update_fields=['estado'])
+            trabajo.save()
+            if not pendientes:
+                break
+    if finalizado:
+        _programar_siguiente(fuente.identificador, timezone.now())
+        estado_final = 'COMPLETADO'
+    else:
+        with transaction.atomic():
+            trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
+            _verificar_fence(trabajo, token, fencing)
+            trabajo.estado = TrabajoIngestaMultifuente.Estado.ESPERA
+            trabajo.proxima_accion = timezone.now() + timedelta(seconds=15)
+            trabajo.token_arrendamiento = None
+            trabajo.arrendamiento_hasta = None
+            trabajo.save(update_fields=(
+                'estado', 'proxima_accion', 'token_arrendamiento',
+                'arrendamiento_hasta', 'actualizado',
+            ))
+        estado_final = 'ESPERA'
+    return {
+        'fuente': fuente.identificador, 'estado': estado_final,
+        'procesadas': len(indices), 'nuevas': persistidas,
+        'duplicadas': duplicadas, 'rechazadas': rechazadas,
+        'indices': indices,
+    }
+
+
 def _procesar_unidad(trabajo_id, token, fencing, config):
     trabajo = TrabajoIngestaMultifuente.objects.get(pk=trabajo_id)
     fuente = _fuente(trabajo.fuente_id, exigir_habilitada=True)
@@ -649,6 +858,9 @@ def _procesar_unidad(trabajo_id, token, fencing, config):
             return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': detalle.get('codigo')}
         _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'fallo_feed'))
         return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+
+    if trabajo.solo_metadatos:
+        return _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente)
 
     item = next((x for x in trabajo.snapshot if x['estado'] == 'PENDIENTE'), None)
     if item is None:
@@ -828,7 +1040,7 @@ def estado_servicio():
         'heartbeat': control.heartbeat.isoformat() if control and control.heartbeat else None,
         'fuentes': list(ProgramacionIngestaMultifuente.objects.order_by('fuente_id').values(
             'fuente_id', 'habilitada', 'acceso_revisado', 'aprobacion_operativa',
-            'frecuencia_segundos', 'intervalo_segundos',
+            'frecuencia_segundos', 'intervalo_segundos', 'solo_metadatos',
             'proxima_ejecucion', 'ultima_ejecucion',
         )),
         'trabajos_abiertos': list(TrabajoIngestaMultifuente.objects.filter(

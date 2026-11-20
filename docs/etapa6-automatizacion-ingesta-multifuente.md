@@ -144,3 +144,38 @@ El ajuste se validó inicialmente con 38 pruebas focalizadas en PostgreSQL
 temporal sin red, incluido el backfill de 0028. La revisión final añadió una
 regresión para conservar el vencimiento absoluto de esperas H5.6 y ejecutó
 39 pruebas focalizadas; no se habilitaron fuentes ni se inició el worker.
+
+## Modo periódico RSS metadata-only
+
+La configuración `--modo metadatos` utiliza el planificador y los trabajos
+durables existentes, pero fija el modo en cada trabajo creado. El snapshot
+retiene sólo fuente, título, fecha editorial disponible y URL; no almacena
+resumen RSS, HTML, cuerpo, imagen ni metadatos de imagen. Las entradas del
+snapshot se persisten en bloques de hasta cinco por pasada mediante la
+persistencia idempotente H5.4 y checkpoints transaccionales. Reanudar un
+snapshot existente no consulta de nuevo el feed. El modo no llama al extractor
+HTML, no descarga imágenes y desactiva explícitamente IA.
+
+`Visit-time: HHMM-HHMM` se interpreta en UTC. Fuera de la ventana, el GET se
+difiere hasta el siguiente inicio permitido; una directiva malformada falla
+cerrado. El tiempo de espera se guarda en el trabajo y el worker continúa
+atendiendo las demás fuentes. `Crawl-delay`, `Request-rate`, el piso HTTP, H5.6,
+redirecciones y la vigencia verificable de robots.txt siguen aplicándose.
+
+Configuraciones preparatorias (no habilitan las fuentes):
+
+```sh
+python manage.py automatizar_ingesta_multifuente --configurar --fuente norte_misionero --frecuencia-segundos 21600 --intervalo-http-segundos 3600 --modo metadatos
+python manage.py automatizar_ingesta_multifuente --configurar --fuente infober --frecuencia-segundos 21600 --intervalo-http-segundos 3600 --modo metadatos
+python manage.py automatizar_ingesta_multifuente --configurar --fuente obera_online --frecuencia-segundos 21600 --intervalo-http-segundos 3600 --modo metadatos
+python manage.py automatizar_ingesta_multifuente --configurar --fuente e24n --frecuencia-segundos 28800 --intervalo-http-segundos 3600 --modo metadatos
+```
+
+El intervalo de 3600 segundos es únicamente un piso preparatorio: H5.6 y
+robots.txt pueden exigir uno superior. La configuración no se siembra mediante
+migración y no modifica el catálogo; todas las fuentes continúan deshabilitadas
+por defecto. La habilitación requiere después la revisión de acceso, aprobación
+operativa explícita y que la fuente esté permitida en el catálogo. El cambio
+requiere la migración aditiva `0034_rss_metadata_only_worker`, que agrega el
+modo a la programación y congela ese modo por trabajo junto con una referencia
+al registro de ingesta.
