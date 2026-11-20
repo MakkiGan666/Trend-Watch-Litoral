@@ -70,11 +70,50 @@ class BusquedaAgrupacionEditorialTests(TestCase):
     def test_sin_agrupaciones_conserva_publicaciones_individuales(self):
         a = self.publicacion('Incendio en Posadas uno')
         b = self.publicacion('Incendio en Posadas dos')
-        respuesta = self.api()
+        with CaptureQueriesContext(connection) as consultas:
+            respuesta = self.api()
         self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(len(consultas), 3)
         self.assertEqual(respuesta.json()['total'], 2)
         self.assertEqual({r['id_publicacion_api'] for r in respuesta.json()['resultados']}, {a.pk, b.pk})
         self.assertNotIn('versiones_originales', respuesta.json()['resultados'][0])
+
+    def test_estado_editorial_se_reevalua_en_cada_solicitud(self):
+        representante = self.publicacion('Incendio actualización representante')
+        miembro = self.publicacion('Incendio actualización miembro')
+        grupo = self.agrupar(representante, [miembro])
+
+        primera = self.api().json()
+        self.assertEqual(primera['total'], 1)
+        self.assertEqual(primera['resultados'][0]['id_publicacion_api'], representante.pk)
+
+        # Simula la revocación durable sin conservar un estado en caché entre GET.
+        MiembroGrupoEditorial.objects.filter(grupo=grupo).update(vigente=False)
+        segunda = self.api().json()
+        self.assertEqual(segunda['total'], 2)
+        self.assertEqual(
+            {fila['id_publicacion_api'] for fila in segunda['resultados']},
+            {representante.pk, miembro.pk},
+        )
+
+    def test_revocar_grupo_saca_a_sus_publicaciones_del_agrupamiento(self):
+        representante = self.publicacion('Incendio grupo revocable representante')
+        miembro = self.publicacion('Incendio grupo revocable versión')
+        grupo = self.agrupar(representante, [miembro])
+        self.assertEqual(self.api('grupo revocable').json()['total'], 1)
+
+        # Simula el cambio administrativo durable; la siguiente petición debe
+        # observarlo sin depender de caché del proceso web.
+        GrupoEditorial.objects.filter(pk=grupo.pk).update(
+            estado=GrupoEditorial.Estado.REVOCADO, revocado_por=self.actor,
+            revocado=timezone.now(), motivo_revocacion='revocación sintética',
+        )
+        respuesta = self.api('grupo revocable').json()
+        self.assertEqual(respuesta['total'], 2)
+        self.assertEqual(
+            {fila['id_publicacion_api'] for fila in respuesta['resultados']},
+            {representante.pk, miembro.pk},
+        )
 
     def test_solo_grupo_activo_y_miembros_vigentes_aprobados_se_agrupan(self):
         representante = self.publicacion('Incendio regional representativo')

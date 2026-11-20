@@ -4,8 +4,12 @@ from html import unescape
 from datetime import date
 
 from django.core.paginator import EmptyPage, Paginator
-from django.db.models import DateTimeField, F, IntegerField, Max, OuterRef, Q, Subquery
+from django.db.models import (
+    DateTimeField, Exists, F, FilteredRelation, IntegerField, OuterRef, Q,
+    Subquery, Value, When, Case, Window,
+)
 from django.db.models.functions import Coalesce
+from django.db.models.functions.window import RowNumber
 from django.utils.html import strip_tags
 
 from core.models import GrupoEditorial, MiembroGrupoEditorial, Publicacion, PublicacionTema
@@ -40,14 +44,15 @@ def buscar(consulta, pagina='1', filtros=None):
     if not pagina or any(c not in '0123456789' for c in pagina) or len(pagina) > 10 or int(pagina) < 1:
         raise EntradaInvalida('pagina_invalida', 'page debe ser un entero positivo dentro del rango.')
     filtros = validar_filtros(filtros or {})
-    noticias = publicaciones_coincidentes(terminos, filtros)
+    grupos_activos = grupos_editoriales_activos()
+    noticias = publicaciones_coincidentes(terminos, filtros, grupos_activos=grupos_activos)
     paginador = Paginator(noticias, TAMANO)
     try:
         resultado = paginador.page(int(pagina))
     except EmptyPage:
         raise EntradaInvalida('pagina_invalida', 'La página está fuera del rango.') from None
     resultado.filtros = filtros
-    _adjuntar_versiones_editoriales(resultado)
+    _adjuntar_versiones_editoriales(resultado, grupos_activos=grupos_activos)
     return consulta, terminos, resultado
 
 
@@ -77,8 +82,17 @@ def validar_filtros(filtros):
     return normalizados
 
 
-def _coincidencias(terminos, filtros=None):
-    """Publicaciones que coinciden, anotadas con representante editorial vigente."""
+def grupos_editoriales_activos():
+    """Consulta el estado actual; no conserva decisiones entre solicitudes."""
+    return MiembroGrupoEditorial.objects.filter(
+        vigente=True,
+        decision=MiembroGrupoEditorial.Decision.APROBADO,
+        grupo__estado=GrupoEditorial.Estado.ACTIVO,
+    ).exists()
+
+
+def _coincidencias(terminos, filtros=None, *, grupos_activos=None):
+    """Coincidencias; usa identidad directa cuando no hay grupos aprobados."""
     noticias = Publicacion.objects.all()
     for termino in terminos:
         noticias = noticias.filter(
@@ -95,107 +109,145 @@ def _coincidencias(terminos, filtros=None):
     if filtros['fuente']:
         noticias = noticias.filter(fuente__iexact=filtros['fuente'])
     if filtros['categoria']:
-        noticias = noticias.filter(temas__id_categoria__nombre_categoria__iexact=filtros['categoria'])
-    # La relación temática puede producir varias filas para una publicación.
-    noticias = noticias.distinct()
-    representante_activo = MiembroGrupoEditorial.objects.filter(
-        publicacion_id=OuterRef('pk'), vigente=True,
-        decision=MiembroGrupoEditorial.Decision.APROBADO,
-        grupo__estado=GrupoEditorial.Estado.ACTIVO,
-    ).order_by().values('grupo__representante_id')[:1]
+        noticias = noticias.filter(Exists(PublicacionTema.objects.filter(
+            id_publicacion_api_id=OuterRef('pk'),
+            id_temas__id_categoria__nombre_categoria__iexact=filtros['categoria'],
+        )))
+    if grupos_activos is None:
+        grupos_activos = grupos_editoriales_activos()
+    if not grupos_activos:
+        return noticias.annotate(_representante_editorial=F('pk'))
     return noticias.annotate(
-        _representante_editorial=Coalesce(
-            Subquery(representante_activo, output_field=IntegerField()), F('pk'),
-            output_field=IntegerField(),
+        _membresia_editorial_activa=FilteredRelation(
+            'membresias_editoriales',
+            condition=Q(
+                membresias_editoriales__vigente=True,
+                membresias_editoriales__decision=MiembroGrupoEditorial.Decision.APROBADO,
+            ),
+        ),
+    ).annotate(
+        _representante_editorial=Case(
+            When(
+                _membresia_editorial_activa__grupo__estado=GrupoEditorial.Estado.ACTIVO,
+                then=F('_membresia_editorial_activa__grupo__representante_id'),
+            ),
+            default=F('pk'), output_field=IntegerField(),
         ),
     )
 
 
-def publicaciones_coincidentes(terminos, filtros=None):
-    """Representantes únicos; agrupa antes de contar, ordenar y paginar.
+def publicaciones_coincidentes(terminos, filtros=None, *, grupos_activos=None):
+    """Una fila elegible por grupo, seleccionada y ordenada en SQL.
 
-    La fecha más reciente entre las publicaciones coincidentes conserva la
-    posición editorial del grupo aunque el texto coincida en un miembro.
+    Con cero grupos vigentes conserva la consulta plana previa. Con grupos,
+    una ventana elige primero la coincidencia más reciente de cada identidad;
+    no se reinyecta el QuerySet completo en subconsultas de agrupación.
     """
-    coincidencias = _coincidencias(terminos, filtros)
+    if grupos_activos is None:
+        grupos_activos = grupos_editoriales_activos()
+    coincidencias = _coincidencias(terminos, filtros, grupos_activos=grupos_activos)
     fecha_coincidencia = Coalesce('fecha_publicacion', 'fecha_captura', output_field=DateTimeField())
-    grupos = coincidencias.order_by().values('_representante_editorial').annotate(
-        _fecha_relevancia=Max(fecha_coincidencia),
-    )
-    mejor_coincidencia = coincidencias.filter(
-        _representante_editorial=OuterRef('pk'),
-    ).order_by(fecha_coincidencia.desc(nulls_last=True), '-pk').values('pk')[:1]
-    fecha_relevancia = grupos.filter(
-        _representante_editorial=OuterRef('pk'),
-    ).values('_fecha_relevancia')[:1]
-    grupo_representante = MiembroGrupoEditorial.objects.filter(
-        publicacion_id=OuterRef('pk'),
-        rol=MiembroGrupoEditorial.Rol.REPRESENTANTE,
-        decision=MiembroGrupoEditorial.Decision.APROBADO,
-        vigente=True,
-        grupo__estado=GrupoEditorial.Estado.ACTIVO,
-    ).order_by().values('grupo_id')[:1]
-    fecha_representante = Coalesce('fecha_publicacion', 'fecha_captura', output_field=DateTimeField())
-    return Publicacion.objects.filter(
-        pk__in=Subquery(grupos.values('_representante_editorial')),
-    ).annotate(
-        _fecha_relevancia=Subquery(fecha_relevancia, output_field=DateTimeField()),
-        _fecha_representante=fecha_representante,
-        _coincidencia_id=Subquery(mejor_coincidencia, output_field=IntegerField()),
-        _grupo_editorial_id=Subquery(grupo_representante, output_field=IntegerField()),
-    ).order_by(
+    if not grupos_activos:
+        return coincidencias.annotate(
+            _fecha_relevancia=fecha_coincidencia,
+            _fecha_representante=fecha_coincidencia,
+            _coincidencia_id=F('pk'),
+            _grupo_editorial_id=Value(None, output_field=IntegerField()),
+        ).order_by(
+            F('_fecha_relevancia').desc(nulls_last=True), '-pk',
+        )
+
+    return coincidencias.annotate(
+        _fecha_relevancia=fecha_coincidencia,
+        _rango_editorial=Window(
+            expression=RowNumber(),
+            partition_by=[F('_representante_editorial')],
+            order_by=[F('_fecha_relevancia').desc(nulls_last=True), F('pk').desc()],
+        ),
+        _fecha_representante=Case(
+            When(
+                _membresia_editorial_activa__grupo__estado=GrupoEditorial.Estado.ACTIVO,
+                then=Coalesce(
+                    F('_membresia_editorial_activa__grupo__representante__fecha_publicacion'),
+                    F('_membresia_editorial_activa__grupo__representante__fecha_captura'),
+                    output_field=DateTimeField(),
+                ),
+            ),
+            default=Coalesce('fecha_publicacion', 'fecha_captura', output_field=DateTimeField()),
+            output_field=DateTimeField(),
+        ),
+        _grupo_editorial_id=Case(
+            When(
+                _membresia_editorial_activa__grupo__estado=GrupoEditorial.Estado.ACTIVO,
+                then=F('_membresia_editorial_activa__grupo_id'),
+            ),
+            default=Value(None, output_field=IntegerField()), output_field=IntegerField(),
+        ),
+        _coincidencia_id=F('pk'),
+    ).filter(_rango_editorial=1).order_by(
         F('_fecha_relevancia').desc(nulls_last=True),
-        F('_fecha_representante').desc(nulls_last=True), '-pk',
+        F('_fecha_representante').desc(nulls_last=True),
+        F('_representante_editorial').desc(),
     )
 
 
-def _adjuntar_versiones_editoriales(pagina):
+def _adjuntar_versiones_editoriales(pagina, *, grupos_activos=False):
     publicaciones = list(pagina.object_list)
     pagina.object_list = publicaciones
     if not publicaciones:
         return
-    agrupadas = [publicacion for publicacion in publicaciones if publicacion._grupo_editorial_id]
-    ids_presentacion = {
-        publicacion._coincidencia_id for publicacion in publicaciones
-        if publicacion._coincidencia_id != publicacion.pk
-    }
-    presentaciones = {
-        publicacion.pk: publicacion
-        for publicacion in Publicacion.objects.filter(pk__in=ids_presentacion)
-    }
     categorias_por_publicacion = {}
-    ids_categorias = {publicacion._coincidencia_id for publicacion in agrupadas}
+    for publicacion in publicaciones:
+        publicacion._presentacion = publicacion
+        publicacion._coincidencia = publicacion
+        publicacion._categorias_presentacion = sorted(
+            categorias_por_publicacion.get(publicacion.pk, set()), key=str.casefold,
+        )
+        publicacion._versiones_originales = []
+        publicacion._representante = publicacion
+        publicacion._grupo_editorial_id = None
+    if not grupos_activos:
+        return
+    ids = [publicacion.pk for publicacion in publicaciones]
+    grupos_candidatos = MiembroGrupoEditorial.objects.filter(
+        publicacion_id__in=ids, vigente=True,
+        decision=MiembroGrupoEditorial.Decision.APROBADO,
+        grupo__estado=GrupoEditorial.Estado.ACTIVO,
+    ).values('grupo_id')
+    membresias = MiembroGrupoEditorial.objects.filter(
+        grupo_id__in=Subquery(grupos_candidatos),
+        vigente=True,
+        decision=MiembroGrupoEditorial.Decision.APROBADO,
+        grupo__estado=GrupoEditorial.Estado.ACTIVO,
+    ).select_related('grupo__representante', 'publicacion').only(
+        'grupo_id', 'grupo__representante_id', 'grupo__representante__titulo',
+        'grupo__representante__fuente', 'grupo__representante__fecha_publicacion',
+        'publicacion_id', 'publicacion__id_publicacion_api', 'publicacion__titulo',
+        'publicacion__fuente', 'publicacion__fecha_publicacion',
+    ).order_by('grupo__representante_id', 'publicacion_id')
+    por_representante = {}
+    por_publicacion = {}
+    for membresia in membresias:
+        representante_id = membresia.grupo.representante_id
+        por_representante.setdefault(representante_id, []).append(membresia.publicacion)
+        por_publicacion[membresia.publicacion_id] = membresia
+    for publicacion in publicaciones:
+        membresia = por_publicacion.get(publicacion.pk)
+        if membresia:
+            publicacion._grupo_editorial_id = membresia.grupo_id
+            publicacion._representante = membresia.grupo.representante
+            publicacion._versiones_originales = por_representante.get(membresia.grupo.representante_id, [])
+    ids_categorias = [publicacion.pk for publicacion in publicaciones if publicacion._grupo_editorial_id]
+    categorias_por_publicacion = {}
     if ids_categorias:
         for publicacion_id, categoria in PublicacionTema.objects.filter(
             id_publicacion_api_id__in=ids_categorias,
         ).values_list('id_publicacion_api_id', 'id_temas__id_categoria__nombre_categoria').distinct():
             categorias_por_publicacion.setdefault(publicacion_id, set()).add(categoria)
-    for publicacion in publicaciones:
-        publicacion._presentacion = presentaciones.get(publicacion._coincidencia_id, publicacion)
-        publicacion._coincidencia = publicacion._presentacion
-        publicacion._categorias_presentacion = sorted(
-            categorias_por_publicacion.get(publicacion._presentacion.pk, set()), key=str.casefold,
-        )
-        publicacion._versiones_originales = []
-    if not agrupadas:
-        return
-    membresias = MiembroGrupoEditorial.objects.filter(
-        grupo_id__in=[publicacion._grupo_editorial_id for publicacion in agrupadas],
-        grupo__estado=GrupoEditorial.Estado.ACTIVO,
-        decision=MiembroGrupoEditorial.Decision.APROBADO,
-        vigente=True,
-    ).select_related('grupo', 'publicacion').only(
-        'grupo_id', 'grupo__representante_id', 'publicacion_id',
-        'publicacion__id_publicacion_api', 'publicacion__titulo',
-        'publicacion__fuente', 'publicacion__fecha_publicacion',
-    ).order_by('grupo__representante_id', 'publicacion_id')
-    por_representante = {}
-    for membresia in membresias:
-        representante_id = membresia.grupo.representante_id
-        por_representante.setdefault(representante_id, []).append(membresia.publicacion)
-    for publicacion in publicaciones:
-        if publicacion._grupo_editorial_id:
-            publicacion._versiones_originales = por_representante.get(publicacion.pk, [])
+        for publicacion in publicaciones:
+            publicacion._categorias_presentacion = sorted(
+                categorias_por_publicacion.get(publicacion.pk, set()), key=str.casefold,
+            )
 
 
 def extracto(contenido, terminos):

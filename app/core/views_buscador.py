@@ -33,8 +33,9 @@ def buscar_publicaciones(request):
     resultados = []
     for publicacion in pagina.object_list:
         presentacion = publicacion._presentacion
+        representante = publicacion._representante
         resultado = {
-            'id_publicacion_api': publicacion.pk,
+            'id_publicacion_api': publicacion._representante_editorial,
             'titulo': presentacion.titulo,
             'fuente': presentacion.fuente,
             **datos_fecha(presentacion),
@@ -48,13 +49,13 @@ def buscar_publicaciones(request):
             resultado['id_publicacion_presentada'] = presentacion.pk
             resultado['categorias'] = publicacion._categorias_presentacion
             resultado['representante'] = {
-                'id_publicacion_api': publicacion.pk,
-                'titulo': publicacion.titulo,
-                'fuente': publicacion.fuente,
-                'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
+                'id_publicacion_api': representante.pk,
+                'titulo': representante.titulo,
+                'fuente': representante.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': representante.pk}),
             }
             resultado['versiones_originales'] = _versiones_originales(publicacion)
-        if presentacion.pk != publicacion.pk:
+        if presentacion.pk != publicacion._representante_editorial:
             resultado['coincidencia'] = {
                 'id_publicacion_api': presentacion.pk,
                 'titulo': presentacion.titulo,
@@ -95,6 +96,7 @@ def buscar_noticias(request):
     resultados = []
     for publicacion in pagina.object_list:
         presentacion = publicacion._presentacion
+        representante = publicacion._representante
         fecha = datos_fecha(presentacion)
         valor_fecha = fecha['fecha_efectiva']
         presentacion_fecha = (date.fromisoformat(valor_fecha) if fecha['fecha_precision'] == 'dia'
@@ -115,11 +117,11 @@ def buscar_noticias(request):
             resultados[-1]['versiones_originales'] = _versiones_originales(publicacion)
             resultados[-1]['id_publicacion_presentada'] = presentacion.pk
             resultados[-1]['representante'] = {
-                'titulo': publicacion.titulo,
-                'fuente': publicacion.fuente,
-                'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
+                'titulo': representante.titulo,
+                'fuente': representante.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': representante.pk}),
             }
-        if presentacion.pk != publicacion.pk:
+        if presentacion.pk != publicacion._representante_editorial:
             resultados[-1]['coincidencia'] = {
                 'titulo': presentacion.titulo,
                 'fuente': presentacion.fuente,
