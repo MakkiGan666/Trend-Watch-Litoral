@@ -454,6 +454,7 @@ class Publicacion(models.Model):
 
     class Meta:
         db_table = 'Publicacion'
+        indexes = [models.Index(fields=['fuente', 'fecha_publicacion'], name='pub_fuente_fecha_sombra_idx')]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(contenido_completo=True) | models.Q(contenido=''),
@@ -845,6 +846,38 @@ class CandidatoDuplicadoEditorial(models.Model):
             models.Index(fields=['clasificacion', '-ultima_detectada'], name='cand_dup_clas_fecha_idx'),
             models.Index(fields=['fuente_normalizada', 'clasificacion'], name='cand_dup_fuente_clas_idx'),
         ]
+
+
+class TrabajoDeteccionSombraEditorial(models.Model):
+    """Outbox transaccional para evaluar sólo publicaciones multifuente nuevas."""
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        COMPLETADO = 'COMPLETADO', 'Completado'
+        REVISION_MANUAL = 'REVISION_MANUAL', 'Revisión manual'
+
+    publicacion = models.OneToOneField(
+        Publicacion, primary_key=True, on_delete=models.CASCADE,
+        related_name='trabajo_deteccion_sombra_editorial',
+    )
+    estado = models.CharField(max_length=16, choices=Estado.choices, default=Estado.PENDIENTE)
+    intentos = models.PositiveSmallIntegerField(default=0)
+    candidatos_registrados = models.PositiveIntegerField(default=0)
+    codigo_error = models.CharField(max_length=48, blank=True, default='')
+    creado = models.DateTimeField(default=timezone.now)
+    actualizado = models.DateTimeField(auto_now=True)
+    completado = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'core_trabajo_deteccion_sombra_editorial'
+        ordering = ['creado', 'publicacion_id']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(estado__in=['PENDIENTE', 'COMPLETADO', 'REVISION_MANUAL']),
+                name='trabajo_sombra_estado_valido',
+            ),
+        ]
+        indexes = [models.Index(fields=['estado', 'creado'], name='trabajo_sombra_estado_idx')]
 
 
 class ProcesamientoIAMultifuente(models.Model):

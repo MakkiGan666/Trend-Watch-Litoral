@@ -754,7 +754,16 @@ def ejecutar_ciclo(*, max_fuentes=5):
             except Exception:
                 pass
             resultados.append({'fuente': plan.fuente_id, 'estado': 'REVISION_MANUAL', 'error': type(exc).__name__})
-    return {'fuentes_consideradas': len(planes), 'resultados': resultados}
+    resultado = {'fuentes_consideradas': len(planes), 'resultados': resultados}
+    if getattr(settings, 'DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA', False):
+        try:
+            from core.services.deteccion_incremental_multifuente import procesar_cola_incremental
+            resultado['deteccion_editorial'] = procesar_cola_incremental()
+        except Exception as exc:
+            # Un fallo del consumidor de sombra no invalida los resultados de
+            # ingesta de fuentes ya confirmados en este ciclo.
+            resultado['deteccion_editorial'] = {'habilitada': True, 'error': type(exc).__name__}
+    return resultado
 
 
 def _heartbeat(token, fencing):

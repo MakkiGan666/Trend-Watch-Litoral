@@ -223,6 +223,12 @@ AGRUPACION_EDITORIAL_AUTOMATICA_HABILITADA = os.getenv(
     'AGRUPACION_EDITORIAL_AUTOMATICA_HABILITADA', '',
 ).strip().lower() in ('1', 'true', 'yes')
 
+# Fase 3C: sólo registra candidatos nuevos en sombra al persistir artículos
+# multifuente. No aprueba ni activa grupos. Cerrado salvo opt-in explícito.
+DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA = os.getenv(
+    'DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA', '',
+).strip().lower() in ('1', 'true', 'yes')
+
 # H5.6: habilitación técnica y revisión de acceso independientes. Todas
 # las listas deniegan por defecto.
 RSS_METADATOS_FUENTES_HABILITADAS = tuple(filter(None, (

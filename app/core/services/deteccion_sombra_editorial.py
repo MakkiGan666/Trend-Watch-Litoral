@@ -84,7 +84,8 @@ def _fila_detector(fila):
 
 
 @transaction.atomic
-def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR):
+def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR,
+                                reconciliar_anteriores=True, incluir_total=True):
     """Reevalúa pares contra la base y actualiza la cola sin transitividad.
 
     El insumo sólo aporta identificadores. Metadatos y cuerpos se vuelven a
@@ -94,6 +95,10 @@ def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR
         raise ValueError('La versión del detector debe tener entre 1 y 40 caracteres.')
     if not isinstance(candidatos, (list, tuple)) or len(candidatos) > MAX_CANDIDATOS_POR_EJECUCION:
         raise ValueError('La ejecución excede el máximo de candidatos permitido.')
+    if type(reconciliar_anteriores) is not bool:
+        raise ValueError('reconciliar_anteriores debe ser booleano.')
+    if type(incluir_total) is not bool:
+        raise ValueError('incluir_total debe ser booleano.')
 
     pares = set()
     for candidato in candidatos:
@@ -111,7 +116,7 @@ def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR
     anteriores = list(CandidatoDuplicadoEditorial.objects.filter(estado__in=[
         CandidatoDuplicadoEditorial.Estado.PENDIENTE,
         CandidatoDuplicadoEditorial.Estado.EN_GRUPO,
-    ]).values('publicacion_a_id', 'publicacion_b_id'))
+    ]).values('publicacion_a_id', 'publicacion_b_id')) if reconciliar_anteriores else []
     pares_anteriores = {
         tuple(sorted((fila['publicacion_a_id'], fila['publicacion_b_id']))) for fila in anteriores
     }
@@ -228,11 +233,13 @@ def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR
             )
             guardados += 1
 
-    return {
+    resultado = {
         'pares_recibidos': len(pares),
         'candidatos_registrados_o_actualizados': guardados,
         'candidatos_obsoletos': obsoletos,
         'candidatos_en_grupo_vigente': en_grupo,
         'omitidos': omitidos,
-        'total_cola': CandidatoDuplicadoEditorial.objects.count(),
     }
+    if incluir_total:
+        resultado['total_cola'] = CandidatoDuplicadoEditorial.objects.count()
+    return resultado
