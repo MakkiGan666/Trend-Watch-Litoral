@@ -22,13 +22,13 @@ class BusquedaAgrupacionEditorialTests(TestCase):
         )
         cls.categoria = Categoria.objects.create(nombre_categoria='Salud')
 
-    def publicacion(self, titulo, *, fuente='Noticias del 6', contenido=None, fecha=None):
+    def publicacion(self, titulo, *, fuente='Noticias del 6', contenido=None, fecha=None, imagen_url=''):
         type(self).secuencia += 1
         texto = contenido if contenido is not None else f'Contenido sintético distinto de {titulo}.'
         return Publicacion.objects.create(
             hash_origen=f'fase2b-{self.secuencia}', titulo=titulo, fuente=fuente,
             contenido=texto, url=f'https://example.invalid/fase2b/{self.secuencia}',
-            fecha_publicacion=fecha or timezone.now(),
+            fecha_publicacion=fecha or timezone.now(), imagen_url=imagen_url,
         )
 
     def agregar_categoria(self, publicacion):
@@ -95,7 +95,7 @@ class BusquedaAgrupacionEditorialTests(TestCase):
 
         with CaptureQueriesContext(connection) as consultas:
             data = self.api().json()
-        self.assertLessEqual(len(consultas), 4)
+        self.assertLessEqual(len(consultas), 5)
         ids = [fila['id_publicacion_api'] for fila in data['resultados']]
         self.assertEqual(data['total'], 7)
         self.assertEqual(ids.count(representante.pk), 1)
@@ -116,11 +116,13 @@ class BusquedaAgrupacionEditorialTests(TestCase):
 
         with CaptureQueriesContext(connection) as queries:
             respuesta = self.api('evidencia exclusiva')
-        self.assertLessEqual(len(queries), 4)
+        self.assertLessEqual(len(queries), 5)
         data = respuesta.json()
         self.assertEqual(data['total'], 1)
         fila = data['resultados'][0]
         self.assertEqual(fila['id_publicacion_api'], representante.pk)
+        self.assertEqual(fila['id_publicacion_presentada'], miembro.pk)
+        self.assertEqual(fila['titulo'], miembro.titulo)
         self.assertIn('evidencia exclusiva', fila['extracto'])
         self.assertEqual(fila['coincidencia']['id_publicacion_api'], miembro.pk)
         self.assertEqual({v['id_publicacion_api'] for v in fila['versiones_originales']},
@@ -171,6 +173,8 @@ class BusquedaAgrupacionEditorialTests(TestCase):
         data = self.api(**params).json()
         self.assertEqual(data['total'], 1)
         self.assertEqual(data['resultados'][0]['id_publicacion_api'], representante.pk)
+        self.assertEqual(data['resultados'][0]['id_publicacion_presentada'], miembro.pk)
+        self.assertEqual(data['resultados'][0]['categorias'], ['Salud'])
         html = self.client.get(reverse('buscar_noticias'), {'q': 'incendio', **params})
         self.assertEqual(html.status_code, 200)
         self.assertEqual(html.context['total'], 1)
@@ -195,8 +199,9 @@ class BusquedaAgrupacionEditorialTests(TestCase):
         self.assertEqual(self.api(desde='2026-11-20', hasta='2026-11-19').status_code, 400)
 
     def test_autocompletado_cuenta_grupos_unicos_y_conserva_fuentes_distintas(self):
-        representante = self.publicacion('Incendio Misiones común representante')
-        miembro = self.publicacion('Incendio Misiones común miembro')
+        reciente = timezone.now()
+        representante = self.publicacion('Incendio Misiones común representante', fecha=reciente - timedelta(days=2))
+        miembro = self.publicacion('Incendio Misiones común miembro', fecha=reciente - timedelta(days=1))
         self.agrupar(representante, [miembro])
         otra_fuente = self.publicacion('Incendio Misiones común otro medio', fuente='Norte Misionero')
         respuesta = self.client.get(reverse('sugerencias_publicaciones'), {'q': 'incendio mi'})
@@ -206,8 +211,10 @@ class BusquedaAgrupacionEditorialTests(TestCase):
         self.assertEqual(sugerencia['texto'], 'Misiones')
         urls = [fila['url'] for fila in data['noticias']]
         self.assertEqual(len(urls), len(set(urls)))
-        self.assertIn(reverse('noticia', args=[representante.pk]), urls)
-        self.assertNotIn(reverse('noticia', args=[miembro.pk]), urls)
+        self.assertIn(reverse('noticia', args=[miembro.pk]), urls)
+        self.assertNotIn(reverse('noticia', args=[representante.pk]), urls)
+        fila_grupo = next(f for f in data['noticias'] if f.get('id_publicacion_api') == representante.pk)
+        self.assertEqual(fila_grupo['representante_url'], reverse('noticia', args=[representante.pk]))
         self.assertIn(reverse('noticia', args=[otra_fuente.pk]), urls)
 
     def test_filtro_autocompletado_y_redundancia_de_grupo(self):
@@ -219,6 +226,76 @@ class BusquedaAgrupacionEditorialTests(TestCase):
             'q': 'incendio mi', 'fuente': 'Noticias del 6',
         }).json()
         urls = [fila['url'] for fila in data['noticias']]
-        self.assertEqual(urls.count(reverse('noticia', args=[representante.pk])), 1)
-        self.assertNotIn(reverse('noticia', args=[miembro.pk]), urls)
+        self.assertEqual(urls.count(reverse('noticia', args=[miembro.pk])), 1)
+        self.assertNotIn(reverse('noticia', args=[representante.pk]), urls)
         self.assertNotIn(reverse('noticia', args=[otra.pk]), urls)
+
+    def test_presentacion_respeta_fecha_categoria_y_muestra_metadatos_de_la_version_elegida(self):
+        hoy = timezone.localdate()
+        representante = self.publicacion(
+            'Informe regional como representante estable',
+            contenido='Contenido antiguo que no satisface esta búsqueda.',
+            fecha=timezone.now() - timedelta(days=20), imagen_url='https://img.example.invalid/rep.jpg',
+        )
+        miembro = self.publicacion(
+            'Incendio alerta en la localidad',
+            contenido='El artículo editorial informa que incendio alerta requirió asistencia.',
+            fecha=timezone.now(), imagen_url='https://img.example.invalid/miembro.jpg',
+        )
+        self.agrupar(representante, [miembro])
+        self.agregar_categoria(miembro)
+        params = {'desde': hoy.isoformat(), 'hasta': hoy.isoformat(), 'categoria': 'Salud'}
+
+        data = self.api('incendio alerta', **params).json()
+        self.assertEqual(data['total'], 1)
+        fila = data['resultados'][0]
+        self.assertEqual(fila['id_publicacion_api'], representante.pk)
+        self.assertEqual(fila['id_publicacion_presentada'], miembro.pk)
+        self.assertEqual(fila['titulo'], miembro.titulo)
+        self.assertEqual(fila['fecha_dia'], hoy.isoformat())
+        self.assertEqual(fila['categorias'], ['Salud'])
+        self.assertEqual(fila['imagen_url'], miembro.imagen_url)
+        self.assertIn('incendio alerta', fila['extracto'])
+        self.assertEqual(fila['detalle_url'], reverse('noticia', args=[miembro.pk]))
+        self.assertEqual(fila['representante']['detalle_url'], reverse('noticia', args=[representante.pk]))
+        self.assertEqual({v['id_publicacion_api'] for v in fila['versiones_originales']},
+                         {representante.pk, miembro.pk})
+
+        html = self.client.get(reverse('buscar_noticias'), {'q': 'incendio alerta', **params})
+        self.assertEqual(html.status_code, 200)
+        resultado = html.context['resultados'][0]
+        self.assertEqual(''.join(p['texto'] for p in resultado['titulo']), miembro.titulo)
+        self.assertEqual(resultado['fecha_dia'], hoy.isoformat())
+        self.assertEqual(resultado['categorias'], ['Salud'])
+        self.assertEqual(resultado['imagen_url'], miembro.imagen_url)
+        self.assertEqual(resultado['detalle_url'], reverse('noticia', args=[miembro.pk]))
+        self.assertContains(html, reverse('noticia', args=[representante.pk]))
+        self.assertContains(html, reverse('noticia', args=[miembro.pk]))
+        self.assertContains(html, 'Salud')
+        self.assertContains(html, 'img.example.invalid/miembro.jpg')
+        self.assertNotContains(html, 'img.example.invalid/rep.jpg')
+
+    def test_varias_versiones_elegibles_seleccionan_la_mas_reciente_de_forma_determinista(self):
+        ahora = timezone.now()
+        representante = self.publicacion('Incendio alerta representante', fecha=ahora - timedelta(days=10))
+        anterior = self.publicacion('Incendio alerta versión anterior', fecha=ahora - timedelta(days=2))
+        seleccionada = self.publicacion('Incendio alerta versión más reciente', fecha=ahora - timedelta(hours=1))
+        self.agrupar(representante, [anterior, seleccionada])
+        data = self.api('incendio alerta').json()
+        fila = data['resultados'][0]
+        self.assertEqual(fila['id_publicacion_api'], representante.pk)
+        self.assertEqual(fila['id_publicacion_presentada'], seleccionada.pk)
+        self.assertEqual(fila['titulo'], seleccionada.titulo)
+        self.assertEqual(data['total'], 1)
+        self.assertEqual(data['total_paginas'], 1)
+
+    def test_representante_se_presenta_si_es_la_version_elegible_mas_relevante(self):
+        ahora = timezone.now()
+        representante = self.publicacion('Incendio alerta representante reciente', fecha=ahora)
+        miembro = self.publicacion('Incendio alerta versión anterior', fecha=ahora - timedelta(days=1))
+        self.agrupar(representante, [miembro])
+        fila = self.api('incendio alerta').json()['resultados'][0]
+        self.assertEqual(fila['id_publicacion_api'], representante.pk)
+        self.assertEqual(fila['id_publicacion_presentada'], representante.pk)
+        self.assertEqual(fila['titulo'], representante.titulo)
+        self.assertEqual(fila['detalle_url'], reverse('noticia', args=[representante.pk]))

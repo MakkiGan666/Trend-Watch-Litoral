@@ -8,7 +8,7 @@ from django.db.models import DateTimeField, F, IntegerField, Max, OuterRef, Q, S
 from django.db.models.functions import Coalesce
 from django.utils.html import strip_tags
 
-from core.models import GrupoEditorial, MiembroGrupoEditorial, Publicacion
+from core.models import GrupoEditorial, MiembroGrupoEditorial, Publicacion, PublicacionTema
 from core.busqueda_texto_v1 import (
     BASES_V1 as BASES, VOCALES_V1 as VOCALES,
     TextoComparableV1 as TextoComparable, plegar_v1 as plegar,
@@ -154,18 +154,29 @@ def _adjuntar_versiones_editoriales(pagina):
     pagina.object_list = publicaciones
     if not publicaciones:
         return
-    ids_coincidencia = {
+    agrupadas = [publicacion for publicacion in publicaciones if publicacion._grupo_editorial_id]
+    ids_presentacion = {
         publicacion._coincidencia_id for publicacion in publicaciones
         if publicacion._coincidencia_id != publicacion.pk
     }
-    coincidencias = {
+    presentaciones = {
         publicacion.pk: publicacion
-        for publicacion in Publicacion.objects.filter(pk__in=ids_coincidencia)
+        for publicacion in Publicacion.objects.filter(pk__in=ids_presentacion)
     }
+    categorias_por_publicacion = {}
+    ids_categorias = {publicacion._coincidencia_id for publicacion in agrupadas}
+    if ids_categorias:
+        for publicacion_id, categoria in PublicacionTema.objects.filter(
+            id_publicacion_api_id__in=ids_categorias,
+        ).values_list('id_publicacion_api_id', 'id_temas__id_categoria__nombre_categoria').distinct():
+            categorias_por_publicacion.setdefault(publicacion_id, set()).add(categoria)
     for publicacion in publicaciones:
-        publicacion._coincidencia = coincidencias.get(publicacion._coincidencia_id, publicacion)
+        publicacion._presentacion = presentaciones.get(publicacion._coincidencia_id, publicacion)
+        publicacion._coincidencia = publicacion._presentacion
+        publicacion._categorias_presentacion = sorted(
+            categorias_por_publicacion.get(publicacion._presentacion.pk, set()), key=str.casefold,
+        )
         publicacion._versiones_originales = []
-    agrupadas = [publicacion for publicacion in publicaciones if publicacion._grupo_editorial_id]
     if not agrupadas:
         return
     membresias = MiembroGrupoEditorial.objects.filter(

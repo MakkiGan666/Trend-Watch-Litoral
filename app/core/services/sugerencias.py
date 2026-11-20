@@ -1,8 +1,9 @@
 """Sugerencias públicas: títulos tokenizados en SQL, nunca corpus en Python."""
 from django.db import connection
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Case, IntegerField, OuterRef, Q, Subquery, Value, When
 from django.urls import reverse
 
+from core.models import Publicacion
 from core.busqueda_texto_v1 import BASES_V1, VOCALES_V1
 from core.busqueda_texto_v1 import plegar_v1
 from .buscador import _coincidencias, publicaciones_coincidentes, validar_consulta
@@ -69,11 +70,27 @@ def sugerir(valor, filtros=None):
                           for clave in ('desde', 'hasta', 'fuente', 'categoria'))
     noticias = (publicaciones_coincidentes(terminos, filtros) if filtros_activos
                 else publicaciones_coincidentes(terminos)).annotate(puntos=puntuacion)
-    noticias = noticias.order_by('-puntos', *noticias.query.order_by).values('pk', 'titulo')[:4]
+    titulo_presentacion = Publicacion.objects.filter(pk=OuterRef('_coincidencia_id')).order_by().values('titulo')[:1]
+    noticias = list(noticias.order_by('-puntos', *noticias.query.order_by).annotate(
+        _titulo_presentacion=Subquery(titulo_presentacion),
+    ).values(
+        'pk', '_coincidencia_id', '_grupo_editorial_id', '_titulo_presentacion',
+    )[:4])
+    noticias_presentacion = []
+    for noticia in noticias:
+        seleccionada = noticia['_coincidencia_id']
+        resultado = {
+            'titulo': noticia['_titulo_presentacion'],
+            'url': reverse('noticia', kwargs={'pk': seleccionada}),
+        }
+        if noticia['_grupo_editorial_id']:
+            resultado['id_publicacion_api'] = noticia['pk']
+            resultado['representante_url'] = reverse('noticia', kwargs={'pk': noticia['pk']})
+        noticias_presentacion.append(resultado)
     return {
         'consulta': consulta,
         'terminos': [{'texto': palabra, 'consulta': ' '.join([*contexto, palabra])} for palabra, _ in palabras],
-        'noticias': [{'titulo': p['titulo'], 'url': reverse('noticia', kwargs={'pk': p['pk']})} for p in noticias],
+        'noticias': noticias_presentacion,
     }
 
 

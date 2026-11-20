@@ -24,9 +24,11 @@
         <div class="search-result__body">
           <div class="search-result__meta"><span>{{ resultado.fuente }}</span>{% if resultado.fecha %}<span>{% if resultado.fecha_origen == 'captura' %}Capturada el{% else %}Publicada el{% endif %} <time datetime="{{ resultado.fecha_efectiva }}">{{ resultado.fecha|date:"j M Y" }}{% if resultado.fecha_precision == 'instante' %} · {{ resultado.fecha|date:"H:i" }}{% endif %}</time></span>{% endif %}</div>
           <h3><a href="{{ resultado.detalle_url }}">{% include "partials/_search_segments.html" with segmentos=resultado.titulo %}</a></h3>
+          {% if resultado.categorias %}<p class="search-result__categories" aria-label="Categorías">{% for categoria in resultado.categorias %}<span>{{ categoria }}</span>{% endfor %}</p>{% endif %}
           {% if not resultado.es_ficha_rss %}<p class="search-result__excerpt">{% include "partials/_search_segments.html" with segmentos=resultado.extracto %}</p>
           {% else %}<p class="search-result__excerpt"><span class="tag tag--soft">Ficha RSS · sin cuerpo completo</span></p>{% endif %}
           {% if resultado.coincidencia %}<p class="search-result__match">La coincidencia aparece en <a href="{{ resultado.coincidencia.detalle_url }}">{{ resultado.coincidencia.titulo }} · {{ resultado.coincidencia.fuente }}</a>.</p>{% endif %}
+          {% if resultado.representante %}<p class="search-result__representative">Representante editorial: <a href="{{ resultado.representante.detalle_url }}">{{ resultado.representante.titulo }} · {{ resultado.representante.fuente }}</a></p>{% endif %}
           {% if resultado.versiones_originales %}<details class="search-result__versions"><summary>Ver versiones originales ({{ resultado.versiones_originales|length }})</summary><ul>{% for version in resultado.versiones_originales %}<li><a href="{{ version.detalle_url }}">{{ version.titulo }} · {{ version.fuente }}</a></li>{% endfor %}</ul></details>{% endif %}
         </div>
       </article></li>

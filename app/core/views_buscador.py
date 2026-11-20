@@ -32,26 +32,34 @@ def buscar_publicaciones(request):
 
     resultados = []
     for publicacion in pagina.object_list:
-        coincidencia = publicacion._coincidencia
+        presentacion = publicacion._presentacion
         resultado = {
             'id_publicacion_api': publicacion.pk,
-            'titulo': publicacion.titulo,
-            'fuente': publicacion.fuente,
-            **datos_fecha(publicacion),
-            'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
-            'imagen_url': (publicacion.imagen_publica_url or None)
-                if publicacion.tiene_cuerpo_completo else None,
-            'extracto': extracto(coincidencia.contenido, terminos)
-                if coincidencia.tiene_cuerpo_completo else '',
+            'titulo': presentacion.titulo,
+            'fuente': presentacion.fuente,
+            **datos_fecha(presentacion),
+            'detalle_url': reverse('noticia', kwargs={'pk': presentacion.pk}),
+            'imagen_url': (presentacion.imagen_publica_url or None)
+                if presentacion.tiene_cuerpo_completo else None,
+            'extracto': extracto(presentacion.contenido, terminos)
+                if presentacion.tiene_cuerpo_completo else '',
         }
         if publicacion._grupo_editorial_id:
+            resultado['id_publicacion_presentada'] = presentacion.pk
+            resultado['categorias'] = publicacion._categorias_presentacion
+            resultado['representante'] = {
+                'id_publicacion_api': publicacion.pk,
+                'titulo': publicacion.titulo,
+                'fuente': publicacion.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
+            }
             resultado['versiones_originales'] = _versiones_originales(publicacion)
-        if coincidencia.pk != publicacion.pk:
+        if presentacion.pk != publicacion.pk:
             resultado['coincidencia'] = {
-                'id_publicacion_api': coincidencia.pk,
-                'titulo': coincidencia.titulo,
-                'fuente': coincidencia.fuente,
-                'detalle_url': reverse('noticia', kwargs={'pk': coincidencia.pk}),
+                'id_publicacion_api': presentacion.pk,
+                'titulo': presentacion.titulo,
+                'fuente': presentacion.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': presentacion.pk}),
             }
         resultados.append(resultado)
     return JsonResponse({
@@ -86,29 +94,36 @@ def buscar_noticias(request):
         return render(request, 'core/buscar.html', contexto, status=400)
     resultados = []
     for publicacion in pagina.object_list:
-        coincidencia = publicacion._coincidencia
-        fecha = datos_fecha(publicacion)
+        presentacion = publicacion._presentacion
+        fecha = datos_fecha(presentacion)
         valor_fecha = fecha['fecha_efectiva']
         presentacion_fecha = (date.fromisoformat(valor_fecha) if fecha['fecha_precision'] == 'dia'
                               else datetime.fromisoformat(valor_fecha)) if valor_fecha else None
         resultados.append({
-            'titulo': segmentos_resaltados(publicacion.titulo, terminos),
-            'es_ficha_rss': publicacion.contenido_completo is False,
-            'extracto': (segmentos_resaltados(extracto(coincidencia.contenido, terminos), terminos)
-                         if coincidencia.tiene_cuerpo_completo else None),
-            'fuente': publicacion.fuente,
-            'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
-            'imagen_url': (imagen_segura(publicacion.imagen_publica_url)
-                           if publicacion.tiene_cuerpo_completo else None),
+            'titulo': segmentos_resaltados(presentacion.titulo, terminos),
+            'es_ficha_rss': presentacion.contenido_completo is False,
+            'extracto': (segmentos_resaltados(extracto(presentacion.contenido, terminos), terminos)
+                         if presentacion.tiene_cuerpo_completo else None),
+            'fuente': presentacion.fuente,
+            'detalle_url': reverse('noticia', kwargs={'pk': presentacion.pk}),
+            'imagen_url': (imagen_segura(presentacion.imagen_publica_url)
+                           if presentacion.tiene_cuerpo_completo else None),
             'fecha': presentacion_fecha, **fecha,
+            'categorias': publicacion._categorias_presentacion,
         })
         if publicacion._grupo_editorial_id:
             resultados[-1]['versiones_originales'] = _versiones_originales(publicacion)
-        if coincidencia.pk != publicacion.pk:
+            resultados[-1]['id_publicacion_presentada'] = presentacion.pk
+            resultados[-1]['representante'] = {
+                'titulo': publicacion.titulo,
+                'fuente': publicacion.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': publicacion.pk}),
+            }
+        if presentacion.pk != publicacion.pk:
             resultados[-1]['coincidencia'] = {
-                'titulo': coincidencia.titulo,
-                'fuente': coincidencia.fuente,
-                'detalle_url': reverse('noticia', kwargs={'pk': coincidencia.pk}),
+                'titulo': presentacion.titulo,
+                'fuente': presentacion.fuente,
+                'detalle_url': reverse('noticia', kwargs={'pk': presentacion.pk}),
             }
 
     def enlace(numero):

@@ -37,7 +37,11 @@
 .search-result h3 a:hover { text-decoration:underline; text-decoration-color:var(--aqua); text-underline-offset:4px; }
 .search-result__excerpt { color:var(--tx-2); font-size:15px; line-height:1.75; overflow-wrap:anywhere; }
 .search-result__match, .search-result__versions { margin-top:10px; color:var(--tx-2); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.search-result__categories { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px; }
+.search-result__categories span { border:1px solid var(--edge); border-radius:999px; padding:3px 9px; color:var(--tx-2); font-size:12px; }
+.search-result__representative { margin-top:8px; color:var(--tx-2); font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
 .search-result__match a, .search-result__versions a { text-decoration:underline; text-underline-offset:3px; }
+.search-result__representative a { text-decoration:underline; text-underline-offset:3px; }
 .search-result__versions summary { cursor:pointer; color:var(--aqua); }
 .search-result__versions ul { display:grid; gap:6px; padding-left:20px; margin-top:8px; }
 .search-page mark { background:var(--mist); color:var(--ink-900); border-radius:3px; padding:0 .08em; }
