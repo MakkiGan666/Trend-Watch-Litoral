@@ -194,6 +194,7 @@ class ProgramacionIngestaMultifuente(models.Model):
     habilitada = models.BooleanField(default=False)
     acceso_revisado = models.BooleanField(default=False)
     aprobacion_operativa = models.BooleanField(default=False)
+    solo_metadatos = models.BooleanField(default=False)
     frecuencia_segundos = models.PositiveIntegerField(default=3600)
     intervalo_segundos = models.PositiveIntegerField(default=3600)
     proxima_ejecucion = models.DateTimeField(null=True, blank=True)
@@ -227,6 +228,13 @@ class TrabajoIngestaMultifuente(models.Model):
         CANCELADO = 'CANCELADO', 'Cancelado'
 
     fuente_id = models.CharField(max_length=64)
+    # El modo queda congelado al crear el trabajo para que una edición posterior
+    # de la programación no cambie el tratamiento de un snapshot en curso.
+    solo_metadatos = models.BooleanField(default=False)
+    registro = models.ForeignKey(
+        'RegistroDatos', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='trabajos_multifuente',
+    )
     estado = models.CharField(max_length=24, choices=Estado.choices, default=Estado.SNAPSHOT_PENDIENTE)
     snapshot = models.JSONField(default=list)
     snapshot_capturado = models.DateTimeField(null=True, blank=True)

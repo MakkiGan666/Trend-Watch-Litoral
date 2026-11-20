@@ -27,6 +27,10 @@ class Command(BaseCommand):
         )
         parser.add_argument('--frecuencia-segundos', type=int, help='Cadencia entre consultas RSS.')
         parser.add_argument('--intervalo-http-segundos', type=int, help='Mínimo entre solicitudes HTTP.')
+        parser.add_argument(
+            '--modo', choices=('articulos', 'metadatos'), default=None,
+            help='Modo por fuente; metadatos persiste únicamente título, fecha, fuente y URL.',
+        )
         parser.add_argument('--confirmar-revision-acceso', action='store_true')
         parser.add_argument('--confirmar-aprobacion-operativa', action='store_true')
         parser.add_argument('--confirmar-revision', action='store_true')
@@ -43,12 +47,14 @@ class Command(BaseCommand):
                     intervalo_segundos=opts['intervalo_segundos'],
                     frecuencia_segundos=opts['frecuencia_segundos'],
                     intervalo_http_segundos=opts['intervalo_http_segundos'],
+                    solo_metadatos=(opts['modo'] == 'metadatos') if opts['modo'] else None,
                 )
                 resultado = {
                     'fuente_id': salida.fuente_id, 'habilitada': salida.habilitada,
                     'frecuencia_segundos': salida.frecuencia_segundos,
                     'intervalo_segundos': salida.intervalo_segundos,
                     'intervalo_http_segundos': salida.intervalo_segundos,
+                    'modo': 'metadatos' if salida.solo_metadatos else 'articulos',
                 }
             elif opts['habilitar']:
                 if not opts['fuente']:

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 from threading import Event
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -9,9 +9,12 @@ from django.test import TestCase
 from django.utils import timezone
 
 from core.models import (
+    CacheRobotsMultifuente,
     ControlServicioIngestaMultifuente,
     ControlSolicitudRSSMetadatos,
     ProgramacionIngestaMultifuente,
+    Publicacion,
+    RegistroDatos,
     TrabajoIngestaMultifuente,
 )
 from core.services import (
@@ -402,6 +405,11 @@ class AutomatizacionMultifuenteTests(TestCase):
         parser.crawl_delay.return_value = 180
         parser.request_rate.return_value = None
         control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        CacheRobotsMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, host=self.fuente.hosts_permitidos[0],
+            reglas='User-agent: *\nAllow: /\n', consultado=timezone.now(),
+            expira=timezone.now() + timedelta(hours=1),
+        )
         with patch.object(control, '_parser', return_value=parser), \
                 patch('core.services.planificador_multifuente._reservar_solicitud', return_value=44) as reservar:
             reserva = control.antes(self.fuente.feed)
@@ -554,3 +562,241 @@ class AutomatizacionMultifuenteTests(TestCase):
         with patch('core.services.planificador_multifuente.ejecutar_ciclo') as ciclo:
             call_command('automatizar_ingesta_multifuente', '--estado')
         ciclo.assert_not_called()
+
+    def test_modo_metadata_configurable_y_deshabilitado_por_defecto(self):
+        plan = planificador.configurar_fuente(
+            self.fuente.identificador, frecuencia_segundos=21600,
+            intervalo_http_segundos=3600, solo_metadatos=True,
+        )
+        self.assertTrue(plan.solo_metadatos)
+        self.assertFalse(plan.habilitada)
+        self.assertFalse(plan.acceso_revisado)
+        self.assertFalse(plan.aprobacion_operativa)
+        self.assertFalse(all(f.habilitada for f in fuentes_rss.FUENTES_RSS))
+        self.assertEqual(plan.frecuencia_segundos, 21600)
+
+    def test_comando_configura_modo_y_cadencia_sin_habilitar(self):
+        call_command(
+            'automatizar_ingesta_multifuente', '--configurar',
+            '--fuente', self.fuente.identificador,
+            '--frecuencia-segundos', '21600', '--intervalo-http-segundos', '3600',
+            '--modo', 'metadatos',
+        )
+        plan = ProgramacionIngestaMultifuente.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(plan.frecuencia_segundos, 21600)
+        self.assertEqual(plan.intervalo_segundos, 3600)
+        self.assertTrue(plan.solo_metadatos)
+        self.assertFalse(plan.habilitada)
+        self.assertFalse(plan.acceso_revisado)
+        self.assertFalse(plan.aprobacion_operativa)
+
+    def test_trabajo_congela_modo_configurado_al_reservarse(self):
+        plan = self.programar()
+        planificador.ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(solo_metadatos=True)
+        info = planificador._reservar_trabajo(plan, timezone.now())
+        trabajo = TrabajoIngestaMultifuente.objects.get(pk=info[0])
+        self.assertTrue(trabajo.solo_metadatos)
+        planificador.ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(solo_metadatos=False)
+        self.assertTrue(TrabajoIngestaMultifuente.objects.get(pk=trabajo.pk).solo_metadatos)
+
+    def test_no_cambia_modo_de_trabajo_abierto(self):
+        plan = self.programar()
+        TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador,
+            estado=TrabajoIngestaMultifuente.Estado.ESPERA,
+        )
+        with self.assertRaisesRegex(ValueError, 'trabajo abierto'):
+            planificador.configurar_fuente(self.fuente.identificador, solo_metadatos=True)
+        plan.refresh_from_db()
+        self.assertFalse(plan.solo_metadatos)
+
+    def test_snapshot_metadata_no_conserva_resumen_imagen_ni_contenido(self):
+        plan = self.programar()
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(solo_metadatos=True)
+        info = planificador._reservar_trabajo(plan, timezone.now())
+        noticia = lector_rss.NoticiaRSS(
+            fuente=self.fuente.nombre, fuente_id=self.fuente.identificador,
+            titulo='Ficha sintética', url=f'https://{self.fuente.hosts_permitidos[0]}/a/',
+            fecha=timezone.now(), resumen='No guardar este resumen',
+            contenido_completo='No guardar este cuerpo', seccion='No guardar',
+            imagen_principal='https://cdn.invalid/imagen.jpg',
+        )
+        feed = lector_rss.ResultadoRSS((noticia,), (), 1, 0, (0,))
+        planificador._guardar_snapshot(info[0], *info[1:], self.fuente.identificador, feed)
+        trabajo = TrabajoIngestaMultifuente.objects.get(pk=info[0])
+        self.assertEqual(set(trabajo.snapshot[0]), {
+            'indice', 'fuente', 'fuente_id', 'titulo', 'url', 'fecha', 'estado',
+        })
+        self.assertEqual(trabajo.registro.fuentes_api, self.fuente.identificador)
+        self.assertEqual(trabajo.registro.estado, 'EN_PROGRESO')
+
+    def test_captura_metadata_usa_solo_snapshot_sin_ia(self):
+        plan = self.programar()
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(solo_metadatos=True)
+        noticia = lector_rss.NoticiaRSS(
+            fuente=self.fuente.nombre, fuente_id=self.fuente.identificador,
+            titulo='Noticia metadata sintética',
+            url=f'https://{self.fuente.hosts_permitidos[0]}/metadata/',
+            fecha=timezone.now(), resumen='no conservar', contenido_completo='',
+            seccion='', imagen_principal='https://cdn.invalid/not-used.jpg',
+        )
+        feed = lector_rss.ResultadoRSS((noticia,), (), 1, 0, (0,))
+
+        def capturar(identificadores, **kwargs):
+            self.assertEqual(identificadores, [self.fuente.identificador])
+            self.assertTrue(kwargs['solo_snapshot'])
+            self.assertFalse(kwargs['procesar_ia'])
+            kwargs['guardar_snapshot'](self.fuente.identificador, feed)
+            return {'fuentes': [{'fuente': self.fuente.identificador, 'errores': []}]}
+
+        with patch.object(
+            planificador.orquestador_multifuente, 'ejecutar_ingesta_multifuente',
+            side_effect=capturar,
+        ) as ejecutar, \
+                patch('core.services.extractor_articulos.extraer_articulo') as extractor:
+            resultado = planificador.ejecutar_ciclo(max_fuentes=1)
+        self.assertEqual(resultado['resultados'][0]['estado'], 'SNAPSHOT_GUARDADO')
+        self.assertEqual(ejecutar.call_count, 1)
+        extractor.assert_not_called()
+        trabajo = TrabajoIngestaMultifuente.objects.get()
+        self.assertTrue(trabajo.solo_metadatos)
+        self.assertNotIn('resumen', trabajo.snapshot[0])
+        self.assertNotIn('imagen_principal', trabajo.snapshot[0])
+
+    def _trabajo_metadata_con_snapshot(self, cantidad=7):
+        self.programar()
+        registro = RegistroDatos.objects.create(
+            fuentes_api=self.fuente.identificador, fecha_ejecucion=timezone.now(),
+            estado='EN_PROGRESO', lenguaje='RSS metadata-only',
+        )
+        entradas = []
+        for indice in range(cantidad):
+            # Índices 0 y 1 comparten identidad para comprobar deduplicación.
+            url = f'https://{self.fuente.hosts_permitidos[0]}/nota-{0 if indice == 1 else indice}/'
+            entradas.append({
+                'indice': indice, 'fuente': self.fuente.nombre,
+                'fuente_id': self.fuente.identificador, 'titulo': f'Titular {indice}',
+                'url': url, 'fecha': timezone.now().isoformat(), 'estado': 'PENDIENTE',
+            })
+        return TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, solo_metadatos=True, registro=registro,
+            estado=TrabajoIngestaMultifuente.Estado.PROCESANDO,
+            snapshot=entradas, snapshot_capturado=timezone.now(),
+            entradas_feed=cantidad, entradas_snapshot=cantidad,
+            token_arrendamiento=uuid4(), fencing_token=1,
+        )
+
+    def test_metadata_procesa_maximo_cinco_reanuda_sin_feed_y_deduplica(self):
+        trabajo = self._trabajo_metadata_con_snapshot()
+        from core.services.persistencia_rss_metadatos import _validar_item
+        self.assertEqual(_validar_item(
+            planificador._noticia_desde_snapshot_metadata(trabajo.snapshot[0]), self.fuente_base,
+        )[0], 'Titular 0')
+        token = trabajo.token_arrendamiento
+        with patch.object(planificador.descarga_segura, 'descargar') as descargar, \
+                patch.object(planificador.orquestador_multifuente, 'ejecutar_ingesta_multifuente') as orquestador:
+            primero = planificador._procesar_unidad(
+                trabajo.pk, token, trabajo.fencing_token,
+                ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+            )
+        descargar.assert_not_called()
+        orquestador.assert_not_called()
+        self.assertEqual(primero['procesadas'], 5)
+        self.assertEqual(primero['duplicadas'], 1, primero)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.estado, TrabajoIngestaMultifuente.Estado.ESPERA)
+        self.assertEqual(trabajo.procesadas, 5)
+        self.assertEqual(Publicacion.objects.filter(fuente=self.fuente.nombre).count(), 4)
+        trabajo.token_arrendamiento = uuid4()
+        trabajo.fencing_token += 1
+        trabajo.estado = TrabajoIngestaMultifuente.Estado.PROCESANDO
+        trabajo.save(update_fields=['token_arrendamiento', 'fencing_token', 'estado'])
+        segundo = planificador._procesar_unidad(
+            trabajo.pk, trabajo.token_arrendamiento, trabajo.fencing_token,
+            ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+        )
+        trabajo.refresh_from_db()
+        self.assertEqual(segundo['procesadas'], 2)
+        self.assertEqual(trabajo.estado, TrabajoIngestaMultifuente.Estado.COMPLETADO)
+        self.assertEqual(Publicacion.objects.filter(fuente=self.fuente.nombre).count(), 6)
+        self.assertEqual(trabajo.nuevas, 6)
+        self.assertEqual(trabajo.duplicadas, 1)
+        self.assertEqual(trabajo.snapshot, [])
+        self.assertEqual(trabajo.registro.estado, 'COMPLETADO')
+        primera = Publicacion.objects.get(url=f'https://{self.fuente.hosts_permitidos[0]}/nota-0/')
+        self.assertEqual(primera.contenido, '')
+        self.assertFalse(primera.contenido_completo)
+        self.assertFalse(primera.procesado_ia)
+        from django.urls import reverse
+        respuesta = self.client.get(reverse('buscar_publicaciones'), {'q': 'Titular 0'})
+        self.assertEqual(respuesta.status_code, 200)
+        ids = [item['id_publicacion_api'] for item in respuesta.json()['resultados']]
+        self.assertIn(primera.pk, ids)
+
+    def test_error_de_persistencia_revierte_publicacion_y_checkpoint_juntos(self):
+        trabajo = self._trabajo_metadata_con_snapshot(cantidad=1)
+        token = trabajo.token_arrendamiento
+        from core.services import persistencia_rss_metadatos as persistencia
+        original = persistencia._persistir_item
+
+        def guardar_y_fallar(*args, **kwargs):
+            original(*args, **kwargs)
+            from django.db import DatabaseError
+            raise DatabaseError('fallo simulado antes del commit')
+
+        with patch.object(persistencia, '_persistir_item', side_effect=guardar_y_fallar):
+            with self.assertRaisesRegex(Exception, 'fallo simulado'):
+                planificador._procesar_unidad(
+                    trabajo.pk, token, trabajo.fencing_token,
+                    ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+                )
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.snapshot[0]['estado'], 'PENDIENTE')
+        self.assertEqual(trabajo.procesadas, 0)
+        self.assertFalse(Publicacion.objects.filter(fuente=self.fuente.nombre).exists())
+
+    def test_fence_obsoleto_no_confirma_metadata(self):
+        trabajo = self._trabajo_metadata_con_snapshot(cantidad=1)
+        trabajo.fencing_token += 1
+        trabajo.save(update_fields=['fencing_token'])
+        with self.assertRaises(planificador.LeasePerdido):
+            planificador._procesar_snapshot_metadata(
+                trabajo.pk, trabajo.token_arrendamiento, trabajo.fencing_token - 1, self.fuente,
+            )
+        self.assertEqual(Publicacion.objects.count(), 0)
+
+    def test_visit_time_respeta_ventana_utc_y_siguiente_inicio(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        utc = dt_timezone.utc
+        fuera = timezone.datetime(2026, 11, 20, 2, 0, tzinfo=utc)
+        siguiente = control._espera_visit_time(
+            'User-agent: *\nVisit-time: 0300-1200\n', fuera,
+        )
+        self.assertEqual(siguiente, timezone.datetime(2026, 11, 20, 3, 0, tzinfo=utc))
+        dentro = timezone.datetime(2026, 11, 20, 4, 0, tzinfo=utc)
+        self.assertIsNone(control._espera_visit_time('User-agent: *\nVisit-time: 0300-1200\n', dentro))
+
+    def test_visit_time_malformado_falla_cerrado(self):
+        with self.assertRaisesRegex(ValueError, 'Visit-time'):
+            planificador.ControlHTTPConRobots._ventanas_visit_time(
+                'User-agent: *\nVisit-time: cuando-se-puede\n',
+            )
+
+    def test_visit_time_fuera_de_ventana_no_reserva_solicitud(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        parser = Mock()
+        parser.can_fetch.return_value = True
+        reglas = 'User-agent: *\nVisit-time: 0300-1200\n'
+        cache = CacheRobotsMultifuente.objects.create(
+            fuente_id=self.fuente.identificador,
+            host=self.fuente.hosts_permitidos[0], reglas=reglas,
+            consultado=timezone.now() - timedelta(minutes=5),
+            expira=timezone.now() + timedelta(hours=1),
+        )
+        fuera = timezone.datetime(2026, 11, 20, 2, 0, tzinfo=dt_timezone.utc)
+        with patch.object(control, '_parser', return_value=parser), \
+                patch('core.services.planificador_multifuente.timezone.now', return_value=fuera), \
+                patch('core.services.planificador_multifuente._reservar_solicitud') as reservar:
+            with self.assertRaises(FuenteRSSEnEspera):
+                control.antes(self.fuente.feed)
+        reservar.assert_not_called()
