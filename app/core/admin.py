@@ -236,9 +236,10 @@ class CandidatoDuplicadoEditorialAdmin(admin.ModelAdmin):
     """Cola de observación: visible para revisores, sin acciones de decisión."""
     list_display = (
         'id', 'publicacion_a', 'publicacion_b', 'fuente_normalizada',
-        'clasificacion', 'version_detector', 'veces_detectado', 'ultima_detectada',
+        'clasificacion', 'estado', 'motivo_estado', 'version_detector',
+        'veces_detectado', 'ultima_detectada',
     )
-    list_filter = ('clasificacion', 'fuente_normalizada', 'version_detector')
+    list_filter = ('estado', 'clasificacion', 'fuente_normalizada', 'version_detector')
     search_fields = ('publicacion_a__titulo', 'publicacion_b__titulo')
     readonly_fields = tuple(field.name for field in CandidatoDuplicadoEditorial._meta.fields)
     actions = None

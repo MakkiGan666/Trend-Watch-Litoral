@@ -2,6 +2,7 @@ import json
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
+from django.db.models import Count
 
 from core.services.duplicados_editoriales import detectar_candidatos, normalizar_fuente, normalizar_texto
 
@@ -25,7 +26,7 @@ class Command(BaseCommand):
         if connection.vendor != 'postgresql':
             raise CommandError('El análisis requiere PostgreSQL para imponer una transacción READ ONLY.')
 
-        from core.models import Publicacion
+        from core.models import CandidatoDuplicadoEditorial, Publicacion
 
         with transaction.atomic():
             with connection.cursor() as cursor:
@@ -57,6 +58,9 @@ class Command(BaseCommand):
                 'candidatos_detectados': len(candidatos),
                 'por_estado_detector': dict(sorted(resumen.items())),
                 **resultado,
+                'por_estado_cola': dict(CandidatoDuplicadoEditorial.objects.values('estado').annotate(
+                    total=Count('pk'),
+                ).values_list('estado', 'total')),
                 'grupos_creados': 0,
                 'publicaciones_modificadas': 0,
             }, ensure_ascii=False, sort_keys=True, default=str))

@@ -106,77 +106,133 @@ def registrar_candidatos_sombra(candidatos, *, version_detector=VERSION_DETECTOR
             raise ValueError('Cada candidato debe contener dos IDs positivos y distintos.')
         pares.add(tuple(sorted(ids)))
 
-    ids = {pk for par in pares for pk in par}
+    # Reconcile pending rows on every explicit run, even when the detector no
+    # longer emits their pair. This makes stale observations non-actionable.
+    anteriores = list(CandidatoDuplicadoEditorial.objects.filter(estado__in=[
+        CandidatoDuplicadoEditorial.Estado.PENDIENTE,
+        CandidatoDuplicadoEditorial.Estado.EN_GRUPO,
+    ]).values('publicacion_a_id', 'publicacion_b_id'))
+    pares_anteriores = {
+        tuple(sorted((fila['publicacion_a_id'], fila['publicacion_b_id']))) for fila in anteriores
+    }
+    pares_todos = pares | pares_anteriores
+    ids = {pk for par in pares_todos for pk in par}
+    # All writers of editorial membership use this same publication-first,
+    # ascending-PK lock order. Re-read after acquiring the locks.
     filas = {
-        fila['pk']: fila for fila in Publicacion.objects.filter(pk__in=ids).values(
+        fila['pk']: fila for fila in Publicacion.objects.select_for_update().filter(pk__in=ids).order_by('pk').values(
             'pk', 'fuente', 'titulo', 'url', 'fecha_publicacion', 'contenido', 'contenido_completo',
         )
     }
-    if len(filas) != len(ids):
+    ids_entrada = {pk for par in pares for pk in par}
+    if not ids_entrada.issubset(filas):
         raise ValueError('Uno o más candidatos refieren a publicaciones inexistentes.')
+    pares_todos = {par for par in pares_todos if par[0] in filas and par[1] in filas}
 
     ocupadas = set(MiembroGrupoEditorial.objects.filter(
-        Q(publicacion_id__in=ids), vigente=True,
+        publicacion_id__in=ids, vigente=True,
     ).values_list('publicacion_id', flat=True))
 
-    guardados, omitidos = 0, {'fuente_distinta': 0, 'grupo_vigente': 0, 'sin_evidencia_actual': 0, 'no_candidato': 0}
-    for pk_a, pk_b in sorted(pares):
+    filas_cola = list(CandidatoDuplicadoEditorial.objects.select_for_update().filter(
+        Q(publicacion_a_id__in=ids) | Q(publicacion_b_id__in=ids),
+    ).order_by('pk')) if ids else []
+    filas_cola = [
+        fila for fila in filas_cola
+        if (fila.publicacion_a_id, fila.publicacion_b_id) in pares_todos
+    ]
+    por_par_version = {
+        (fila.publicacion_a_id, fila.publicacion_b_id, fila.version_detector): fila for fila in filas_cola
+    }
+    por_par = {}
+    for fila in filas_cola:
+        por_par.setdefault((fila.publicacion_a_id, fila.publicacion_b_id), []).append(fila)
+    guardados, obsoletos, en_grupo = 0, 0, 0
+    omitidos = {'fuente_distinta': 0, 'grupo_vigente': 0, 'sin_evidencia_actual': 0, 'no_candidato': 0}
+    ahora = timezone.now()
+    for pk_a, pk_b in sorted(pares_todos):
         a, b = filas[pk_a], filas[pk_b]
         fuente = normalizar_fuente(a['fuente'])
-        if not fuente or fuente != normalizar_fuente(b['fuente']):
-            omitidos['fuente_distinta'] += 1
-            continue
-        if pk_a in ocupadas or pk_b in ocupadas:
-            omitidos['grupo_vigente'] += 1
-            continue
-
-        evaluaciones = detectar_candidatos([_fila_detector(a), _fila_detector(b)])
-        evaluacion = next((item for item in evaluaciones
-                           if {publicacion['pk'] for publicacion in item['publicaciones']} == {pk_a, pk_b}), None)
-        if evaluacion is None:
-            omitidos['sin_evidencia_actual'] += 1
-            continue
-        clasificacion = _CLASIFICACION_POR_ESTADO.get(evaluacion['estado'])
-        if evaluacion['estado'] == 'DUPLICADO_CONFIRMADO' and evaluacion['misma_url_canonicalizada']:
+        evaluacion = None
+        if fuente and fuente == normalizar_fuente(b['fuente']) and pk_a not in ocupadas and pk_b not in ocupadas:
+            evaluaciones = detectar_candidatos([_fila_detector(a), _fila_detector(b)])
+            evaluacion = next((item for item in evaluaciones
+                               if {publicacion['pk'] for publicacion in item['publicaciones']} == {pk_a, pk_b}), None)
+        clasificacion = _CLASIFICACION_POR_ESTADO.get(evaluacion['estado']) if evaluacion else None
+        if evaluacion and evaluacion['estado'] == 'DUPLICADO_CONFIRMADO' and evaluacion['misma_url_canonicalizada']:
             clasificacion = CandidatoDuplicadoEditorial.Clasificacion.EXACTO
-        if clasificacion is None:
-            # Incluye coberturas entre medios y títulos parecidos con cuerpos distintos.
+        if evaluacion and clasificacion is None:
             omitidos['no_candidato'] += 1
-            continue
+        elif evaluacion is None:
+            if pk_a in ocupadas or pk_b in ocupadas:
+                omitidos['grupo_vigente'] += 1
+            elif not fuente or fuente != normalizar_fuente(b['fuente']):
+                omitidos['fuente_distinta'] += 1
+            else:
+                omitidos['sin_evidencia_actual'] += 1
 
+        existentes = por_par.get((pk_a, pk_b), [])
+        motivo_obsoleto = (
+            'GRUPO_VIGENTE' if pk_a in ocupadas or pk_b in ocupadas
+            else 'EVIDENCIA_INVALIDA' if evaluacion is None or clasificacion is None
+            else ''
+        )
+        for existente in existentes:
+            if motivo_obsoleto == 'GRUPO_VIGENTE':
+                if (existente.estado != CandidatoDuplicadoEditorial.Estado.EN_GRUPO
+                        or existente.motivo_estado != motivo_obsoleto):
+                    existente.estado = CandidatoDuplicadoEditorial.Estado.EN_GRUPO
+                    existente.motivo_estado = motivo_obsoleto
+                    existente.save(update_fields=['estado', 'motivo_estado'])
+                    en_grupo += 1
+            elif existente.version_detector != version_detector:
+                existente.estado = CandidatoDuplicadoEditorial.Estado.OBSOLETO
+                existente.motivo_estado = 'VERSION_DESACTUALIZADA'
+                existente.save(update_fields=['estado', 'motivo_estado'])
+                obsoletos += 1
+            elif motivo_obsoleto:
+                nuevo_estado = (CandidatoDuplicadoEditorial.Estado.EN_GRUPO
+                               if motivo_obsoleto == 'GRUPO_VIGENTE'
+                               else CandidatoDuplicadoEditorial.Estado.OBSOLETO)
+                if existente.estado != nuevo_estado or existente.motivo_estado != motivo_obsoleto:
+                    existente.estado = nuevo_estado
+                    existente.motivo_estado = motivo_obsoleto
+                    existente.save(update_fields=['estado', 'motivo_estado'])
+                    en_grupo += nuevo_estado == CandidatoDuplicadoEditorial.Estado.EN_GRUPO
+                    obsoletos += nuevo_estado == CandidatoDuplicadoEditorial.Estado.OBSOLETO
+
+        if evaluacion is None or clasificacion is None or pk_a in ocupadas or pk_b in ocupadas:
+            continue
         evidencia = _evidencia(evaluacion, a, b, version_detector)
-        clave = hashlib.sha256(
-            f'{version_detector}:{pk_a}:{pk_b}'.encode('utf-8')
-        ).hexdigest()
+        huella_a, huella_b = _huella(a), _huella(b)
+        clave = hashlib.sha256(f'{version_detector}:{pk_a}:{pk_b}'.encode('utf-8')).hexdigest()
         defaults = {
             'version_detector': version_detector,
             'clasificacion': clasificacion,
+            'estado': CandidatoDuplicadoEditorial.Estado.PENDIENTE,
+            'motivo_estado': '',
             'fuente_normalizada': fuente[:100],
-            'huella_a': _huella(a),
-            'huella_b': _huella(b),
+            'huella_a': huella_a,
+            'huella_b': huella_b,
             'evidencia': evidencia,
         }
-        _, creado = CandidatoDuplicadoEditorial.objects.get_or_create(
-            clave_idempotencia=clave,
-            defaults={**defaults, 'publicacion_a_id': pk_a, 'publicacion_b_id': pk_b},
-        )
-        if creado:
+        candidato_existente = por_par_version.get((pk_a, pk_b, version_detector))
+        if candidato_existente:
+            CandidatoDuplicadoEditorial.objects.filter(pk=candidato_existente.pk).update(
+                **defaults, ultima_detectada=ahora, veces_detectado=F('veces_detectado') + 1,
+            )
             guardados += 1
         else:
-            CandidatoDuplicadoEditorial.objects.filter(clave_idempotencia=clave).update(
-                ultima_detectada=timezone.now(),
-                veces_detectado=F('veces_detectado') + 1,
-                clasificacion=clasificacion,
-                fuente_normalizada=fuente[:100],
-                huella_a=defaults['huella_a'],
-                huella_b=defaults['huella_b'],
-                evidencia=evidencia,
+            CandidatoDuplicadoEditorial.objects.create(
+                **defaults, publicacion_a_id=pk_a, publicacion_b_id=pk_b,
+                clave_idempotencia=clave,
             )
             guardados += 1
 
     return {
         'pares_recibidos': len(pares),
         'candidatos_registrados_o_actualizados': guardados,
+        'candidatos_obsoletos': obsoletos,
+        'candidatos_en_grupo_vigente': en_grupo,
         'omitidos': omitidos,
         'total_cola': CandidatoDuplicadoEditorial.objects.count(),
     }

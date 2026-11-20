@@ -39,6 +39,16 @@ observación, el contador y la evidencia vigente de esa misma versión; conserva
 la primera fecha observada. Una versión nueva del detector obtiene una clave
 distinta y mantiene visible el historial de versiones.
 
+La cola distingue `PENDIENTE`, `OBSOLETO` y `EN_GRUPO`. Cada ejecución explícita
+reevalúa las filas pendientes o asociadas a un grupo vigente desde las
+publicaciones actuales: evidencia que ya no confirma el par queda obsoleta; una
+membresía vigente lo saca de la cola accionable. Al activar un grupo, sus
+candidatos relacionados pasan a `EN_GRUPO` en la misma transacción. La revocación
+no restaura evidencia antigua: una ejecución posterior vuelve a verificarla y
+sólo entonces puede dejarla pendiente otra vez. Las operaciones que cambian
+membresías vigentes bloquean primero las publicaciones en orden de ID, igual que
+la reevaluación, para serializar cambios concurrentes.
+
 La evidencia conserva estado y explicación del detector, similitudes,
 diferencia de fechas, igualdad de URL, hashes de URLs canonicalizadas y huellas
 SHA-256 de los campos editoriales. No guarda cuerpos completos. La evidencia
@@ -79,3 +89,9 @@ membresías vigentes y concurrencia. Las pruebas se ejecutan sólo en PostgreSQL
 temporal (39 pruebas focalizadas aprobadas). Esta fase no activa detección periódica; la integración con el
 planificador de ingesta o con decisiones editoriales requiere una fase posterior
 y aprobación explícita.
+
+La revisión focalizada posterior agregó una unicidad explícita por
+`(publicacion_a, publicacion_b, version_detector)`, además de la clave SHA-256.
+Las referencias de la cola técnica usan `CASCADE`: borrar una publicación
+elimina sólo sus observaciones derivadas. Las relaciones y eventos de
+agrupación editorial conservan `PROTECT`.

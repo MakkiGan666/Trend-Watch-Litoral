@@ -1,15 +1,16 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from io import StringIO
-from time import perf_counter
-from threading import Barrier
+from time import perf_counter, sleep
+from threading import Barrier, Event
 from types import SimpleNamespace
 from unittest import skipUnless
 
 from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.core.management import call_command, CommandError
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
+from django.db.utils import IntegrityError
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.utils import timezone
 
@@ -19,6 +20,7 @@ from core.models import (
 from core.services.deteccion_sombra_editorial import (
     VERSION_DETECTOR, registrar_candidatos_sombra,
 )
+from core.services.agrupacion_editorial import activar_grupo, crear_grupo, decidir_miembro, revocar_grupo
 from core.services.duplicados_editoriales import detectar_candidatos
 
 
@@ -119,6 +121,76 @@ class ColaSombraTests(TestCase):
         self.assertEqual(CandidatoDuplicadoEditorial.objects.count(), 2)
         version_nueva = CandidatoDuplicadoEditorial.objects.get(version_detector='editorial-v2')
         self.assertEqual(version_nueva.evidencia['version_detector'], 'editorial-v2')
+
+    def test_evidencia_invalida_obsoleta_candidato_en_siguiente_reevaluacion(self):
+        a = self.crear_publicacion(20, url='https://medio.test/obsoleto-a')
+        b = self.crear_publicacion(21, url='https://medio.test/obsoleto-b')
+        registrar_candidatos_sombra([self.candidato(a, b)])
+        candidato = CandidatoDuplicadoEditorial.objects.get()
+        evidencia_previa = candidato.evidencia
+        b.titulo = 'Un acontecimiento completamente distinto en otra ciudad'
+        b.contenido = 'Información diferente sobre deportes y actividades culturales. ' * 10
+        b.save(update_fields=['titulo', 'contenido'])
+
+        resultado = registrar_candidatos_sombra([])
+        candidato.refresh_from_db()
+        self.assertEqual(resultado['candidatos_obsoletos'], 1)
+        self.assertEqual(candidato.estado, CandidatoDuplicadoEditorial.Estado.OBSOLETO)
+        self.assertEqual(candidato.motivo_estado, 'EVIDENCIA_INVALIDA')
+        self.assertEqual(candidato.evidencia, evidencia_previa)
+
+    def test_candidato_pasa_a_en_grupo_y_se_reactiva_tras_revocacion(self):
+        a = self.crear_publicacion(22, url='https://medio.test/grupo-a')
+        b = self.crear_publicacion(23, url='https://www.medio.test/grupo-a?utm_source=rss')
+        registrar_candidatos_sombra([self.candidato(a, b)])
+        candidato = CandidatoDuplicadoEditorial.objects.get()
+        actor = get_user_model().objects.create_superuser(
+            username='fase3a-superuser', email='fase3a@example.test', password='test-only-password',
+        )
+        grupo = crear_grupo(
+            actor=actor, publicacion_ids=[a.pk, b.pk], representante_id=a.pk,
+            motivo='Fixture aislado para probar sincronía de cola',
+        )
+        for miembro in grupo.miembros.order_by('publicacion_id'):
+            decidir_miembro(
+                actor=actor, miembro_id=miembro.pk,
+                decision=MiembroGrupoEditorial.Decision.APROBADO,
+                motivo='Decisión sintética de prueba',
+            )
+        activar_grupo(actor=actor, grupo_id=grupo.pk, motivo='Activación sintética de prueba')
+        candidato.refresh_from_db()
+        self.assertEqual(candidato.estado, CandidatoDuplicadoEditorial.Estado.EN_GRUPO)
+        self.assertEqual(candidato.motivo_estado, 'GRUPO_VIGENTE')
+
+        revocar_grupo(actor=actor, grupo_id=grupo.pk, motivo='Revocación sintética de prueba')
+        registrar_candidatos_sombra([])
+        candidato.refresh_from_db()
+        self.assertEqual(candidato.estado, CandidatoDuplicadoEditorial.Estado.PENDIENTE)
+        self.assertEqual(candidato.motivo_estado, '')
+
+    def test_restriccion_unica_explicita_par_y_version(self):
+        a = self.crear_publicacion(24, url='https://medio.test/unico')
+        b = self.crear_publicacion(25, url='https://www.medio.test/unico')
+        registrar_candidatos_sombra([self.candidato(a, b)])
+        candidato = CandidatoDuplicadoEditorial.objects.get()
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            CandidatoDuplicadoEditorial.objects.create(
+                publicacion_a=a, publicacion_b=b,
+                clave_idempotencia='f' * 64, version_detector=candidato.version_detector,
+                clasificacion=candidato.clasificacion,
+                fuente_normalizada=candidato.fuente_normalizada,
+                huella_a=candidato.huella_a, huella_b=candidato.huella_b,
+                evidencia=candidato.evidencia,
+            )
+
+    def test_eliminar_publicacion_no_se_bloquea_por_candidato_sombra(self):
+        a = self.crear_publicacion(26, url='https://medio.test/eliminar')
+        b = self.crear_publicacion(27, url='https://www.medio.test/eliminar')
+        registrar_candidatos_sombra([self.candidato(a, b)])
+        candidato_id = CandidatoDuplicadoEditorial.objects.get().pk
+        a.delete()
+        self.assertFalse(CandidatoDuplicadoEditorial.objects.filter(pk=candidato_id).exists())
+        self.assertFalse(Publicacion.objects.filter(pk=a.pk).exists())
 
     def test_cola_distingue_ambiguedad_y_no_persiste_falsos_positivos(self):
         incompleta_a = self.crear_publicacion(5, completa=False, cuerpo='')
@@ -277,3 +349,111 @@ class ConcurrenciaColaSombraTests(TransactionTestCase):
             list(pool.map(lambda _: ejecutar(), range(2)))
         self.assertEqual(CandidatoDuplicadoEditorial.objects.count(), 1)
         self.assertEqual(CandidatoDuplicadoEditorial.objects.get().veces_detectado, 2)
+
+    def test_activacion_concurrente_no_deja_candidato_pendiente(self):
+        a = Publicacion.objects.create(
+            hash_origen='fase3a-activa-1', fuente='El Territorio',
+            titulo='Municipio anunció obras para los barrios',
+            url='https://medio.test/activa-concurrente', contenido_completo=False,
+        )
+        b = Publicacion.objects.create(
+            hash_origen='fase3a-activa-2', fuente='El Territorio',
+            titulo='Municipio anunció obras para los barrios',
+            url='https://www.medio.test/activa-concurrente', contenido_completo=False,
+        )
+        par = {
+            'publicaciones': [{'pk': a.pk}, {'pk': b.pk}],
+        }
+        registrar_candidatos_sombra([par])
+        actor = get_user_model().objects.create_superuser(
+            username='fase3a-concurrente', email='fase3a-concurrente@example.test',
+            password='test-only-password',
+        )
+        grupo = crear_grupo(
+            actor=actor, publicacion_ids=[a.pk, b.pk], representante_id=a.pk,
+            motivo='Fixture concurrente aislado',
+        )
+        for miembro in grupo.miembros.order_by('publicacion_id'):
+            decidir_miembro(
+                actor=actor, miembro_id=miembro.pk,
+                decision=MiembroGrupoEditorial.Decision.APROBADO,
+                motivo='Decisión sintética',
+            )
+        barrera = Barrier(2)
+
+        def reevaluar():
+            close_old_connections()
+            barrera.wait(timeout=10)
+            resultado = registrar_candidatos_sombra([par])
+            close_old_connections()
+            return resultado
+
+        def activar():
+            close_old_connections()
+            usuario = get_user_model().objects.get(pk=actor.pk)
+            barrera.wait(timeout=10)
+            resultado = activar_grupo(
+                actor=usuario, grupo_id=grupo.pk, motivo='Activación concurrente sintética',
+            )
+            close_old_connections()
+            return resultado
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda funcion: funcion(), (reevaluar, activar)))
+        candidato = CandidatoDuplicadoEditorial.objects.get()
+        self.assertEqual(candidato.estado, CandidatoDuplicadoEditorial.Estado.EN_GRUPO)
+        self.assertEqual(candidato.motivo_estado, 'GRUPO_VIGENTE')
+
+    def test_actualizacion_concurrente_se_observa_al_reevaluar_con_bloqueo(self):
+        a = Publicacion.objects.create(
+            hash_origen='fase3a-update-race-1', fuente='El Territorio',
+            titulo='Municipio anunció obras para los barrios',
+            url='https://medio.test/publicacion-race-a', contenido_completo=False,
+        )
+        b = Publicacion.objects.create(
+            hash_origen='fase3a-update-race-2', fuente='El Territorio',
+            titulo='Municipio anunció obras para los barrios',
+            url='https://medio.test/publicacion-race-b', contenido_completo=False,
+        )
+        par = {'publicaciones': [{'pk': a.pk}, {'pk': b.pk}]}
+        registrar_candidatos_sombra([par])
+        candidato = CandidatoDuplicadoEditorial.objects.get()
+        evidencia_anterior = candidato.evidencia
+        bloqueo_adquirido, liberar_actualizacion = Event(), Event()
+        reevaluacion_iniciada = Event()
+
+        def actualizar_publicacion():
+            close_old_connections()
+            with transaction.atomic():
+                Publicacion.objects.select_for_update().get(pk=b.pk)
+                bloqueo_adquirido.set()
+                if not liberar_actualizacion.wait(timeout=10):
+                    raise TimeoutError('La prueba no liberó el bloqueo de la publicación.')
+                Publicacion.objects.filter(pk=b.pk).update(
+                    titulo='Una noticia diferente sobre deportes y cultura',
+                )
+            close_old_connections()
+
+        def reevaluar():
+            close_old_connections()
+            reevaluacion_iniciada.set()
+            resultado = registrar_candidatos_sombra([])
+            close_old_connections()
+            return resultado
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            actualizacion = pool.submit(actualizar_publicacion)
+            self.assertTrue(bloqueo_adquirido.wait(timeout=10))
+            reevaluacion = pool.submit(reevaluar)
+            self.assertTrue(reevaluacion_iniciada.wait(timeout=10))
+            sleep(0.2)
+            liberar_actualizacion.set()
+            actualizacion.result(timeout=10)
+            resultado = reevaluacion.result(timeout=10)
+
+        candidato.refresh_from_db()
+        b.refresh_from_db()
+        self.assertEqual(resultado['candidatos_obsoletos'], 1)
+        self.assertEqual(candidato.estado, CandidatoDuplicadoEditorial.Estado.OBSOLETO)
+        self.assertEqual(candidato.evidencia, evidencia_anterior)
+        self.assertNotEqual(b.titulo, 'Municipio anunció obras para los barrios')

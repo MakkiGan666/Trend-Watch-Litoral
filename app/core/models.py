@@ -730,15 +730,22 @@ class CandidatoDuplicadoEditorial(models.Model):
         PROBABLE = 'PROBABLE', 'Probable'
         AMBIGUO = 'AMBIGUO', 'Requiere revisión'
 
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Evidencia vigente'
+        OBSOLETO = 'OBSOLETO', 'Evidencia no vigente'
+        EN_GRUPO = 'EN_GRUPO', 'Publicación en grupo vigente'
+
     publicacion_a = models.ForeignKey(
-        Publicacion, on_delete=models.PROTECT, related_name='candidatos_duplicado_a',
+        Publicacion, on_delete=models.CASCADE, related_name='candidatos_duplicado_a',
     )
     publicacion_b = models.ForeignKey(
-        Publicacion, on_delete=models.PROTECT, related_name='candidatos_duplicado_b',
+        Publicacion, on_delete=models.CASCADE, related_name='candidatos_duplicado_b',
     )
     clave_idempotencia = models.CharField(max_length=64, unique=True)
     version_detector = models.CharField(max_length=40)
     clasificacion = models.CharField(max_length=10, choices=Clasificacion.choices)
+    estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
+    motivo_estado = models.CharField(max_length=32, blank=True, default='')
     fuente_normalizada = models.CharField(max_length=100)
     huella_a = models.CharField(max_length=64)
     huella_b = models.CharField(max_length=64)
@@ -758,6 +765,14 @@ class CandidatoDuplicadoEditorial(models.Model):
             models.CheckConstraint(
                 condition=models.Q(clasificacion__in=['EXACTO', 'PROBABLE', 'AMBIGUO']),
                 name='candidato_editorial_clasificacion_valida',
+            ),
+            models.UniqueConstraint(
+                fields=['publicacion_a', 'publicacion_b', 'version_detector'],
+                name='candidato_editorial_par_version_unico',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(estado__in=['PENDIENTE', 'OBSOLETO', 'EN_GRUPO']),
+                name='candidato_editorial_estado_valido',
             ),
         ]
         indexes = [
