@@ -722,6 +722,50 @@ class EventoRevisionEditorial(models.Model):
         raise ValidationError('Los eventos de revisión no se pueden eliminar.')
 
 
+class CandidatoDuplicadoEditorial(models.Model):
+    """Hallazgo de detección en sombra; nunca aprueba ni activa grupos."""
+
+    class Clasificacion(models.TextChoices):
+        EXACTO = 'EXACTO', 'URL canonicalizada idéntica'
+        PROBABLE = 'PROBABLE', 'Probable'
+        AMBIGUO = 'AMBIGUO', 'Requiere revisión'
+
+    publicacion_a = models.ForeignKey(
+        Publicacion, on_delete=models.PROTECT, related_name='candidatos_duplicado_a',
+    )
+    publicacion_b = models.ForeignKey(
+        Publicacion, on_delete=models.PROTECT, related_name='candidatos_duplicado_b',
+    )
+    clave_idempotencia = models.CharField(max_length=64, unique=True)
+    version_detector = models.CharField(max_length=40)
+    clasificacion = models.CharField(max_length=10, choices=Clasificacion.choices)
+    fuente_normalizada = models.CharField(max_length=100)
+    huella_a = models.CharField(max_length=64)
+    huella_b = models.CharField(max_length=64)
+    evidencia = models.JSONField(default=dict)
+    primera_detectada = models.DateTimeField(default=timezone.now)
+    ultima_detectada = models.DateTimeField(default=timezone.now)
+    veces_detectado = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = 'core_candidato_duplicado_editorial'
+        ordering = ['-ultima_detectada', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(publicacion_a__lt=models.F('publicacion_b')),
+                name='candidato_editorial_pares_ordenados',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(clasificacion__in=['EXACTO', 'PROBABLE', 'AMBIGUO']),
+                name='candidato_editorial_clasificacion_valida',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['clasificacion', '-ultima_detectada'], name='cand_dup_clas_fecha_idx'),
+            models.Index(fields=['fuente_normalizada', 'clasificacion'], name='cand_dup_fuente_clas_idx'),
+        ]
+
+
 class ProcesamientoIAMultifuente(models.Model):
     """Reserva durable de un único envío: un fallo incierto no habilita reenvío."""
     class Estado(models.TextChoices):
