@@ -28,6 +28,7 @@ from .models import (
     GrupoEditorial,
     MiembroGrupoEditorial,
     EventoRevisionEditorial,
+    CandidatoDuplicadoEditorial,
 )
 from .forms_agrupacion_editorial import (
     AccionGrupoEditorialForm, ActivarGrupoEditorialForm, CrearGrupoEditorialForm,
@@ -216,6 +217,35 @@ class MiembroGrupoEditorialAdmin(admin.ModelAdmin):
         return any(request.user.has_perm(f'core.{p}') for p in (
             'revisar_candidatos_editoriales', 'aprobar_agrupacion_editorial', 'revocar_agrupacion_editorial',
         ))
+
+    def has_module_permission(self, request):
+        return self.has_view_permission(request)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CandidatoDuplicadoEditorial)
+class CandidatoDuplicadoEditorialAdmin(admin.ModelAdmin):
+    """Cola de observación: visible para revisores, sin acciones de decisión."""
+    list_display = (
+        'id', 'publicacion_a', 'publicacion_b', 'fuente_normalizada',
+        'clasificacion', 'estado', 'motivo_estado', 'version_detector',
+        'veces_detectado', 'ultima_detectada',
+    )
+    list_filter = ('estado', 'clasificacion', 'fuente_normalizada', 'version_detector')
+    search_fields = ('publicacion_a__titulo', 'publicacion_b__titulo')
+    readonly_fields = tuple(field.name for field in CandidatoDuplicadoEditorial._meta.fields)
+    actions = None
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.has_perm('core.revisar_candidatos_editoriales')
 
     def has_module_permission(self, request):
         return self.has_view_permission(request)

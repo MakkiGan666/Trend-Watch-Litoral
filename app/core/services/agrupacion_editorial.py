@@ -11,10 +11,12 @@ from datetime import timezone as datetime_timezone
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import URLValidator
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from core.models import (
-    EventoRevisionEditorial, GrupoEditorial, MiembroGrupoEditorial, Publicacion,
+    CandidatoDuplicadoEditorial, EventoRevisionEditorial, GrupoEditorial,
+    MiembroGrupoEditorial, Publicacion,
 )
 from core.services.duplicados_editoriales import detectar_candidatos, normalizar_fuente
 
@@ -36,6 +38,15 @@ def _motivo(motivo):
     if not valor or len(valor) > 500:
         raise ValidationError('El motivo es obligatorio y no puede superar 500 caracteres.')
     return valor
+
+
+def _bloquear_publicaciones(publicacion_ids):
+    """Orden global de bloqueo para operaciones que cambian membresías vigentes."""
+    ids = sorted(set(publicacion_ids))
+    return {
+        publicacion.pk: publicacion
+        for publicacion in Publicacion.objects.select_for_update().filter(pk__in=ids).order_by('pk')
+    }
 
 
 def seleccionar_representante(publicaciones):
@@ -168,14 +179,18 @@ def decidir_miembro(*, actor, miembro_id, decision, motivo):
     razon = _motivo(motivo)
     if decision not in (MiembroGrupoEditorial.Decision.APROBADO, MiembroGrupoEditorial.Decision.RECHAZADO):
         raise ValidationError('Decisión no válida.')
-    grupo_id = MiembroGrupoEditorial.objects.only('grupo_id').get(pk=miembro_id).grupo_id
+    referencia = MiembroGrupoEditorial.objects.only('grupo_id', 'publicacion_id').get(pk=miembro_id)
+    _bloquear_publicaciones([referencia.publicacion_id])
+    grupo_id = referencia.grupo_id
     grupo = GrupoEditorial.objects.select_for_update().get(pk=grupo_id)
     miembro = MiembroGrupoEditorial.objects.select_for_update(of=('self',)).select_related(
         'publicacion',
     ).get(pk=miembro_id, grupo_id=grupo.pk)
     if grupo.estado != GrupoEditorial.Estado.BORRADOR or miembro.decision != MiembroGrupoEditorial.Decision.PENDIENTE:
         raise ValidationError('Sólo se pueden decidir miembros pendientes de un grupo en revisión.')
-    publicacion = Publicacion.objects.select_for_update().get(pk=miembro.publicacion_id)
+    if miembro.publicacion_id != referencia.publicacion_id:
+        raise ValidationError('La membresía cambió durante la revisión; vuelva a intentarlo.')
+    publicacion = Publicacion.objects.get(pk=miembro.publicacion_id)
     representante = Publicacion.objects.get(pk=grupo.representante_id)
     evidencia = {'estado': 'REPRESENTANTE'} if miembro.rol == MiembroGrupoEditorial.Rol.REPRESENTANTE else _evaluar_directamente(
         representante, publicacion,
@@ -202,13 +217,15 @@ def decidir_miembro(*, actor, miembro_id, decision, motivo):
 def activar_grupo(*, actor, grupo_id, motivo, representante_id=None):
     _exigir_permiso(actor, _PERM_APROBAR)
     razon = _motivo(motivo)
+    ids_iniciales = list(GrupoEditorial.objects.get(pk=grupo_id).miembros.values_list('publicacion_id', flat=True))
+    bloqueadas = _bloquear_publicaciones(ids_iniciales)
     grupo = GrupoEditorial.objects.select_for_update().get(pk=grupo_id)
     if grupo.estado != GrupoEditorial.Estado.BORRADOR:
         raise ValidationError('Sólo se puede activar un grupo en revisión.')
     miembros = list(grupo.miembros.select_for_update(of=('self',)).order_by('publicacion_id'))
-    # Bloquear todas las publicaciones en orden estable y volver a comprobar las huellas.
     publicacion_ids = [miembro.publicacion_id for miembro in miembros]
-    bloqueadas = {p.pk: p for p in Publicacion.objects.select_for_update().filter(pk__in=publicacion_ids).order_by('pk')}
+    if sorted(publicacion_ids) != sorted(ids_iniciales) or set(publicacion_ids) != set(bloqueadas):
+        raise ValidationError('Las membresías cambiaron durante la activación; vuelva a intentarlo.')
     if representante_id is not None:
         try:
             representante_id = int(representante_id)
@@ -294,6 +311,13 @@ def activar_grupo(*, actor, grupo_id, motivo, representante_id=None):
     grupo.aprobado = ahora
     grupo.motivo_aprobacion = razon
     grupo.save(update_fields=['estado', 'aprobado_por', 'aprobado', 'motivo_aprobacion'])
+    ids_vigentes = [miembro.publicacion_id for miembro in aprobados]
+    CandidatoDuplicadoEditorial.objects.filter(
+        Q(publicacion_a_id__in=ids_vigentes) | Q(publicacion_b_id__in=ids_vigentes),
+    ).update(
+        estado=CandidatoDuplicadoEditorial.Estado.EN_GRUPO,
+        motivo_estado='GRUPO_VIGENTE',
+    )
     EventoRevisionEditorial.objects.create(
         grupo=grupo, actor=actor, tipo=EventoRevisionEditorial.Tipo.ACTIVADO,
         motivo=razon, evidencia={'publicaciones_vigentes': [m.publicacion_id for m in aprobados]},
@@ -305,10 +329,16 @@ def activar_grupo(*, actor, grupo_id, motivo, representante_id=None):
 def revocar_grupo(*, actor, grupo_id, motivo):
     _exigir_permiso(actor, _PERM_REVOCAR)
     razon = _motivo(motivo)
+    ids_iniciales = list(GrupoEditorial.objects.get(pk=grupo_id).miembros.filter(
+        vigente=True,
+    ).values_list('publicacion_id', flat=True))
+    bloqueadas = _bloquear_publicaciones(ids_iniciales)
     grupo = GrupoEditorial.objects.select_for_update().get(pk=grupo_id)
     if grupo.estado != GrupoEditorial.Estado.ACTIVO:
         raise ValidationError('Sólo se pueden revocar grupos activos.')
     miembros = list(grupo.miembros.select_for_update(of=('self',)).filter(vigente=True).order_by('publicacion_id'))
+    if {miembro.publicacion_id for miembro in miembros} != set(bloqueadas):
+        raise ValidationError('Las membresías cambiaron durante la revocación; vuelva a intentarlo.')
     for miembro in miembros:
         miembro.vigente = False
         miembro.save(update_fields=['vigente'])

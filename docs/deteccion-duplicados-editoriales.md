@@ -2,6 +2,8 @@
 
 El detector es una herramienta de diagnóstico. No fusiona, borra, oculta ni
 modifica publicaciones; tampoco interviene en búsqueda, dashboard o ingestas.
+La persistencia opcional de fase 3A sólo registra observaciones en una cola
+separada, descrita en `deteccion-duplicados-editoriales-fase3a.md`.
 
 ## Evidencia evaluada
 
@@ -58,9 +60,13 @@ python manage.py auditar_duplicados_editoriales --dry-run --fuente "El Territori
 Para reproducir exactamente el corte del informe original (la etiqueta
 `El Territorio (Archivo)`), agregar `--etiqueta-fuente "El Territorio (Archivo)"`.
 
-El comando exige `--dry-run`, PostgreSQL y abre una transacción `READ ONLY`.
-Emite JSON por stdout, sin guardar el resultado ni cuerpos editoriales. Los
-resultados son pares, por lo que un grupo de tres puede aparecer como tres pares.
+El análisis exige una selección explícita entre `--dry-run` y
+`--registrar-sombra`, PostgreSQL y abre una transacción `READ ONLY` para leer y
+evaluar las publicaciones. `--dry-run` emite JSON por stdout y no escribe.
+`--registrar-sombra` persiste sólo candidatos permitidos en la cola de fase 3A,
+sin crear grupos ni modificar publicaciones. Ningún modo almacena cuerpos
+editoriales dentro del reporte o de la evidencia de la cola. Los resultados son
+pares, por lo que un grupo de tres puede aparecer como tres pares.
 
 ## Integración futura
 
