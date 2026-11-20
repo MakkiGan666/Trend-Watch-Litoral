@@ -347,8 +347,22 @@ def revocar_grupo(*, actor, grupo_id, motivo):
     grupo.revocado = timezone.now()
     grupo.motivo_revocacion = razon
     grupo.save(update_fields=['estado', 'revocado_por', 'revocado', 'motivo_revocacion'])
+    candidatos_bloqueados = []
+    if grupo.origen_decision == GrupoEditorial.OrigenDecision.AUTOMATICA:
+        candidatos = CandidatoDuplicadoEditorial.objects.select_for_update().filter(
+            Q(publicacion_a_id__in=bloqueadas) | Q(publicacion_b_id__in=bloqueadas),
+        ).order_by('pk')
+        for candidato in candidatos:
+            if not candidato.automatizacion_bloqueada:
+                candidato.automatizacion_bloqueada = True
+                candidato.save(update_fields=['automatizacion_bloqueada'])
+                candidatos_bloqueados.append(candidato.pk)
     EventoRevisionEditorial.objects.create(
         grupo=grupo, actor=actor, tipo=EventoRevisionEditorial.Tipo.REVOCADO,
-        motivo=razon, evidencia={'membresias_liberadas': [m.publicacion_id for m in miembros]},
+        motivo=razon, evidencia={
+            'membresias_liberadas': [m.publicacion_id for m in miembros],
+            'automatizacion_bloqueada': grupo.origen_decision == GrupoEditorial.OrigenDecision.AUTOMATICA,
+            'candidatos_automatizacion_bloqueados': candidatos_bloqueados,
+        },
     )
     return grupo
