@@ -3,9 +3,9 @@
 {% block content %}
   <h1>Grupo editorial #{{ grupo.pk }} — {{ grupo.get_estado_display }}</h1>
   <p>Representante fija: <a href="{% url 'noticia' grupo.representante_id %}">#{{ grupo.representante_id }} — {{ grupo.representante.titulo }}</a></p>
-  <p>Fuente: {{ grupo.representante.fuente }} · Detector: {{ grupo.version_detector }}</p>
+  <p>Fuente: {{ grupo.representante.fuente }} · Detector: {{ grupo.version_detector }} · Origen: {{ grupo.get_origen_decision_display }}{% if grupo.regla_automatica_version %} ({{ grupo.regla_automatica_version }}){% endif %}</p>
   <table>
-    <thead><tr><th>Rol</th><th>Publicación original</th><th>Evidencia directa</th><th>Decisión</th><th>Revisor</th><th>Motivo</th><th>Acción</th></tr></thead>
+    <thead><tr><th>Rol</th><th>Publicación original</th><th>Evidencia directa</th><th>Decisión</th><th>Método / regla</th><th>Revisor</th><th>Motivo</th><th>Acción</th></tr></thead>
     <tbody>
     {% for miembro in miembros %}
       <tr>
@@ -13,6 +13,7 @@
         <td><a href="{% url 'noticia' miembro.publicacion_id %}">#{{ miembro.publicacion_id }} — {{ miembro.publicacion.titulo }}</a><br>{{ miembro.publicacion.fuente }}<br>URL original: {{ miembro.publicacion.url }}</td>
         <td>{{ miembro.evidencia.estado|default:'—' }}{% if miembro.evidencia.razon %}<br>{{ miembro.evidencia.razon }}{% endif %}{% if miembro.evidencia.similitud_titulo != None %}<br>Similitud título: {{ miembro.evidencia.similitud_titulo }}{% endif %}{% if miembro.evidencia.similitud_contenido != None %}<br>Similitud cuerpo: {{ miembro.evidencia.similitud_contenido }}{% endif %}{% if miembro.evidencia.dias_entre_fechas_editoriales != None %}<br>Días entre fechas: {{ miembro.evidencia.dias_entre_fechas_editoriales }}{% endif %}</td>
         <td>{{ miembro.get_decision_display }}{% if miembro.vigente %} (vigente){% endif %}</td>
+        <td>{{ miembro.get_metodo_decision_display }}{% if miembro.regla_automatica_version %} ({{ miembro.regla_automatica_version }}){% endif %}</td>
         <td>{{ miembro.revisado_por|default:'—' }}</td>
         <td>{{ miembro.motivo_revision|default:'—' }}</td>
         <td>{% if puede_revisar and grupo.estado == 'BORRADOR' and miembro.decision == 'PENDIENTE' %}<a href="{% url 'admin:core_grupoeditorial_decidir' grupo.pk miembro.pk %}">Revisar</a>{% endif %}</td>
@@ -23,5 +24,5 @@
   {% if grupo.estado == 'BORRADOR' and puede_aprobar %}<p><a class="button" href="{% url 'admin:core_grupoeditorial_activar' grupo.pk %}">Activar grupo aprobado</a></p>{% endif %}
   {% if grupo.estado == 'ACTIVO' and puede_revocar %}<p><a class="button" href="{% url 'admin:core_grupoeditorial_revocar' grupo.pk %}">Revocar grupo</a></p>{% endif %}
   <h2>Auditoría</h2>
-  <ul>{% for evento in grupo.eventos_revision.all %}<li>{{ evento.creado }} — {{ evento.get_tipo_display }} — {{ evento.actor }} — {{ evento.motivo }}</li>{% empty %}<li>Sin eventos.</li>{% endfor %}</ul>
+  <ul>{% for evento in grupo.eventos_revision.all %}<li>{{ evento.creado }} — {{ evento.get_tipo_display }} — {% if evento.actor %}{{ evento.actor }}{% else %}{{ evento.get_metodo_actor_display }}{% endif %}{% if evento.regla_automatica_version %} ({{ evento.regla_automatica_version }}){% endif %} — {{ evento.motivo }}</li>{% empty %}<li>Sin eventos.</li>{% endfor %}</ul>
 {% endblock %}

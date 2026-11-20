@@ -549,14 +549,25 @@ class GrupoEditorial(models.Model):
         ACTIVO = 'ACTIVO', 'Aprobado'
         REVOCADO = 'REVOCADO', 'Revocado'
 
+    class OrigenDecision(models.TextChoices):
+        HUMANA = 'HUMANA', 'Decisión humana'
+        AUTOMATICA = 'AUTOMATICA', 'Regla automática'
+
     representante = models.ForeignKey(
         Publicacion, on_delete=models.PROTECT, related_name='grupos_editoriales_representados',
     )
     estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.BORRADOR)
+    origen_decision = models.CharField(max_length=12, choices=OrigenDecision.choices, default=OrigenDecision.HUMANA)
+    regla_automatica_version = models.CharField(max_length=40, blank=True, default='')
+    candidato_automatico = models.OneToOneField(
+        'CandidatoDuplicadoEditorial', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='grupo_automatico',
+    )
     version_detector = models.CharField(max_length=40, blank=True, default='')
     criterio_representante = models.JSONField(default=dict, blank=True)
     creado_por = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='grupos_editoriales_creados',
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='grupos_editoriales_creados',
     )
     creado = models.DateTimeField(default=timezone.now)
     aprobado_por = models.ForeignKey(
@@ -587,11 +598,28 @@ class GrupoEditorial(models.Model):
             models.CheckConstraint(
                 condition=(
                     models.Q(
-                        estado='ACTIVO', aprobado_por__isnull=False, aprobado__isnull=False,
-                        motivo_aprobacion__gt='',
+                        estado='ACTIVO', aprobado__isnull=False, motivo_aprobacion__gt='',
+                    ) & (
+                        models.Q(origen_decision='HUMANA', aprobado_por__isnull=False)
+                        | models.Q(
+                            origen_decision='AUTOMATICA', aprobado_por__isnull=True,
+                            candidato_automatico__isnull=False, regla_automatica_version__gt='',
+                        )
                     )
                     | ~models.Q(estado='ACTIVO')
                 ), name='grupo_editorial_activo_aprobado',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        origen_decision='HUMANA', creado_por__isnull=False,
+                        candidato_automatico__isnull=True, regla_automatica_version='',
+                    )
+                    | models.Q(
+                        origen_decision='AUTOMATICA', creado_por__isnull=True,
+                        candidato_automatico__isnull=False, regla_automatica_version__gt='',
+                    )
+                ), name='grupo_editorial_origen_decision_valido',
             ),
             models.CheckConstraint(
                 condition=(
@@ -622,6 +650,10 @@ class MiembroGrupoEditorial(models.Model):
         APROBADO = 'APROBADO', 'Aprobado'
         RECHAZADO = 'RECHAZADO', 'Rechazado'
 
+    class MetodoDecision(models.TextChoices):
+        HUMANA = 'HUMANA', 'Revisión humana'
+        AUTOMATICA = 'AUTOMATICA', 'Regla automática'
+
     grupo = models.ForeignKey(GrupoEditorial, on_delete=models.PROTECT, related_name='miembros')
     publicacion = models.ForeignKey(Publicacion, on_delete=models.PROTECT, related_name='membresias_editoriales')
     rol = models.CharField(max_length=14, choices=Rol.choices)
@@ -629,6 +661,8 @@ class MiembroGrupoEditorial(models.Model):
     evidencia = models.JSONField(default=dict, blank=True)
     huella_publicacion = models.CharField(max_length=64)
     version_detector = models.CharField(max_length=40, blank=True, default='')
+    metodo_decision = models.CharField(max_length=12, choices=MetodoDecision.choices, default=MetodoDecision.HUMANA)
+    regla_automatica_version = models.CharField(max_length=40, blank=True, default='')
     revisado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
         related_name='membresias_editoriales_revisadas',
@@ -657,11 +691,18 @@ class MiembroGrupoEditorial(models.Model):
                 condition=(
                     models.Q(
                         decision='PENDIENTE', revisado_por__isnull=True,
-                        revisado__isnull=True, motivo_revision='',
+                        revisado__isnull=True, motivo_revision='', metodo_decision='HUMANA',
+                        regla_automatica_version='',
                     )
                     | models.Q(
                         decision__in=['APROBADO', 'RECHAZADO'], revisado_por__isnull=False,
-                        revisado__isnull=False, motivo_revision__gt='',
+                        revisado__isnull=False, motivo_revision__gt='', metodo_decision='HUMANA',
+                        regla_automatica_version='',
+                    )
+                    | models.Q(
+                        decision='APROBADO', revisado_por__isnull=True,
+                        revisado__isnull=False, motivo_revision__gt='', metodo_decision='AUTOMATICA',
+                        regla_automatica_version__gt='',
                     )
                 ), name='miembro_editorial_decision_auditada',
             ),
@@ -687,6 +728,11 @@ class EventoRevisionEditorial(models.Model):
         REPRESENTANTE = 'REPRESENTANTE', 'Representante seleccionada'
         ACTIVADO = 'ACTIVADO', 'Grupo activado'
         REVOCADO = 'REVOCADO', 'Grupo revocado'
+        AUTOAGRUPADO = 'AUTOAGRUPADO', 'Agrupado por regla automática'
+
+    class MetodoActor(models.TextChoices):
+        HUMANO = 'HUMANO', 'Persona'
+        AUTOMATIZACION = 'AUTOMATIZACION', 'Automatización'
 
     class QuerySet(models.QuerySet):
         def update(self, **kwargs):
@@ -702,8 +748,12 @@ class EventoRevisionEditorial(models.Model):
         MiembroGrupoEditorial, null=True, blank=True, on_delete=models.PROTECT, related_name='eventos_revision',
     )
     actor = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='eventos_revision_editorial',
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='eventos_revision_editorial',
     )
+    metodo_actor = models.CharField(max_length=16, choices=MetodoActor.choices, default=MetodoActor.HUMANO)
+    regla_automatica_version = models.CharField(max_length=40, blank=True, default='')
+    clave_idempotencia = models.CharField(max_length=64, null=True, blank=True, default=None, unique=True)
     tipo = models.CharField(max_length=24, choices=Tipo.choices)
     motivo = models.CharField(max_length=500)
     evidencia = models.JSONField(default=dict, blank=True)
@@ -712,6 +762,21 @@ class EventoRevisionEditorial(models.Model):
     class Meta:
         db_table = 'core_evento_revision_editorial'
         ordering = ['creado', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        metodo_actor='HUMANO', actor__isnull=False,
+                        regla_automatica_version='', clave_idempotencia__isnull=True,
+                    )
+                    | models.Q(
+                        metodo_actor='AUTOMATIZACION', actor__isnull=True,
+                        tipo='AUTOAGRUPADO', regla_automatica_version__gt='',
+                        clave_idempotencia__gt='',
+                    )
+                ), name='evento_editorial_actor_origen_valido',
+            ),
+        ]
 
     def save(self, *args, **kwargs):
         if self.pk and type(self).objects.filter(pk=self.pk).exists():
@@ -746,6 +811,7 @@ class CandidatoDuplicadoEditorial(models.Model):
     clasificacion = models.CharField(max_length=10, choices=Clasificacion.choices)
     estado = models.CharField(max_length=10, choices=Estado.choices, default=Estado.PENDIENTE)
     motivo_estado = models.CharField(max_length=32, blank=True, default='')
+    automatizacion_bloqueada = models.BooleanField(default=False)
     fuente_normalizada = models.CharField(max_length=100)
     huella_a = models.CharField(max_length=64)
     huella_b = models.CharField(max_length=64)

@@ -57,8 +57,8 @@ class PublicacionAdminForm(forms.ModelForm):
 
 @admin.register(GrupoEditorial)
 class GrupoEditorialAdmin(admin.ModelAdmin):
-    list_display = ('id', 'representante', 'estado', 'creado', 'creado_por')
-    list_filter = ('estado',)
+    list_display = ('id', 'representante', 'estado', 'origen_decision', 'regla_automatica_version', 'creado', 'creado_por')
+    list_filter = ('estado', 'origen_decision')
     search_fields = ('representante__titulo', 'representante__fuente')
     change_list_template = 'admin/core/grupoeditorial/changelist.html'
 
@@ -208,8 +208,8 @@ class GrupoEditorialAdmin(admin.ModelAdmin):
 
 @admin.register(MiembroGrupoEditorial)
 class MiembroGrupoEditorialAdmin(admin.ModelAdmin):
-    list_display = ('grupo', 'publicacion', 'rol', 'decision', 'vigente', 'revisado_por')
-    list_filter = ('decision', 'rol', 'vigente')
+    list_display = ('grupo', 'publicacion', 'rol', 'decision', 'metodo_decision', 'regla_automatica_version', 'vigente', 'revisado_por')
+    list_filter = ('decision', 'metodo_decision', 'rol', 'vigente')
     search_fields = ('publicacion__titulo', 'publicacion__fuente')
     readonly_fields = tuple(field.name for field in MiembroGrupoEditorial._meta.fields)
 
@@ -262,8 +262,8 @@ class CandidatoDuplicadoEditorialAdmin(admin.ModelAdmin):
 
 @admin.register(EventoRevisionEditorial)
 class EventoRevisionEditorialAdmin(admin.ModelAdmin):
-    list_display = ('grupo', 'miembro', 'tipo', 'actor', 'creado')
-    list_filter = ('tipo',)
+    list_display = ('grupo', 'miembro', 'tipo', 'metodo_actor', 'regla_automatica_version', 'actor', 'creado')
+    list_filter = ('tipo', 'metodo_actor')
     readonly_fields = tuple(field.name for field in EventoRevisionEditorial._meta.fields)
 
     def has_view_permission(self, request, obj=None):

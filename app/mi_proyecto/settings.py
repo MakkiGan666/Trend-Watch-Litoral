@@ -218,6 +218,11 @@ RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO = tuple(filter(None, (
 # este valor mediante override_settings.
 HISTORICO_IMPORTACION_HABILITADA = False
 
+# La agrupación editorial automática requiere opt-in operativo explícito.
+AGRUPACION_EDITORIAL_AUTOMATICA_HABILITADA = os.getenv(
+    'AGRUPACION_EDITORIAL_AUTOMATICA_HABILITADA', '',
+).strip().lower() in ('1', 'true', 'yes')
+
 # H5.6: habilitación técnica y revisión de acceso independientes. Todas
 # las listas deniegan por defecto.
 RSS_METADATOS_FUENTES_HABILITADAS = tuple(filter(None, (
