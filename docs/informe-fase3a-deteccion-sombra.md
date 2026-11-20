@@ -2,10 +2,12 @@
 
 **Fecha:** 2026-11-20
 
-**Base / HEAD:** `8a05f50068591c2d974cf81924d15c7b3e8863af`
+**Base main:** `8a05f50068591c2d974cf81924d15c7b3e8863af`
 
 **Rama de trabajo:** `feat/fase3a-deteccion-sombra`
-**Worktree:** `/tmp/tw-fase3a-deteccion-sombra`
+**Worktree:** `/home/sebas/Escritorio/TrendWatch/fase3a-deteccion-sombra`
+**Commit de implementación:** `d3109fe1d8badf0d0006c87388bd2b83e9387cfe`
+**PR:** [#68](https://github.com/MakkiGan666/Trend-Watch-Litoral/pull/68)
 
 ## Resultado
 
@@ -47,10 +49,11 @@ transitivos.
 ## Validación
 
 Entorno: PostgreSQL/PostGIS temporal en contenedor `tw-fase3a-pg-20261120`,
-red `none`, sin puertos publicados, volúmenes montados ni credenciales del
-entorno habitual. La base de prueba fue desechable; el runner montó el código
-del worktree en sólo lectura. Se aplicaron migraciones únicamente en las bases
-de prueba efímeras de Django.
+red `none`, sin puertos publicados, montajes hacia el repositorio ni
+credenciales del entorno habitual. Las bases de prueba de Django se eliminaron
+al terminar cada suite; el contenedor temporal y su volumen anónimo permanecen
+aislados y sin puerto publicado. El runner montó el código del worktree en sólo
+lectura. Se aplicaron migraciones únicamente en bases de prueba efímeras.
 
 - **39/39 pruebas** de cola, concurrencia, detector existente y agrupación
   editorial aprobaron.
@@ -84,11 +87,11 @@ estructural, no revalida cada cuerpo histórico actual.
 - No se ejecutaron recolectores ni solicitudes externas.
 - No se activó IA.
 - H4.8 permanece en el SHA conocido `6d28eccf8588735390b6a00da56a51f20b563b78`.
-- El worktree conserva los cambios sin commit; no se publicó rama ni PR.
+- La rama fue publicada mediante push normal y el PR #68 está abierto contra
+  `main`; no se hizo merge.
 
 ## Próximo punto de control
 
-La fase 3A queda lista para revisión. Antes de publicar, corresponde revisar el
-diff y el comportamiento de la migración. La fase 3B, integración con ingesta,
+La fase 3A quedó publicada para revisión. La fase 3B, integración con ingesta,
 el buscador o aprobación editorial, no está iniciada y requiere autorización
 separada.
