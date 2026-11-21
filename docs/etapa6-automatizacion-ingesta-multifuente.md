@@ -35,11 +35,25 @@ fuente. El piso H5.6 también limita la fecha de próxima consulta, y H5.6 más
 mínimo se reduce para ajustarlo a la frecuencia: el tiempo efectivo de consulta
 es al menos el mayor de la cadencia y los pisos aplicables.
 
+La caché interna de robots es privada y aplica la edad corregida de RFC 9111:
+edad aparente derivada de `Date`, máximo entre ésta y `Age`, más el tiempo de
+respuesta. `max-age` rige esta caché; `s-maxage` se reserva para cachés
+compartidas. `Expires` se calcula respecto de `Date` (o de la recepción si falta)
+y también descuenta la edad ya consumida. Directivas de frescura duplicadas o
+ambiguas fallan de forma conservadora. `no-cache` requiere revalidación y
+`no-store` prohíbe conservar la respuesta; como no se implementa revalidación
+condicional, ambos detienen esa fuente. La vigencia efectiva nunca supera 24
+horas ni se extiende para reducir el intervalo HTTP requerido. Los trabajos
+registran códigos estables por etapa (por ejemplo `robots_freshness:
+ROBOTS_FRESHNESS_TOO_SHORT` o `robots:HTTP_403`) sin guardar mensajes de
+excepción ni URLs completas en el campo de diagnóstico.
+
 Antes de cada GET (robots, feed, artículo y salto de redirección) se reserva y
-finaliza el control durable H5.6. El robots.txt se guarda por fuente/host durante
-al menos 12 horas y durante el intervalo efectivo requerido más cinco minutos
-cuando sea mayor, sin exceder 24 horas. Este límite sigue la recomendación de
-RFC 9309 §2.4 de no usar una copia cacheada por más de 24 horas. Si un intervalo
+finaliza el control durable H5.6. robots.txt se guarda por fuente/host solo
+mientras su frescura HTTP alcanza el intervalo efectivo requerido; cuando no hay
+metadatos explícitos se aplica una política local de 12 horas o el intervalo
+requerido más cinco minutos, lo que resulte mayor. La vigencia nunca supera 24
+horas, conforme a RFC 9309 §2.4. Si un intervalo
 HTTP o una regla `Crawl-delay`/`Request-rate` no cabe en ese horizonte, el trabajo
 queda en revisión manual; no se acorta el intervalo ni se repite robots.txt para
 reiniciar la espera. Un rechazo de robots no inicia la solicitud al recurso. Un robots
@@ -47,6 +61,13 @@ distinto de HTTP 200 —salvo 429, que respeta Retry-After— requiere revisión
 manual; esto incluye 404 y es deliberadamente conservador. La caché se limita a
 256 KiB. Los snapshots, incluidas URLs de continuación validadas, se limitan a
 128 KiB.
+
+La columna `version_frescura` identifica el algoritmo aplicado a cada fila de
+caché. Las filas anteriores a RFC 9111 v1 conservan sus datos, pero no se
+reutilizan: se obtiene robots.txt de nuevo solo después de que H5.6 permita esa
+solicitud. Antes de usar una fila vigente, el planificador comprueba también que
+su vencimiento cubra el próximo intervalo HTTP efectivo; una cadencia RSS más
+corta no reduce ni reemplaza ese intervalo.
 
 - HTTP 403/401 o una política robots que deniega: el trabajo pasa a
   `REVISION_MANUAL`; no se reintenta automáticamente.

@@ -22,6 +22,8 @@ class RespuestaHTTPError(OSError):
         self.estado = int(estado)
         self.retry_after_segundos = retry_after_segundos
         self.retry_after_excesivo = bool(retry_after_excesivo)
+        self.codigo_diagnostico = f'HTTP_{self.estado}'
+        self.etapa_diagnostico = None
         super().__init__(f'HTTP {self.estado}')
 
 
@@ -181,11 +183,13 @@ def descargar(url, timeout=10, *, fuente=None, control_solicitud=None,
             ruta = partes.path or '/'
             if partes.query:
                 ruta += '?' + partes.query
+            solicitud_iniciada = datetime.now(timezone.utc)
             conexion.request('GET', ruta, headers={'User-Agent': 'TrendWatch/1.0', 'Accept-Encoding': 'identity'})
             # HTTPConnection puede soltar su referencia al socket si will_close.
             # El archivo de HTTPResponse mantiene el descriptor hasta terminar la lectura.
             sock_lectura = conexion.sock
             respuesta = conexion.getresponse()
+            respuesta_recibida = datetime.now(timezone.utc)
             if respuesta.status in (301, 302, 303, 307, 308):
                 ubicacion = respuesta.getheader('Location')
                 if not ubicacion:
@@ -217,17 +221,22 @@ def descargar(url, timeout=10, *, fuente=None, control_solicitud=None,
                 if control_solicitud is not None:
                     finalizada = True
                     control_solicitud.respuesta(reserva, url, respuesta.status, retry_after_header)
-                raise RespuestaHTTPError(
+                error = RespuestaHTTPError(
                     respuesta.status,
                     retry_after,
                     retry_after_excesivo,
                 )
+                if control_solicitud is not None and reserva.get('robots'):
+                    error.etapa_diagnostico = 'robots'
+                raise error
             if observador_respuesta is not None:
                 observador_respuesta({
                     'cache-control': respuesta.getheader('Cache-Control'),
                     'expires': respuesta.getheader('Expires'),
                     'date': respuesta.getheader('Date'),
                     'age': respuesta.getheader('Age'),
+                    'request-time': solicitud_iniciada,
+                    'response-time': respuesta_recibida,
                 })
             contenido = _leer_limitado(respuesta, sock_lectura, limite, max_bytes)
             if control_solicitud is not None:
