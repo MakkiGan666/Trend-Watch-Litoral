@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from core.models import (
@@ -260,6 +260,184 @@ class AutomatizacionMultifuenteTests(TestCase):
                 self.fuente.identificador, confirmar_revision_acceso=True,
                 confirmar_aprobacion_operativa=True,
             )
+
+    def test_fuente_deshabilitada_se_ejecuta_solo_como_snapshot_metadata_only(self):
+        fuente_deshabilitada = replace(self.fuente_base, habilitada=False)
+        catalogo = patch.object(
+            planificador, '_catalogo', return_value={fuente_deshabilitada.identificador: fuente_deshabilitada},
+        )
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
+        settings = override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_PERMISO_TITULAR_EXPRESO_VERIFICADO=(),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={self.fuente.identificador: 3600},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        )
+        settings.enable()
+        self.addCleanup(settings.disable)
+
+        plan = planificador.configurar_fuente(
+            self.fuente.identificador, frecuencia_segundos=6 * 3600,
+            intervalo_http_segundos=3600, solo_metadatos=True,
+        )
+        self.assertFalse(plan.habilitada)
+        plan = planificador.habilitar_fuente(
+            self.fuente.identificador, confirmar_revision_acceso=True,
+            confirmar_aprobacion_operativa=True,
+        )
+        self.assertTrue(plan.habilitada)
+        self.assertTrue(plan.solo_metadatos)
+
+        feed = lector_rss.ResultadoRSS(
+            noticias=(self.noticia(),), rechazos=(), total_entradas=1, truncadas=0,
+            indices_noticias=(0,),
+        )
+
+        def capturar_snapshot(identificadores, **kwargs):
+            self.assertEqual(identificadores, [self.fuente.identificador])
+            self.assertTrue(kwargs['solo_snapshot'])
+            self.assertTrue(kwargs['solo_metadatos'])
+            self.assertFalse(kwargs['procesar_ia'])
+            self.assertIsInstance(kwargs['control_solicitud'], planificador.ControlHTTPConRobots)
+            kwargs['guardar_snapshot'](self.fuente.identificador, feed)
+            return {'fuentes': [{'fuente': self.fuente.identificador, 'errores': []}]}
+
+        with patch.object(
+            planificador.orquestador_multifuente,
+            'ejecutar_ingesta_multifuente', side_effect=capturar_snapshot,
+        ) as ejecutar:
+            primero = planificador.ejecutar_ciclo(max_fuentes=1)
+            self.assertEqual(primero['resultados'][0]['estado'], 'SNAPSHOT_GUARDADO')
+            trabajo = TrabajoIngestaMultifuente.objects.get()
+            self.assertTrue(trabajo.solo_metadatos)
+            self.assertNotIn('resumen', trabajo.snapshot[0])
+            self.assertNotIn('imagen_principal', trabajo.snapshot[0])
+            self.assertNotIn('contenido_completo', trabajo.snapshot[0])
+
+            TrabajoIngestaMultifuente.objects.filter(pk=trabajo.pk).update(
+                proxima_accion=timezone.now(),
+            )
+            segundo = planificador.ejecutar_ciclo(max_fuentes=1)
+            trabajo.refresh_from_db()
+            self.assertEqual(segundo['resultados'][0]['estado'], 'COMPLETADO')
+            self.assertEqual(trabajo.estado, TrabajoIngestaMultifuente.Estado.COMPLETADO)
+            self.assertEqual(ejecutar.call_count, 1)
+
+        publicacion = Publicacion.objects.get(pk=trabajo.resultados[0]['publicacion_id'])
+        self.assertEqual(publicacion.contenido, '')
+        self.assertFalse(publicacion.contenido_completo)
+
+    def test_fuente_sin_modo_metadata_only_sigue_bloqueada_para_activacion(self):
+        fuente_deshabilitada = replace(self.fuente_base, habilitada=False)
+        catalogo = patch.object(
+            planificador, '_catalogo', return_value={fuente_deshabilitada.identificador: fuente_deshabilitada},
+        )
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
+        plan = planificador.configurar_fuente(
+            self.fuente.identificador, frecuencia_segundos=3600,
+            intervalo_http_segundos=3600, solo_metadatos=False,
+        )
+        with self.assertRaisesRegex(ValueError, 'deshabilitada en el catálogo para extracción completa'):
+            planificador.habilitar_fuente(
+                self.fuente.identificador, confirmar_revision_acceso=True,
+                confirmar_aprobacion_operativa=True,
+            )
+        self.assertFalse(ProgramacionIngestaMultifuente.objects.get(pk=plan.pk).habilitada)
+        with patch.object(
+            orquestador_multifuente.descarga_segura, 'descargar',
+        ) as descargar:
+            with self.assertRaisesRegex(ValueError, 'Fuente deshabilitada'):
+                orquestador_multifuente.ejecutar_ingesta_multifuente(
+                    [self.fuente.identificador],
+                )
+        descargar.assert_not_called()
+
+    def test_fuente_metadata_only_sin_gates_h56_no_se_habilita(self):
+        fuente_deshabilitada = replace(self.fuente_base, habilitada=False)
+        catalogo = patch.object(
+            planificador, '_catalogo', return_value={fuente_deshabilitada.identificador: fuente_deshabilitada},
+        )
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
+        plan = planificador.configurar_fuente(
+            self.fuente.identificador, frecuencia_segundos=6 * 3600,
+            intervalo_http_segundos=3600, solo_metadatos=True,
+        )
+        with self.assertRaisesRegex(ValueError, 'Política RSS metadata-only incompleta'):
+            planificador.habilitar_fuente(
+                self.fuente.identificador, confirmar_revision_acceso=True,
+                confirmar_aprobacion_operativa=True,
+            )
+        plan.refresh_from_db()
+        self.assertFalse(plan.habilitada)
+        self.assertFalse(plan.acceso_revisado)
+        self.assertFalse(plan.aprobacion_operativa)
+
+    def test_metadata_only_no_admite_articulos_ia_ni_snapshot_inyectado(self):
+        for opciones in (
+            {'solo_snapshot': False, 'guardar_snapshot': lambda *args: None,
+             'control_solicitud': Mock()},
+            {'solo_snapshot': True, 'guardar_snapshot': lambda *args: None,
+             'control_solicitud': Mock(), 'procesar_ia': True},
+            {'solo_snapshot': True, 'guardar_snapshot': lambda *args: None,
+             'control_solicitud': Mock(), 'articulo_urls': {self.fuente.identificador: 'https://invalid.test/a'}},
+            {'solo_snapshot': True, 'guardar_snapshot': lambda *args: None,
+             'control_solicitud': None},
+        ):
+            with self.subTest(opciones=opciones):
+                with self.assertRaisesRegex(ValueError, 'Metadata-only requiere'):
+                    orquestador_multifuente.ejecutar_ingesta_multifuente(
+                        [self.fuente.identificador], solo_metadatos=True, **opciones,
+                    )
+
+    def test_reanudacion_preserva_el_modo_metadata_only_y_no_consulta_articulos(self):
+        fuente_deshabilitada = replace(self.fuente_base, habilitada=False)
+        catalogo = patch.object(
+            planificador, '_catalogo', return_value={fuente_deshabilitada.identificador: fuente_deshabilitada},
+        )
+        catalogo.start()
+        self.addCleanup(catalogo.stop)
+        settings = override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={self.fuente.identificador: 3600},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        )
+        settings.enable()
+        self.addCleanup(settings.disable)
+        plan = ProgramacionIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, habilitada=True, acceso_revisado=True,
+            aprobacion_operativa=True, solo_metadatos=True,
+            frecuencia_segundos=3600, intervalo_segundos=3600,
+        )
+        trabajo = TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, solo_metadatos=True,
+            estado=TrabajoIngestaMultifuente.Estado.REVISION_MANUAL,
+            snapshot=[planificador._snapshot_metadata_item(0, self.noticia())],
+            snapshot_capturado=timezone.now(), entradas_snapshot=1, cursor=0,
+            registro=RegistroDatos.objects.create(
+                fuentes_api=self.fuente.identificador, fecha_ejecucion=timezone.now(),
+                estado='EN_PROGRESO', lenguaje='RSS metadata-only',
+            ),
+            codigo_error='fallo_persistencia_controlado',
+        )
+        planificador.reanudar_trabajo(trabajo.pk, confirmar_revision=True)
+        with patch.object(
+            planificador.orquestador_multifuente, 'ejecutar_ingesta_multifuente',
+        ) as ejecutar:
+            salida = planificador.ejecutar_ciclo(max_fuentes=1)
+        ejecutar.assert_not_called()
+        trabajo.refresh_from_db()
+        self.assertTrue(trabajo.solo_metadatos)
+        self.assertEqual(trabajo.estado, TrabajoIngestaMultifuente.Estado.COMPLETADO)
+        self.assertEqual(salida['resultados'][0]['estado'], 'COMPLETADO')
 
     def test_dos_reservas_de_trabajo_no_producen_ejecutores_concurrentes(self):
         plan = self.programar()
@@ -645,15 +823,22 @@ class AutomatizacionMultifuenteTests(TestCase):
         def capturar(identificadores, **kwargs):
             self.assertEqual(identificadores, [self.fuente.identificador])
             self.assertTrue(kwargs['solo_snapshot'])
+            self.assertTrue(kwargs['solo_metadatos'])
             self.assertFalse(kwargs['procesar_ia'])
             kwargs['guardar_snapshot'](self.fuente.identificador, feed)
             return {'fuentes': [{'fuente': self.fuente.identificador, 'errores': []}]}
 
-        with patch.object(
+        with override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={self.fuente.identificador: 3600},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        ), patch.object(
             planificador.orquestador_multifuente, 'ejecutar_ingesta_multifuente',
             side_effect=capturar,
-        ) as ejecutar, \
-                patch('core.services.extractor_articulos.extraer_articulo') as extractor:
+        ) as ejecutar, patch('core.services.extractor_articulos.extraer_articulo') as extractor:
             resultado = planificador.ejecutar_ciclo(max_fuentes=1)
         self.assertEqual(resultado['resultados'][0]['estado'], 'SNAPSHOT_GUARDADO')
         self.assertEqual(ejecutar.call_count, 1)
@@ -664,7 +849,18 @@ class AutomatizacionMultifuenteTests(TestCase):
         self.assertNotIn('imagen_principal', trabajo.snapshot[0])
 
     def _trabajo_metadata_con_snapshot(self, cantidad=7):
-        self.programar()
+        plan = self.programar()
+        ProgramacionIngestaMultifuente.objects.filter(pk=plan.pk).update(solo_metadatos=True)
+        autorizacion = override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(self.fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(self.fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={self.fuente.identificador: 60},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        )
+        autorizacion.enable()
+        self.addCleanup(autorizacion.disable)
         registro = RegistroDatos.objects.create(
             fuentes_api=self.fuente.identificador, fecha_ejecucion=timezone.now(),
             estado='EN_PROGRESO', lenguaje='RSS metadata-only',
@@ -697,7 +893,7 @@ class AutomatizacionMultifuenteTests(TestCase):
                 patch.object(planificador.orquestador_multifuente, 'ejecutar_ingesta_multifuente') as orquestador:
             primero = planificador._procesar_unidad(
                 trabajo.pk, token, trabajo.fencing_token,
-                ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+                ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador, solo_metadatos=True),
             )
         descargar.assert_not_called()
         orquestador.assert_not_called()
@@ -713,7 +909,7 @@ class AutomatizacionMultifuenteTests(TestCase):
         trabajo.save(update_fields=['token_arrendamiento', 'fencing_token', 'estado'])
         segundo = planificador._procesar_unidad(
             trabajo.pk, trabajo.token_arrendamiento, trabajo.fencing_token,
-            ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+            ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador, solo_metadatos=True),
         )
         trabajo.refresh_from_db()
         self.assertEqual(segundo['procesadas'], 2)
@@ -733,6 +929,20 @@ class AutomatizacionMultifuenteTests(TestCase):
         ids = [item['id_publicacion_api'] for item in respuesta.json()['resultados']]
         self.assertIn(primera.pk, ids)
 
+    def test_metadata_respetar_limite_h54_menor_que_maximo_del_worker(self):
+        trabajo = self._trabajo_metadata_con_snapshot(cantidad=4)
+        with override_settings(
+            RSS_METADATOS_LIMITES_POR_FUENTE={self.fuente.identificador: 2},
+        ):
+            resultado = planificador._procesar_snapshot_metadata(
+                trabajo.pk, trabajo.token_arrendamiento, trabajo.fencing_token, self.fuente,
+            )
+        trabajo.refresh_from_db()
+        self.assertEqual(resultado['procesadas'], 2)
+        self.assertEqual(trabajo.procesadas, 2)
+        self.assertEqual(trabajo.estado, TrabajoIngestaMultifuente.Estado.ESPERA)
+        self.assertEqual(Publicacion.objects.filter(fuente=self.fuente.nombre).count(), 1)
+
     def test_error_de_persistencia_revierte_publicacion_y_checkpoint_juntos(self):
         trabajo = self._trabajo_metadata_con_snapshot(cantidad=1)
         token = trabajo.token_arrendamiento
@@ -748,7 +958,7 @@ class AutomatizacionMultifuenteTests(TestCase):
             with self.assertRaisesRegex(Exception, 'fallo simulado'):
                 planificador._procesar_unidad(
                     trabajo.pk, token, trabajo.fencing_token,
-                    ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador),
+                    ProgramacionIngestaMultifuente(fuente_id=self.fuente.identificador, solo_metadatos=True),
                 )
         trabajo.refresh_from_db()
         self.assertEqual(trabajo.snapshot[0]['estado'], 'PENDIENTE')
@@ -800,3 +1010,71 @@ class AutomatizacionMultifuenteTests(TestCase):
             with self.assertRaises(FuenteRSSEnEspera):
                 control.antes(self.fuente.feed)
         reservar.assert_not_called()
+
+
+class OrquestadorMetadataOnlyTests(TransactionTestCase):
+    def test_fuente_deshabilitada_consulta_solo_feed_en_snapshot_metadata_only(self):
+        fuente = replace(fuentes_rss.FUENTES_RSS[0], habilitada=False)
+        xml = f'''<?xml version="1.0" encoding="utf-8"?>
+            <rss version="2.0"><channel>
+              <item><title>Titular RSS sintético</title>
+                <link>https://{fuente.hosts_permitidos[0]}/nota/metadata/</link>
+                <pubDate>Fri, 20 Nov 2026 10:00:00 GMT</pubDate>
+                <description>Este resumen no debe persistirse.</description>
+              </item>
+            </channel></rss>'''.encode('utf-8')
+        snapshots = []
+        control = planificador.ControlHTTPConRobots(fuente, 3600)
+        ProgramacionIngestaMultifuente.objects.create(
+            fuente_id=fuente.identificador, habilitada=True, acceso_revisado=True,
+            aprobacion_operativa=True, solo_metadatos=True,
+        )
+        with override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={fuente.identificador: 3600},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        ), patch.object(
+            orquestador_multifuente.fuentes_rss, 'obtener_fuentes', return_value=(fuente,),
+        ), patch.object(
+            orquestador_multifuente.descarga_segura, 'descargar', return_value=xml,
+        ) as descargar:
+            salida = orquestador_multifuente.ejecutar_ingesta_multifuente(
+                [fuente.identificador], limite_por_fuente=5, limite_total=5,
+                solo_snapshot=True,
+                guardar_snapshot=lambda fuente_id, feed: snapshots.append((fuente_id, feed)),
+                control_solicitud=control, solo_metadatos=True, procesar_ia=False,
+            )
+        self.assertEqual(descargar.call_count, 1)
+        self.assertEqual(descargar.call_args.args[0], fuente.feed)
+        self.assertIs(descargar.call_args.kwargs['control_solicitud'], control)
+        self.assertEqual(salida['fuentes'][0]['articulos_descargados'], 0)
+        self.assertEqual(salida['fuentes'][0]['feeds_descargados'], 1)
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0][0], fuente.identificador)
+        self.assertEqual(snapshots[0][1].noticias[0].titulo, 'Titular RSS sintético')
+
+    def test_orquestador_rechaza_metadata_only_sin_programacion_aprobada(self):
+        fuente = replace(fuentes_rss.FUENTES_RSS[0], habilitada=False)
+        control = planificador.ControlHTTPConRobots(fuente, 3600)
+        with override_settings(
+            RSS_METADATOS_FUENTES_HABILITADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_REVISADAS=(fuente.identificador,),
+            RSS_METADATOS_FUENTES_APROBADAS_POR_EQUIPO=(fuente.identificador,),
+            RSS_METADATOS_LIMITES_POR_FUENTE={fuente.identificador: 5},
+            RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE={fuente.identificador: 3600},
+            RSS_METADATOS_429_SIN_RETRY_AFTER_SEGUNDOS=86400,
+        ), patch.object(
+            orquestador_multifuente.fuentes_rss, 'obtener_fuentes', return_value=(fuente,),
+        ), patch.object(
+            orquestador_multifuente.descarga_segura, 'descargar',
+        ) as descargar:
+            with self.assertRaisesRegex(ValueError, 'programación metadata-only aprobada'):
+                orquestador_multifuente.ejecutar_ingesta_multifuente(
+                    [fuente.identificador], solo_snapshot=True,
+                    guardar_snapshot=lambda *args: None,
+                    control_solicitud=control, solo_metadatos=True,
+                )
+        descargar.assert_not_called()

@@ -9,6 +9,7 @@ from urllib.robotparser import RobotFileParser
 from uuid import uuid4
 
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, IntegrityError, transaction
 from django.utils import timezone
 
@@ -24,6 +25,7 @@ from core.services import descarga_segura, fuentes_rss, lector_rss, orquestador_
 from core.services.persistencia_rss_metadatos import (
     FuenteBloqueada,
     FuenteRSSEnEspera,
+    _politica_fuente,
     _finalizar_solicitud,
     _reservar_solicitud,
 )
@@ -59,13 +61,23 @@ def _catalogo():
     return {f.identificador: f for f in fuentes_rss.FUENTES_RSS}
 
 
-def _fuente(fuente_id, *, exigir_habilitada=True):
+def _fuente(fuente_id, *, exigir_habilitada=True, permitir_solo_metadatos=False):
     fuente = _catalogo().get(fuente_id)
     if fuente is None:
         raise ValueError('Fuente desconocida para ingesta multifuente.')
-    if exigir_habilitada and not fuente.habilitada:
+    if type(permitir_solo_metadatos) is not bool:
+        raise ValueError('El permiso metadata-only debe ser booleano.')
+    if exigir_habilitada and not fuente.habilitada and not permitir_solo_metadatos:
         raise ValueError('La fuente permanece deshabilitada en el catálogo.')
     return fuente
+
+
+def _validar_politica_metadata(fuente):
+    """Revalida los gates RSS y los límites H5.6 antes de consumir un feed."""
+    try:
+        return _politica_fuente(fuente)
+    except (ImproperlyConfigured, ValueError) as exc:
+        raise ValueError(f'Política RSS metadata-only incompleta: {exc}') from exc
 
 
 @transaction.atomic
@@ -131,12 +143,19 @@ def configurar_fuente(fuente_id, *, intervalo_segundos=None, frecuencia_segundos
 
 def habilitar_fuente(fuente_id, *, confirmar_revision_acceso=False,
                      confirmar_aprobacion_operativa=False):
-    fuente = _fuente(fuente_id, exigir_habilitada=True)
+    fuente = _fuente(fuente_id, exigir_habilitada=False)
     if confirmar_revision_acceso is not True or confirmar_aprobacion_operativa is not True:
         raise ValueError('Para habilitar se requieren ambas confirmaciones explícitas.')
     plan = ProgramacionIngestaMultifuente.objects.filter(fuente_id=fuente.identificador).first()
     if plan is None:
         raise ValueError('Configurá primero el intervalo de esta fuente.')
+    if not fuente.habilitada and not plan.solo_metadatos:
+        raise ValueError(
+            'La fuente está deshabilitada en el catálogo para extracción completa; configurá '
+            'explícitamente solo_metadatos para habilitar únicamente su feed RSS.'
+        )
+    if plan.solo_metadatos:
+        _validar_politica_metadata(fuente)
     plan.acceso_revisado = True
     plan.aprobacion_operativa = True
     plan.habilitada = True
@@ -278,11 +297,16 @@ def _reservar_trabajo(plan, ahora):
             plan = ProgramacionIngestaMultifuente.objects.select_for_update().get(pk=plan.pk)
             if not (plan.habilitada and plan.acceso_revisado and plan.aprobacion_operativa):
                 return None
-            fuente = _fuente(plan.fuente_id, exigir_habilitada=True)
+            fuente = _fuente(
+                plan.fuente_id, exigir_habilitada=True,
+                permitir_solo_metadatos=plan.solo_metadatos,
+            )
             del fuente
             trabajo = (TrabajoIngestaMultifuente.objects.select_for_update()
                        .filter(fuente_id=plan.fuente_id, estado__in=ACTIVE_STATES)
                        .first())
+            if trabajo is not None and trabajo.solo_metadatos != plan.solo_metadatos:
+                return None
             if trabajo is None:
                 if plan.proxima_ejecucion and plan.proxima_ejecucion > ahora:
                     return None
@@ -711,10 +735,11 @@ def _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente):
     )
 
     fuente_persistencia = _fuente_canonica(fuente.identificador)
+    limite_configurado, _, _ = _validar_politica_metadata(fuente)
     persistidas = duplicadas = rechazadas = 0
     indices = []
     finalizado = False
-    for _ in range(MAX_METADATA_ITEMS_PER_CYCLE):
+    for _ in range(min(MAX_METADATA_ITEMS_PER_CYCLE, limite_configurado)):
         with transaction.atomic():
             trabajo = TrabajoIngestaMultifuente.objects.select_for_update().get(pk=trabajo_id)
             _verificar_fence(trabajo, token, fencing)
@@ -799,7 +824,14 @@ def _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente):
 
 def _procesar_unidad(trabajo_id, token, fencing, config):
     trabajo = TrabajoIngestaMultifuente.objects.get(pk=trabajo_id)
-    fuente = _fuente(trabajo.fuente_id, exigir_habilitada=True)
+    if trabajo.solo_metadatos != config.solo_metadatos:
+        raise ValueError('El modo del trabajo no coincide con su programación congelada.')
+    fuente = _fuente(
+        trabajo.fuente_id, exigir_habilitada=True,
+        permitir_solo_metadatos=trabajo.solo_metadatos,
+    )
+    if trabajo.solo_metadatos:
+        _validar_politica_metadata(fuente)
     intervalos_h56 = getattr(settings, 'RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE', {})
     if not isinstance(intervalos_h56, dict):
         raise ValueError('La configuración H5.6 de intervalos debe ser un mapa.')
@@ -818,6 +850,7 @@ def _procesar_unidad(trabajo_id, token, fencing, config):
                 limite_total=MAX_SNAPSHOT_ENTRIES, dry_run=False, procesar_ia=False,
                 solo_snapshot=True, guardar_snapshot=guardar,
                 control_solicitud=control_http,
+                solo_metadatos=trabajo.solo_metadatos,
                 feed_urls={fuente.identificador: trabajo.url_feed_reanudacion}
                 if trabajo.url_feed_reanudacion else None,
             )
@@ -940,7 +973,12 @@ def ejecutar_ciclo(*, max_fuentes=5):
         if unidades_iniciadas >= max_fuentes:
             break
         try:
-            fuente = _fuente(plan.fuente_id, exigir_habilitada=True)
+            fuente = _fuente(
+                plan.fuente_id, exigir_habilitada=True,
+                permitir_solo_metadatos=plan.solo_metadatos,
+            )
+            if plan.solo_metadatos:
+                _validar_politica_metadata(fuente)
         except ValueError as exc:
             resultados.append({'fuente': plan.fuente_id, 'estado': 'OMITIDA', 'causa': str(exc)})
             continue
@@ -1059,10 +1097,17 @@ def reanudar_trabajo(trabajo_id, *, confirmar_revision=False):
             raise ValueError('Trabajo de automatización inexistente.')
         if trabajo.estado != TrabajoIngestaMultifuente.Estado.REVISION_MANUAL:
             raise ValueError('El trabajo no requiere revisión manual.')
-        fuente = _fuente(trabajo.fuente_id, exigir_habilitada=True)
-        plan = ProgramacionIngestaMultifuente.objects.get(fuente_id=fuente.identificador)
+        plan = ProgramacionIngestaMultifuente.objects.get(fuente_id=trabajo.fuente_id)
+        if trabajo.solo_metadatos != plan.solo_metadatos:
+            raise ValueError('El modo del trabajo no coincide con su programación.')
+        fuente = _fuente(
+            trabajo.fuente_id, exigir_habilitada=True,
+            permitir_solo_metadatos=trabajo.solo_metadatos,
+        )
         if not (plan.habilitada and plan.acceso_revisado and plan.aprobacion_operativa):
             raise ValueError('La política operativa de la fuente sigue incompleta.')
+        if trabajo.solo_metadatos:
+            _validar_politica_metadata(fuente)
         control = _control_h5(fuente.identificador)
         if control and control.estado in (
             ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
