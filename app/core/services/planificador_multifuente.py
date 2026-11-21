@@ -35,6 +35,7 @@ MAX_ROBOTS_BYTES = 256 * 1024
 ROBOTS_TTL = timedelta(hours=12)
 ROBOTS_TTL_MAX = timedelta(hours=24)
 ROBOTS_TTL_MARGEN = timedelta(minutes=5)
+ROBOTS_CACHE_VERSION = 'rfc9111-v1'
 LEASE_SECONDS = 120
 WORKER_LEASE_SECONDS = 300
 MAX_RETRY_SECONDS = 3600
@@ -50,7 +51,16 @@ ACTIVE_STATES = (
 
 
 class ReglasRobotsDeniegan(ValueError):
-    pass
+    codigo_diagnostico = 'ROBOTS_DENIED'
+    etapa_diagnostico = 'robots'
+
+
+class ErrorFrescuraRobots(ValueError):
+    """Política de caché no verificable: la fuente queda cerrada sin GET al recurso."""
+    def __init__(self, codigo, mensaje):
+        self.codigo_diagnostico = codigo
+        self.etapa_diagnostico = 'robots_freshness'
+        super().__init__(mensaje)
 
 
 class LeasePerdido(RuntimeError):
@@ -376,10 +386,17 @@ class ControlHTTPConRobots:
         partes = urlsplit(url)
         return (partes.path or '/') == '/robots.txt'
 
+    @staticmethod
+    def _fallo_estado(exc, reserva):
+        exc.codigo_diagnostico = 'H56_STATE_PERSISTENCE_FAILED'
+        exc.etapa_diagnostico = 'robots_h56' if reserva.get('robots') else 'h56'
+        return exc
+
     def _parser(self, host):
         ahora = timezone.now()
         cache = CacheRobotsMultifuente.objects.filter(
-            fuente_id=self.fuente.identificador, host=host, expira__gt=ahora,
+            fuente_id=self.fuente.identificador, host=host,
+            version_frescura=ROBOTS_CACHE_VERSION, expira__gt=ahora,
         ).first()
         if cache and cache.expira > cache.consultado + ROBOTS_TTL_MAX:
             cache = None
@@ -410,10 +427,16 @@ class ControlHTTPConRobots:
                     'Las restricciones de robots.txt exceden la vigencia máxima segura '
                     'de caché; se requiere revisión manual.'
                 )
+            recibida = metadatos_http.get('response-time')
+            if not isinstance(recibida, datetime) or recibida.tzinfo is None:
+                recibida = timezone.now()
             ttl = self._ttl_cache_robots(intervalo_reglas, metadatos_http)
             CacheRobotsMultifuente.objects.update_or_create(
                 fuente_id=self.fuente.identificador, host=host,
-                defaults={'reglas': texto, 'consultado': ahora, 'expira': ahora + ttl},
+                defaults={
+                    'reglas': texto, 'consultado': recibida, 'expira': recibida + ttl,
+                    'version_frescura': ROBOTS_CACHE_VERSION,
+                },
             )
             reglas = texto
         else:
@@ -421,6 +444,17 @@ class ControlHTTPConRobots:
         parser = RobotFileParser()
         parser.set_url(f'https://{host}/robots.txt')
         parser.parse(reglas.splitlines())
+        cache_actual = CacheRobotsMultifuente.objects.get(
+            fuente_id=self.fuente.identificador, host=host,
+            version_frescura=ROBOTS_CACHE_VERSION,
+        )
+        intervalo_requerido = self._intervalo_reglas(parser)
+        if cache_actual.expira - timezone.now() < timedelta(seconds=intervalo_requerido):
+            raise ErrorFrescuraRobots(
+                'ROBOTS_CACHED_FRESHNESS_INSUFFICIENT',
+                'La frescura restante de robots.txt no cubre el siguiente intervalo HTTP; '
+                'se requiere revisión manual.',
+            )
         return parser
 
     def _ttl_cache_robots(self, intervalo_requerido, metadatos_http):
@@ -430,43 +464,88 @@ class ControlHTTPConRobots:
         for parte in cache_control.split(','):
             nombre, separador, valor = parte.strip().partition('=')
             nombre = nombre.lower()
+            if nombre in directivas or nombre in banderas:
+                raise ErrorFrescuraRobots(
+                    'ROBOTS_CACHE_DIRECTIVE_DUPLICATE',
+                    'Cache-Control contiene directivas duplicadas; se requiere revisión manual.',
+                )
             if separador:
                 directivas[nombre] = valor.strip().strip('"')
             elif nombre:
                 banderas.add(nombre)
-        requerido = timedelta(seconds=intervalo_requerido) + ROBOTS_TTL_MARGEN
-        if {'no-cache', 'no-store', 'private'} & (banderas | directivas.keys()):
-            raise ValueError(
-                'Cache-Control impide reutilizar robots.txt; se requiere revisión manual.'
+        if 'max-age' in banderas or 's-maxage' in banderas:
+            raise ErrorFrescuraRobots(
+                'ROBOTS_MAX_AGE_INVALID',
+                'Cache-Control contiene max-age sin valor; se requiere revisión manual.',
             )
-        directiva_edad = directivas.get('s-maxage', directivas.get('max-age'))
-        if directiva_edad is not None:
-            if not directiva_edad.isascii() or not directiva_edad.isdecimal():
-                raise ValueError('Cache-Control max-age inválido; se requiere revisión manual.')
-            edad = metadatos_http.get('age') or '0'
-            if not edad.isascii() or not edad.isdecimal():
-                raise ValueError('Age de robots.txt inválido; se requiere revisión manual.')
-            restante = max(0, int(directiva_edad) - int(edad))
-            ttl = timedelta(seconds=min(restante, int(ROBOTS_TTL_MAX.total_seconds())))
+        requerido = timedelta(seconds=intervalo_requerido) + ROBOTS_TTL_MARGEN
+        if {'no-cache', 'no-store'} & (banderas | directivas.keys()):
+            raise ErrorFrescuraRobots(
+                'ROBOTS_CACHE_REVALIDATION_REQUIRED',
+                'Cache-Control impide reutilizar robots.txt sin revalidación; se requiere revisión manual.',
+            )
+
+        # Esta es una caché privada de la aplicación: s-maxage sólo aplica a
+        # cachés compartidas (RFC 9111), por eso se usa max-age o Expires.
+        vida = None
+        if 'max-age' in directivas:
+            valor = directivas['max-age']
+            if not valor.isascii() or not valor.isdecimal():
+                raise ErrorFrescuraRobots(
+                    'ROBOTS_MAX_AGE_INVALID',
+                    'Cache-Control max-age inválido; se requiere revisión manual.',
+                )
+            vida = int(valor)
         elif metadatos_http.get('expires'):
             try:
+                recibida = metadatos_http.get('response-time')
+                if not isinstance(recibida, datetime) or recibida.tzinfo is None:
+                    recibida = timezone.now()
                 expira = parsedate_to_datetime(metadatos_http['expires'])
-                fecha = parsedate_to_datetime(metadatos_http['date']) if metadatos_http.get('date') else timezone.now()
+                fecha = parsedate_to_datetime(metadatos_http['date']) if metadatos_http.get('date') else recibida
                 if expira.tzinfo is None or fecha.tzinfo is None:
                     raise ValueError
-                edad = metadatos_http.get('age') or '0'
-                if not edad.isascii() or not edad.isdecimal():
-                    raise ValueError
-                ttl = expira - fecha - timedelta(seconds=int(edad))
+                vida = max(0, int((expira - fecha).total_seconds()))
             except (TypeError, ValueError, OverflowError) as exc:
-                raise ValueError('Expires de robots.txt inválido; se requiere revisión manual.') from exc
+                raise ErrorFrescuraRobots(
+                    'ROBOTS_EXPIRES_INVALID',
+                    'Expires de robots.txt inválido; se requiere revisión manual.',
+                ) from exc
         else:
-            ttl = max(ROBOTS_TTL, requerido)
-        ttl = min(ttl, ROBOTS_TTL_MAX)
+            # Política local acotada para servidores sin metadatos explícitos.
+            vida = int(max(ROBOTS_TTL, requerido).total_seconds())
+
+        edad = metadatos_http.get('age') or '0'
+        if not isinstance(edad, str) or not edad.isascii() or not edad.isdecimal():
+            raise ErrorFrescuraRobots(
+                'ROBOTS_AGE_INVALID', 'Age de robots.txt inválido; se requiere revisión manual.',
+            )
+        recibida = metadatos_http.get('response-time')
+        if not isinstance(recibida, datetime) or recibida.tzinfo is None:
+            recibida = timezone.now()
+        fecha = metadatos_http.get('date')
+        aparente = 0
+        if fecha:
+            try:
+                fecha_http = parsedate_to_datetime(fecha)
+                if fecha_http.tzinfo is None:
+                    raise ValueError
+                aparente = max(0, int((recibida - fecha_http.astimezone(dt_timezone.utc)).total_seconds()))
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ErrorFrescuraRobots(
+                    'ROBOTS_DATE_INVALID', 'Date de robots.txt inválido; se requiere revisión manual.',
+                ) from exc
+        solicitud = metadatos_http.get('request-time')
+        demora = 0
+        if isinstance(solicitud, datetime) and solicitud.tzinfo is not None:
+            demora = max(0, int((recibida - solicitud).total_seconds()))
+        edad_corregida = max(aparente, int(edad)) + demora
+        ttl = timedelta(seconds=min(max(0, vida - edad_corregida), int(ROBOTS_TTL_MAX.total_seconds())))
         if ttl < requerido:
-            raise ValueError(
+            raise ErrorFrescuraRobots(
+                'ROBOTS_FRESHNESS_TOO_SHORT',
                 'La vigencia HTTP de robots.txt no cubre el intervalo requerido; '
-                'se requiere revisión manual.'
+                'se requiere revisión manual.',
             )
         return ttl
 
@@ -575,10 +654,13 @@ class ControlHTTPConRobots:
             if retry is None and not excesivo:
                 retry = self._fallback_429
             revision_manual = excesivo
-        estado, hasta = _finalizar_solicitud(
-            self.fuente, reserva['control_id'], reserva['intervalo'],
-            retry_after_segundos=retry, revision_manual=revision_manual,
-        )
+        try:
+            estado, hasta = _finalizar_solicitud(
+                self.fuente, reserva['control_id'], reserva['intervalo'],
+                retry_after_segundos=retry, revision_manual=revision_manual,
+            )
+        except Exception as exc:
+            raise self._fallo_estado(exc, reserva) from exc
         return {
             'revision_manual': estado == ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
             'espera_hasta': hasta if status in (301, 302, 303, 307, 308) else None,
@@ -586,7 +668,10 @@ class ControlHTTPConRobots:
 
     def error(self, reserva, url, exc):
         # Los errores DNS/conexión/read consumen intervalo aunque no haya status HTTP.
-        _finalizar_solicitud(self.fuente, reserva['control_id'], reserva['intervalo'])
+        try:
+            _finalizar_solicitud(self.fuente, reserva['control_id'], reserva['intervalo'])
+        except Exception as persistencia:
+            raise self._fallo_estado(persistencia, reserva) from exc
 
 
 def _serializar_estado(resultado, fuente_id):
@@ -717,15 +802,35 @@ def _guardar_resultado_item(trabajo_id, token, fencing, *, indice, estado, publi
 def _resultado_transitorio(detalle):
     status = detalle.get('http_status')
     codigo = detalle.get('codigo', '')
-    if status in (401, 403) or codigo in ('ReglasRobotsDeniegan', 'FuenteBloqueada'):
+    if (status in (401, 403) or codigo in ('HTTP_401', 'HTTP_403', 'ROBOTS_DENIED', 'FuenteBloqueada')
+            or codigo.startswith('ROBOTS_')):
         return 'revision'
-    if status == 429 or codigo in ('FuenteRSSEnEspera', 'DescargaPausada'):
+    if status == 429 or codigo in ('HTTP_429', 'FuenteRSSEnEspera', 'DescargaPausada'):
         return 'espera'
     if status is not None and status >= 500:
         return 'espera'
     if codigo in ('TimeoutError', 'ConnectionError', 'gaierror', 'OSError', 'DatabaseError'):
         return 'espera'
     return 'rechazo'
+
+
+def _codigo_error_trabajo(detalle, predeterminado='ERROR_NO_CLASIFICADO'):
+    """Código estable acotado; no persiste mensajes ni URLs de la excepción."""
+    etapa = detalle.get('etapa', 'worker') if isinstance(detalle, dict) else 'worker'
+    codigo = detalle.get('codigo', predeterminado) if isinstance(detalle, dict) else predeterminado
+    etapa = etapa if isinstance(etapa, str) and etapa.replace('_', '').isalnum() else 'worker'
+    codigo = codigo if isinstance(codigo, str) and codigo.replace('_', '').replace('-', '').isalnum() else predeterminado
+    return f'{etapa[:24]}:{codigo[:39]}'[:64]
+
+
+def _codigo_excepcion_trabajo(exc, etapa='worker'):
+    status = getattr(exc, 'estado', None)
+    detalle = {
+        'etapa': getattr(exc, 'etapa_diagnostico', etapa),
+        'codigo': (f'HTTP_{status}' if type(status) is int else
+                   getattr(exc, 'codigo_diagnostico', type(exc).__name__)),
+    }
+    return _codigo_error_trabajo(detalle)
 
 
 def _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente):
@@ -855,8 +960,9 @@ def _procesar_unidad(trabajo_id, token, fencing, config):
                 if trabajo.url_feed_reanudacion else None,
             )
         except Exception as exc:
-            _marcar_revision(trabajo_id, token, fencing, type(exc).__name__)
-            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': type(exc).__name__}
+            codigo = _codigo_excepcion_trabajo(exc, 'snapshot')
+            _marcar_revision(trabajo_id, token, fencing, codigo)
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': codigo}
         resumen = _serializar_estado(resultado, fuente.identificador)
         actual = TrabajoIngestaMultifuente.objects.get(pk=trabajo_id)
         if actual.snapshot_capturado is not None:
@@ -873,24 +979,28 @@ def _procesar_unidad(trabajo_id, token, fencing, config):
             ControlSolicitudRSSMetadatos.Estado.EN_CURSO,
             ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL,
         ):
-            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'control_h5_pendiente'))
+            codigo = _codigo_error_trabajo(detalle, 'control_h5_pendiente')
+            _marcar_revision(trabajo_id, token, fencing, codigo)
             return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL',
-                    'error': detalle.get('codigo')}
+                    'error': codigo}
         tipo = _resultado_transitorio(detalle)
         if tipo == 'revision':
-            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'revision_manual'))
-            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+            codigo = _codigo_error_trabajo(detalle, 'revision_manual')
+            _marcar_revision(trabajo_id, token, fencing, codigo)
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': codigo}
         if tipo == 'espera':
             hasta = _espera_fecha(detalle) or _proxima_por_control(
                 fuente.identificador, intervalo_efectivo,
             )
+            codigo = _codigo_error_trabajo(detalle, 'espera')
             _marcar_espera_continuacion(
-                trabajo_id, token, fencing, codigo=detalle.get('codigo', 'espera'), hasta=hasta,
+                trabajo_id, token, fencing, codigo=codigo, hasta=hasta,
                 url_feed=detalle.get('url_reanudacion'),
             )
-            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': detalle.get('codigo')}
-        _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'fallo_feed'))
-        return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': codigo}
+        codigo = _codigo_error_trabajo(detalle, 'fallo_feed')
+        _marcar_revision(trabajo_id, token, fencing, codigo)
+        return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': codigo}
 
     if trabajo.solo_metadatos:
         return _procesar_snapshot_metadata(trabajo_id, token, fencing, fuente)
@@ -928,17 +1038,19 @@ def _procesar_unidad(trabajo_id, token, fencing, config):
         tipo = _resultado_transitorio(detalle)
         control = _control_h5(fuente.identificador)
         if tipo == 'revision' or (control and control.estado == ControlSolicitudRSSMetadatos.Estado.REVISION_MANUAL):
-            _marcar_revision(trabajo_id, token, fencing, detalle.get('codigo', 'revision_manual'))
-            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': detalle.get('codigo')}
+            codigo = _codigo_error_trabajo(detalle, 'revision_manual')
+            _marcar_revision(trabajo_id, token, fencing, codigo)
+            return {'fuente': fuente.identificador, 'estado': 'REVISION_MANUAL', 'error': codigo}
         if tipo == 'espera' or (control and control.estado == ControlSolicitudRSSMetadatos.Estado.ESPERA):
             hasta = _espera_fecha(detalle) or _proxima_por_control(
                 fuente.identificador, intervalo_efectivo,
             )
+            codigo = _codigo_error_trabajo(detalle, 'espera')
             _marcar_espera_continuacion(
-                trabajo_id, token, fencing, codigo=detalle.get('codigo', 'espera'), hasta=hasta,
+                trabajo_id, token, fencing, codigo=codigo, hasta=hasta,
                 indice_articulo=item['indice'], url_articulo=detalle.get('url_reanudacion'),
             )
-            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': detalle.get('codigo')}
+            return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': codigo}
         if resumen.get('persistencia_incierta'):
             _marcar_espera(trabajo_id, token, fencing, codigo='persistencia_incierta')
             return {'fuente': fuente.identificador, 'estado': 'ESPERA', 'error': 'persistencia_incierta'}
@@ -994,16 +1106,16 @@ def ejecutar_ciclo(*, max_fuentes=5):
             resultados.append({'fuente': plan.fuente_id, 'estado': 'LEASE_PERDIDO'})
         except (DatabaseError, OSError, TimeoutError) as exc:
             try:
-                _marcar_espera(trabajo_id, token, fencing, codigo=type(exc).__name__)
+                _marcar_espera(trabajo_id, token, fencing, codigo=_codigo_excepcion_trabajo(exc))
             except Exception:
                 pass
-            resultados.append({'fuente': plan.fuente_id, 'estado': 'ESPERA', 'error': type(exc).__name__})
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'ESPERA', 'error': _codigo_excepcion_trabajo(exc)})
         except Exception as exc:
             try:
-                _marcar_revision(trabajo_id, token, fencing, type(exc).__name__)
+                _marcar_revision(trabajo_id, token, fencing, _codigo_excepcion_trabajo(exc))
             except Exception:
                 pass
-            resultados.append({'fuente': plan.fuente_id, 'estado': 'REVISION_MANUAL', 'error': type(exc).__name__})
+            resultados.append({'fuente': plan.fuente_id, 'estado': 'REVISION_MANUAL', 'error': _codigo_excepcion_trabajo(exc)})
     resultado = {'fuentes_consideradas': len(planes), 'resultados': resultados}
     if getattr(settings, 'DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA', False):
         try:

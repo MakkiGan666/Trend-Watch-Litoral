@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from threading import Event
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -193,6 +193,139 @@ class AutomatizacionMultifuenteTests(TestCase):
                 control_corto._parser(otro_host)
         self.assertFalse(planificador.CacheRobotsMultifuente.objects.filter(host=otro_host).exists())
 
+    def test_cache_robots_calcula_edad_aparente_date_age_y_demora_respuesta(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 3000)
+        recibida = datetime(2026, 11, 21, 12, 0, tzinfo=dt_timezone.utc)
+        solicitud = recibida - timedelta(seconds=3)
+        ttl = control._ttl_cache_robots(60, {
+            'cache-control': 's-maxage=5, max-age=7200',
+            'date': 'Sat, 21 Nov 2026 11:00:00 GMT',
+            'age': '60', 'request-time': solicitud, 'response-time': recibida,
+        })
+        # Cache privada: s-maxage no sustituye max-age. RFC 9111: max(apparent, Age)+delay.
+        self.assertEqual(ttl, timedelta(seconds=3597))
+
+    def test_cache_privada_puede_reutilizar_private_sin_rebajar_el_intervalo(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        ttl = control._ttl_cache_robots(60, {
+            'cache-control': 'private, max-age=3600',
+            'response-time': datetime(2026, 11, 21, 12, 0, tzinfo=dt_timezone.utc),
+        })
+        self.assertEqual(ttl, timedelta(seconds=3600))
+
+    def test_cache_robots_expires_resta_edad_corregida_y_rechaza_caducidad(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 3000)
+        recibida = datetime(2026, 11, 21, 12, 0, tzinfo=dt_timezone.utc)
+        ttl = control._ttl_cache_robots(60, {
+            'expires': 'Sat, 21 Nov 2026 14:00:00 GMT',
+            'date': 'Sat, 21 Nov 2026 11:30:00 GMT',
+            'age': '60', 'request-time': recibida - timedelta(seconds=2),
+            'response-time': recibida,
+        })
+        self.assertEqual(ttl, timedelta(seconds=7198))
+        with self.assertRaises(planificador.ErrorFrescuraRobots) as contexto:
+            control._ttl_cache_robots(60, {
+                'cache-control': 'max-age=7200', 'date': 'Sat, 21 Nov 2026 10:00:00 GMT',
+                'response-time': recibida,
+            })
+        self.assertEqual(contexto.exception.codigo_diagnostico, 'ROBOTS_FRESHNESS_TOO_SHORT')
+
+    def test_cache_robots_rechaza_directivas_duplicadas_y_preserva_no_cache_no_store(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+        for header, codigo in (
+            ('max-age=7200, max-age=86400', 'ROBOTS_CACHE_DIRECTIVE_DUPLICATE'),
+            ('max-age=7200, no-cache', 'ROBOTS_CACHE_REVALIDATION_REQUIRED'),
+            ('no-store', 'ROBOTS_CACHE_REVALIDATION_REQUIRED'),
+        ):
+            with self.subTest(header=header), self.assertRaises(planificador.ErrorFrescuraRobots) as contexto:
+                control._ttl_cache_robots(60, {'cache-control': header})
+            self.assertEqual(contexto.exception.codigo_diagnostico, codigo)
+
+    def test_cache_robots_no_permite_max_age_insuficiente_ni_age_invalido(self):
+        control = planificador.ControlHTTPConRobots(self.fuente, 3600)
+        for headers, codigo in (
+            ({'cache-control': 'max-age=1800'}, 'ROBOTS_FRESHNESS_TOO_SHORT'),
+            ({'cache-control': 'max-age=7200', 'age': '-1'}, 'ROBOTS_AGE_INVALID'),
+        ):
+            with self.subTest(headers=headers), self.assertRaises(planificador.ErrorFrescuraRobots) as contexto:
+                control._ttl_cache_robots(3600, headers)
+            self.assertEqual(contexto.exception.codigo_diagnostico, codigo)
+
+    def test_diagnostico_http_y_frescura_persisten_codigo_y_etapa_sin_detalles(self):
+        resumen = {'errores': []}
+        error_http = descarga_segura.RespuestaHTTPError(403)
+        error_http.etapa_diagnostico = 'robots'
+        orquestador_multifuente._error(
+            resumen, 'rss', type(error_http).__name__, url='https://news.example/a?token=secret',
+            http_status=403, exc=error_http,
+        )
+        self.assertEqual(resumen['errores'][0]['codigo'], 'HTTP_403')
+        self.assertEqual(resumen['errores'][0]['etapa'], 'robots')
+        self.assertEqual(resumen['errores'][0]['url'], 'https://news.example')
+        self.assertNotIn('secret', str(resumen))
+
+        trabajo = TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador,
+            estado=TrabajoIngestaMultifuente.Estado.PROCESANDO,
+            token_arrendamiento=uuid4(), fencing_token=1,
+        )
+        error_frescura = planificador.ErrorFrescuraRobots(
+            'ROBOTS_FRESHNESS_TOO_SHORT', 'texto diagnóstico no persistible',
+        )
+        codigo = planificador._codigo_excepcion_trabajo(error_frescura)
+        planificador._marcar_revision(trabajo.pk, trabajo.token_arrendamiento, 1, codigo)
+        trabajo.refresh_from_db()
+        self.assertEqual(trabajo.codigo_error, 'robots_freshness:ROBOTS_FRESHNESS_TOO_SHORT')
+        self.assertNotIn('texto', trabajo.codigo_error)
+
+    def test_diagnostico_429_conserva_codigo_y_espera_durable_h56(self):
+        reserva = _reservar_solicitud(self.fuente, 3600)
+        control_http = planificador.ControlHTTPConRobots(self.fuente, 3600)
+        control_http.respuesta(
+            {'control_id': reserva, 'intervalo': 3600, 'robots': True},
+            f'https://{self.fuente.hosts_permitidos[0]}/robots.txt', 429, '7200',
+        )
+        control = ControlSolicitudRSSMetadatos.objects.get(fuente_id=self.fuente.identificador)
+        self.assertEqual(control.estado, ControlSolicitudRSSMetadatos.Estado.ESPERA)
+        self.assertGreaterEqual(control.retry_after_hasta, timezone.now() + timedelta(seconds=7190))
+        resumen = {'errores': []}
+        error = descarga_segura.RespuestaHTTPError(429, retry_after_segundos=7200)
+        error.etapa_diagnostico = 'robots'
+        orquestador_multifuente._error(
+            resumen, 'rss', 'RespuestaHTTPError', http_status=429, exc=error,
+        )
+        self.assertEqual(resumen['errores'][0]['codigo'], 'HTTP_429')
+        self.assertEqual(resumen['errores'][0]['etapa'], 'robots')
+        self.assertEqual(planificador._resultado_transitorio(resumen['errores'][0]), 'espera')
+
+    def test_worker_persiste_etapa_y_codigo_de_frescura_robots(self):
+        plan = self.programar(intervalo=3600)
+        token = uuid4()
+        trabajo = TrabajoIngestaMultifuente.objects.create(
+            fuente_id=self.fuente.identificador,
+            estado=TrabajoIngestaMultifuente.Estado.PROCESANDO,
+            token_arrendamiento=token, fencing_token=1,
+        )
+        resultado = {'fuentes': [{
+            'fuente': self.fuente.identificador,
+            'errores': [{
+                'etapa': 'robots_freshness',
+                'codigo': 'ROBOTS_FRESHNESS_TOO_SHORT',
+            }],
+        }]}
+        with patch('core.services.planificador_multifuente.settings.RSS_METADATOS_INTERVALOS_SEGUNDOS_POR_FUENTE',
+                   {self.fuente.identificador: 3600}), \
+                patch('core.services.planificador_multifuente.orquestador_multifuente.ejecutar_ingesta_multifuente',
+                      return_value=resultado) as ejecutar:
+            estado = planificador._procesar_unidad(
+                trabajo.pk, token, 1,
+                ProgramacionIngestaMultifuente.objects.get(pk=plan.pk),
+            )
+        ejecutar.assert_called_once()
+        trabajo.refresh_from_db()
+        self.assertEqual(estado['estado'], 'REVISION_MANUAL')
+        self.assertEqual(trabajo.codigo_error, 'robots_freshness:ROBOTS_FRESHNESS_TOO_SHORT')
+
     def test_cache_robots_no_reutiliza_respuesta_no_store(self):
         control = planificador.ControlHTTPConRobots(self.fuente, 60)
 
@@ -205,6 +338,44 @@ class AutomatizacionMultifuenteTests(TestCase):
             with self.assertRaisesRegex(ValueError, 'Cache-Control impide'):
                 control._parser(self.fuente.hosts_permitidos[0])
         self.assertFalse(planificador.CacheRobotsMultifuente.objects.exists())
+
+    def test_cache_legacy_no_se_reutiliza_y_la_nueva_vigencia_lleva_version(self):
+        host = self.fuente.hosts_permitidos[0]
+        CacheRobotsMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, host=host,
+            reglas='User-agent: *\nDisallow: /legacy\n',
+            consultado=timezone.now(), expira=timezone.now() + timedelta(hours=12),
+            version_frescura='',
+        )
+        control = planificador.ControlHTTPConRobots(self.fuente, 60)
+
+        def respuesta_actualizada(url, **kwargs):
+            kwargs['observador_respuesta']({'cache-control': 'max-age=43200'})
+            return b'User-agent: *\nAllow: /\n'
+
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar',
+                   side_effect=respuesta_actualizada) as descargar:
+            parser = control._parser(host)
+        descargar.assert_called_once()
+        self.assertTrue(parser.can_fetch('TrendWatch/1.0', f'https://{host}/legacy'))
+        cache = CacheRobotsMultifuente.objects.get(fuente_id=self.fuente.identificador, host=host)
+        self.assertEqual(cache.version_frescura, planificador.ROBOTS_CACHE_VERSION)
+
+    def test_cache_vigente_se_rechaza_si_ya_no_cubre_el_intervalo_http(self):
+        host = self.fuente.hosts_permitidos[0]
+        ahora = timezone.now()
+        CacheRobotsMultifuente.objects.create(
+            fuente_id=self.fuente.identificador, host=host,
+            reglas='User-agent: *\nAllow: /\n', consultado=ahora - timedelta(hours=2),
+            expira=ahora + timedelta(seconds=60),
+            version_frescura=planificador.ROBOTS_CACHE_VERSION,
+        )
+        control = planificador.ControlHTTPConRobots(self.fuente, 3600)
+        with patch('core.services.planificador_multifuente.descarga_segura.descargar') as descargar:
+            with self.assertRaises(planificador.ErrorFrescuraRobots) as contexto:
+                control._parser(host)
+        descargar.assert_not_called()
+        self.assertEqual(contexto.exception.codigo_diagnostico, 'ROBOTS_CACHED_FRESHNESS_INSUFFICIENT')
 
     def test_intervalo_mayor_que_ventana_robots_falla_cerrado_sin_get(self):
         control = planificador.ControlHTTPConRobots(self.fuente, 24 * 3600)

@@ -280,12 +280,13 @@ class TrabajoIngestaMultifuente(models.Model):
 
 
 class CacheRobotsMultifuente(models.Model):
-    """Reglas robots por host exacto, con expiración acotada y fail-closed."""
+    """Reglas robots por host exacto y versión de cálculo de frescura."""
     fuente_id = models.CharField(max_length=64)
     host = models.CharField(max_length=253)
     reglas = models.TextField()
     consultado = models.DateTimeField()
     expira = models.DateTimeField()
+    version_frescura = models.CharField(max_length=32, blank=True, default='')
 
     class Meta:
         db_table = 'core_cache_robots_multifuente'

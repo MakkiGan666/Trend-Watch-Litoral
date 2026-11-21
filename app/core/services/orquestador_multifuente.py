@@ -163,7 +163,30 @@ def _seleccionar(identificadores, *, permitir_catalogo_deshabilitado=False):
 
 
 def _error(resumen, etapa, codigo, *, indice=None, url=None, http_status=None, exc=None):
-    detalle = dict(etapa=etapa, codigo=codigo, indice=indice, url=url)
+    if exc is not None:
+        codigo = getattr(exc, 'codigo_diagnostico', None) or {
+            'TimeoutError': 'NETWORK_TIMEOUT',
+            'ConnectionError': 'NETWORK_CONNECTION_ERROR',
+            'gaierror': 'DNS_ERROR',
+            'SSLError': 'TLS_ERROR',
+            'DatabaseError': 'DATABASE_ERROR',
+            'IntegrityError': 'PERSISTENCE_INTEGRITY_ERROR',
+        }.get(type(exc).__name__, codigo)
+        etapa = getattr(exc, 'etapa_diagnostico', None) or etapa
+    if type(http_status) is int and 100 <= http_status <= 599:
+        codigo = f'HTTP_{http_status}'
+    if not isinstance(codigo, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', codigo):
+        codigo = 'ERROR_NO_CLASIFICADO'
+    detalle = dict(etapa=etapa, codigo=codigo, indice=indice)
+    # El diagnóstico identifica el host, nunca conserva path, query o fragmento.
+    if isinstance(url, str):
+        from urllib.parse import urlsplit
+        try:
+            host = urlsplit(url).hostname
+        except ValueError:
+            host = None
+        if host:
+            detalle['url'] = f'https://{host}'
     if type(http_status) is int:
         detalle['http_status'] = http_status
     if getattr(exc, 'url_reanudacion', None):
