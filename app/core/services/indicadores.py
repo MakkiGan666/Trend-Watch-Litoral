@@ -12,10 +12,11 @@ def publicaciones_con_estado(queryset):
         cantidad_analisis=Coalesce(Subquery(cantidad), 0),
         polaridad_registrada=Subquery(sentimientos.values('polaridad')[:1]),
         confianza_registrada=Subquery(sentimientos.values('confianza')[:1]),
+        analisis_pendiente_revision=Subquery(sentimientos.values('pendiente_revision')[:1]),
     )
 
 
-ANALISIS_VALIDO = Q(cantidad_analisis=1, polaridad_registrada__gte=-1,
+ANALISIS_VALIDO = Q(cantidad_analisis=1, analisis_pendiente_revision=False, polaridad_registrada__gte=-1,
                    polaridad_registrada__lte=1, confianza_registrada__gte=0,
                    confianza_registrada__lte=1,
                    contenido_completo=True, contenido__regex=r'\S')

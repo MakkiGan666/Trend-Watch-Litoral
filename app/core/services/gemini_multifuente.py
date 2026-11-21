@@ -19,6 +19,7 @@ from core.models import (AliasURLPublicacion, Locacion, ProcesamientoIAMultifuen
 from core.services.fuentes_rss import FUENTES_RSS
 from core.services.parametros import entero_positivo, segundos_validos
 from core.services.persistencia_multifuente import persistir_lote
+from core.services.procedencia_analitica import procedencia_sentimiento_gemini
 from core.services.autorizacion_gemini import fuente_autorizada, publicacion_multifuente_autorizada
 
 
@@ -121,7 +122,7 @@ def _cancelar_preenvio(pk, token):
     ).update(estado='PENDIENTE', token_intento=None, iniciado=None)
 
 
-def _guardar_resultado(pub, token, data):
+def _guardar_resultado(pub, token, data, *, modelo):
     with transaction.atomic():
         actual = Publicacion.objects.select_for_update().get(pk=pub.pk)
         trabajo = ProcesamientoIAMultifuente.objects.select_for_update().get(publicacion=actual)
@@ -132,7 +133,10 @@ def _guardar_resultado(pub, token, data):
                 or Locacion.objects.filter(id_publicacion_api=actual).exists()):
             _error(pub.pk, token, 'texto_o_resultados_modificados')
             return False
-        Sentimiento.objects.create(id_publicacion_api=actual, polaridad=data['polaridad'], confianza=data['confianza'])
+        Sentimiento.objects.create(
+            id_publicacion_api=actual, polaridad=data['polaridad'], confianza=data['confianza'],
+            **procedencia_sentimiento_gemini(modelo),
+        )
         for loc in data['localidades']:
             Locacion.objects.create(id_publicacion_api=actual, location=loc['nombre'],
                                     latitud=loc['latitud'], longitud=loc['longitud'])
@@ -205,7 +209,7 @@ def _procesar(candidatos, *, dry_run, batch_size, timeout_segundos, pausa_segund
                 _error(pk, token, 'validacion_respuesta')
                 resultado['errores'].append(dict(publicacion_id=pk, codigo='validacion_respuesta'))
                 continue
-            if _guardar_resultado(pub, token, data):
+            if _guardar_resultado(pub, token, data, modelo=servicio.model_name):
                 resultado['procesadas'] += 1
             else:
                 resultado['omitidas'] += 1

@@ -269,8 +269,13 @@ class GeminiMultifuenteTests(TransactionTestCase):
                                   recibo['noticias'][0]['hash_origen'])
         self.assertTrue(ia._marcar_envio(pub.pk, token))
         self.assertEqual(ia._error(pub.pk, uuid4(), 'error_ajeno'), 0)
-        self.assertFalse(ia._guardar_resultado(pub, uuid4(), self.data))
-        self.assertTrue(ia._guardar_resultado(pub, token, self.data))
+        self.assertFalse(ia._guardar_resultado(pub, uuid4(), self.data, modelo='gemini-prueba'))
+        self.assertTrue(ia._guardar_resultado(pub, token, self.data, modelo='gemini-prueba'))
+        sentimiento = Sentimiento.objects.get(id_publicacion_api=pub)
+        self.assertEqual(sentimiento.metodo_analisis, 'gemini')
+        self.assertEqual(sentimiento.version_analizador, 'gemini-prueba/sentimiento-v1')
+        self.assertEqual(sentimiento.tipo_evidencia, 'cuerpo_completo')
+        self.assertIsNotNone(sentimiento.fecha_procesamiento)
 
     def test_reserva_sin_envio_es_recuperable_y_token_anterior_no_envia(self):
         recibo = self.guardar()
@@ -488,7 +493,7 @@ class ConcurrenciaGeminiMultifuenteTests(TransactionTestCase):
                     continuar.set()
                 self.assertIsNone(futuro.result(timeout=10))
         self.assertEqual(ProcesamientoIAMultifuente.objects.get().token_intento, token)
-        self.assertTrue(ia._guardar_resultado(propietario, token, self.data))
+        self.assertTrue(ia._guardar_resultado(propietario, token, self.data, modelo='gemini-prueba'))
         self.assertEqual(ProcesamientoIAMultifuente.objects.get().estado, 'COMPLETADO')
 
 

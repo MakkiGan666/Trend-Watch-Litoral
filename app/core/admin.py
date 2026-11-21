@@ -14,6 +14,7 @@ from .services.scraper import generar_hash
 from .services.integridad_sentimiento import (
     ConflictoSentimiento, sentimiento_unico, validar_numero,
 )
+from .services.procedencia_analitica import Metodo, procedencia
 from .models import (
     Publicacion,
     Sentimiento,
@@ -293,6 +294,9 @@ class PublicacionAdmin(admin.ModelAdmin):
     readonly_fields = ('hash_origen', 'procesado_ia')
 
 
+CAMPOS_PROCEDENCIA = ('metodo_analisis', 'version_analizador', 'fecha_procesamiento', 'tipo_evidencia')
+
+
 class PublicacionRelacionAdmin(admin.ModelAdmin):
     """Omitir derivados también cuando el changelist une la publicación."""
     def get_queryset(self, request):
@@ -344,8 +348,9 @@ class SentimientoAdminForm(forms.ModelForm):
 @admin.register(Sentimiento)
 class SentimientoAdmin(PublicacionRelacionAdmin):
     form = SentimientoAdminForm
-    list_display = ('id_publicacion_api', 'polaridad', 'confianza')
-    list_filter = ('polaridad',)
+    list_display = ('id_publicacion_api', 'polaridad', 'confianza', 'metodo_analisis', 'pendiente_revision')
+    list_filter = ('polaridad', 'metodo_analisis', 'pendiente_revision')
+    readonly_fields = (*CAMPOS_PROCEDENCIA, 'pendiente_revision')
 
     def has_delete_permission(self, request, obj=None):
         return False
@@ -361,7 +366,7 @@ class SentimientoAdmin(PublicacionRelacionAdmin):
         return super().changelist_view(request, extra_context)
 
     def get_readonly_fields(self, request, obj=None):
-        return ('id_publicacion_api',) if obj is not None else ()
+        return self.readonly_fields + (('id_publicacion_api',) if obj is not None else ())
 
     def save_model(self, request, obj, form, change):
         with transaction.atomic():
@@ -372,6 +377,11 @@ class SentimientoAdmin(PublicacionRelacionAdmin):
                 raise ConflictoSentimiento('El sentimiento cambió durante la edición; requiere revisión.')
             obj.confianza = validar_numero(obj.confianza, 'confianza', 0, 1)
             obj.polaridad = validar_numero(obj.polaridad, 'polaridad', -1, 1)
+            if (existente is None or existente.pendiente_revision
+                    or (existente.polaridad, existente.confianza) != (obj.polaridad, obj.confianza)):
+                for campo, valor in procedencia(Metodo.MANUAL, 'admin-v1', evidencia='').items():
+                    setattr(obj, campo, valor)
+                obj.pendiente_revision = False
             super().save_model(request, obj, form, change)
 
 
@@ -427,6 +437,13 @@ class TemaTrendAdmin(admin.ModelAdmin):
 @admin.register(PublicacionTema)
 class PublicacionTemaAdmin(PublicacionRelacionAdmin):
     list_display = ('id_publicacion_api',)
+    readonly_fields = CAMPOS_PROCEDENCIA
+
+    def save_model(self, request, obj, form, change):
+        if not change or {'id_publicacion_api', 'id_temas'}.intersection(form.changed_data):
+            for campo, valor in procedencia(Metodo.MANUAL, 'admin-v1', evidencia='').items():
+                setattr(obj, campo, valor)
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(UserAuditoria)

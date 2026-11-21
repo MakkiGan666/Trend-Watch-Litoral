@@ -983,7 +983,47 @@ class Tema(models.Model):
         return f"Tema {self.id_temas}"
 
 
-class PublicacionTema(models.Model):
+class ResultadoAnaliticoPublicacion(models.Model):
+    class Metodo(models.TextChoices):
+        LOCAL = 'local', 'Análisis local'
+        GEMINI = 'gemini', 'Gemini'
+        REGLAS = 'reglas', 'Reglas de clasificación'
+        ETIQUETAS = 'etiquetas', 'Extracción de etiquetas'
+        MANUAL = 'manual', 'Valoración manual'
+
+    class Evidencia(models.TextChoices):
+        TITULO = 'titulo', 'Titular provisional'
+        CUERPO = 'cuerpo_completo', 'Artículo con cuerpo completo'
+        SECCION = 'seccion', 'Sección editorial'
+
+    metodo_analisis = models.CharField(max_length=20, choices=Metodo.choices, blank=True)
+    version_analizador = models.CharField(max_length=160, blank=True)
+    fecha_procesamiento = models.DateTimeField(null=True, blank=True)
+    tipo_evidencia = models.CharField(max_length=20, choices=Evidencia.choices, blank=True)
+
+    class Meta:
+        abstract = True
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(metodo_analisis='', version_analizador='', fecha_procesamiento__isnull=True,
+                             tipo_evidencia='')
+                    | (
+                        ~models.Q(version_analizador='') & models.Q(fecha_procesamiento__isnull=False)
+                        & (
+                            models.Q(metodo_analisis__in=('local', 'gemini', 'etiquetas'),
+                                     tipo_evidencia='cuerpo_completo')
+                            | models.Q(metodo_analisis='reglas', tipo_evidencia__in=('cuerpo_completo', 'seccion'))
+                            | models.Q(metodo_analisis='manual', tipo_evidencia='')
+                        )
+                    )
+                ),
+                name='%(class)s_procedencia_completa',
+            ),
+        ]
+
+
+class PublicacionTema(ResultadoAnaliticoPublicacion):
     # Las tablas históricas usan AutoField; declararlo evita cambios de tipo espurios.
     id = models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     id_publicacion_api = models.ForeignKey(
@@ -993,7 +1033,7 @@ class PublicacionTema(models.Model):
         Tema, on_delete=models.CASCADE, db_column='id_temas'
     )
 
-    class Meta:
+    class Meta(ResultadoAnaliticoPublicacion.Meta):
         db_table = 'Publicacion_Temas'
         unique_together = (('id_publicacion_api', 'id_temas'),)
 
@@ -1006,14 +1046,14 @@ class Etiqueta(models.Model):
         return self.nombre
 
 
-class PublicacionEtiqueta(models.Model):
+class PublicacionEtiqueta(ResultadoAnaliticoPublicacion):
     publicacion = models.ForeignKey(Publicacion, on_delete=models.CASCADE, related_name='etiquetas')
     etiqueta = models.ForeignKey(Etiqueta, on_delete=models.CASCADE, related_name='publicaciones')
     posicion = models.PositiveSmallIntegerField()
 
-    class Meta:
+    class Meta(ResultadoAnaliticoPublicacion.Meta):
         ordering = ['posicion', 'pk']
-        constraints = [
+        constraints = ResultadoAnaliticoPublicacion.Meta.constraints + [
             models.UniqueConstraint(fields=['publicacion', 'etiqueta'], name='etiqueta_unica_por_publicacion'),
             models.UniqueConstraint(fields=['publicacion', 'posicion'], name='posicion_unica_por_publicacion'),
         ]
@@ -1046,10 +1086,11 @@ class Locacion(models.Model):
         db_table = 'Locacion'
 
 
-class Sentimiento(models.Model):
+class Sentimiento(ResultadoAnaliticoPublicacion):
     id_sentimiento = models.AutoField(primary_key=True)
     polaridad = models.FloatField()
     confianza = models.FloatField()
+    pendiente_revision = models.BooleanField(default=False, editable=False)
     id_publicacion_api = models.ForeignKey(
         Publicacion, on_delete=models.CASCADE, db_column='id_publicacion_api'
     )
@@ -1065,7 +1106,7 @@ class Sentimiento(models.Model):
                 raise ValidationError('No se puede crear un sentimiento sin cuerpo completo.')
             return super().save(*args, **kwargs)
 
-    class Meta:
+    class Meta(ResultadoAnaliticoPublicacion.Meta):
         db_table = 'Sentimiento'
 
 

@@ -236,7 +236,10 @@ def _guardar(fuente, datos, aliases, seccion, registro):
                 publicacion.save(force_insert=True)  # Señales existentes generan etiquetas.
                 _vincular_aliases(fuente, aliases, publicacion.pk)
                 if clasificacion.get('confirmada') is True:
-                    vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
+                    vincular_categoria_por_nombre(
+                        publicacion, clasificacion['categoria'],
+                        procedencia_analisis=clasificacion['procedencia'],
+                    )
                 # Cola durable sólo para altas nuevas; comparte commit/rollback con H3.1.
                 ProcesamientoIAMultifuente.objects.create(publicacion=publicacion)
                 if getattr(settings, 'DETECCION_EDITORIAL_SOMBRA_MULTIFUENTE_HABILITADA', False):

@@ -765,6 +765,10 @@ class GeminiIntegridadTestCase(TestCase):
         self.assertTrue(self.pub.procesado_ia)
         sentimiento = Sentimiento.objects.get()
         self.assertEqual((sentimiento.polaridad, sentimiento.confianza), (0.5, 0.8))
+        self.assertEqual(sentimiento.metodo_analisis, 'gemini')
+        self.assertEqual(sentimiento.version_analizador, f'{self.cliente.model_name}/sentimiento-v1')
+        self.assertEqual(sentimiento.tipo_evidencia, 'cuerpo_completo')
+        self.assertIsNotNone(sentimiento.fecha_procesamiento)
         locacion = Locacion.objects.get()
         self.assertEqual((locacion.location, locacion.latitud, locacion.longitud),
                          ('Posadas', -27.3, -55.9))
@@ -831,16 +835,25 @@ class GeminiIntegridadTestCase(TestCase):
                 resultado = validar_respuesta_gemini(json.dumps(dict(self.data, localidades=[loc])))
                 self.assertEqual(resultado['localidades'], [loc])
 
-    def test_edicion_durante_gemini_no_se_sobrescribe(self):
+    def test_edicion_durante_gemini_descarta_analisis_del_texto_anterior(self):
         def generar(**kwargs):
             Publicacion.objects.filter(pk=self.pub.pk).update(contenido='Texto editado')
             return self.generar.return_value
         self.generar.side_effect = generar
-        self.assertEqual(self.procesar()['procesadas'], 1)
+        resultado = self.procesar()
+        self.assertEqual((resultado['procesadas'], resultado['omitidas']), (0, 1))
         self.pub.refresh_from_db()
         self.assertEqual(self.pub.contenido, 'Texto editado')
-        self.assertTrue(self.pub.procesado_ia)
-        self.assertEqual(Sentimiento.objects.get().polaridad, 0.5)
+        self.assert_sin_resultados()
+
+    def test_gemini_no_envia_sentimientos_pendientes_de_revision(self):
+        sentimiento = Sentimiento.objects.create(
+            id_publicacion_api=self.pub, polaridad=0.5, confianza=0.8, pendiente_revision=True,
+        )
+        self.assertEqual(self.procesar()['estado'], 'SIN_PENDIENTES')
+        self.generar.assert_not_called()
+        sentimiento.refresh_from_db()
+        self.assertEqual((sentimiento.confianza, sentimiento.metodo_analisis), (0.8, ''))
 
     def test_fallo_espera_no_se_informa_como_error_de_analisis(self):
         self.espera.side_effect = RuntimeError('fallo de espera')
@@ -3886,3 +3899,118 @@ class TransporteMultifuenteTestCase(SimpleTestCase):
         ) as conexion:
             conexion.return_value.getresponse.return_value = self.respuesta()
             self.assertEqual(self.red.descargar(fuente.feed, fuente=fuente), b'RSS')
+
+
+class ProcedenciaAnaliticaPublicacionTestCase(TestCase):
+    def setUp(self):
+        self.articulo = Publicacion.objects.create(
+            hash_origen='trazabilidad-articulo', titulo='Hospital Pediátrico',
+            contenido='El Hospital Pediátrico amplió el servicio de salud.',
+            procesado_ia=True,
+        )
+
+    def test_confianza_restringida_en_altas_masivas_y_actualizaciones(self):
+        from django.db import transaction
+
+        for valor in (-0.1, 1.1, 40, float('inf'), float('nan')):
+            with self.subTest(valor=valor), self.assertRaises(IntegrityError), transaction.atomic():
+                Sentimiento.objects.bulk_create([
+                    Sentimiento(id_publicacion_api=self.articulo, polaridad=0, confianza=valor),
+                ])
+        for valor in (0, 1):
+            sentimiento = Sentimiento.objects.create(
+                id_publicacion_api=self.articulo, polaridad=0, confianza=valor,
+            )
+            with self.assertRaises(IntegrityError), transaction.atomic():
+                Sentimiento.objects.filter(pk=sentimiento.pk).update(confianza=40)
+            sentimiento.refresh_from_db()
+            self.assertEqual(sentimiento.confianza, valor)
+            self.assertEqual(sentimiento.metodo_analisis, '')
+            self.assertIsNone(sentimiento.fecha_procesamiento)
+
+    def test_procedencia_local_y_revision_conservada(self):
+        from django.db import transaction
+        from core.services.integridad_sentimiento import ConflictoSentimiento, guardar_sentimiento_local
+        from core.services.indicadores import resumen_publicaciones
+
+        with transaction.atomic():
+            articulo = Publicacion.objects.select_for_update().get(pk=self.articulo.pk)
+            sentimiento = guardar_sentimiento_local(articulo, 0.5, 0.8)
+            self.assertEqual(sentimiento.metodo_analisis, 'local')
+            self.assertEqual(sentimiento.version_analizador, 'lexicon-probabilistico-v1')
+            self.assertEqual(sentimiento.tipo_evidencia, 'cuerpo_completo')
+            self.assertIsNotNone(sentimiento.fecha_procesamiento)
+            antes = sentimiento.fecha_procesamiento
+            Sentimiento.objects.filter(pk=sentimiento.pk).update(pendiente_revision=True)
+            with self.assertRaises(ConflictoSentimiento):
+                guardar_sentimiento_local(articulo, 0, 1)
+        sentimiento.refresh_from_db()
+        self.assertEqual((sentimiento.confianza, sentimiento.fecha_procesamiento), (0.8, antes))
+        resumen = resumen_publicaciones(Publicacion.objects.all())
+        self.assertEqual((resumen['analizadas'], resumen['inconsistentes']), (0, 1))
+
+    def test_clasificacion_y_etiquetas_repetidas_conservan_procedencia(self):
+        from core.models import PublicacionTema
+        from core.services.clasificacion import clasificar_lote, vincular_categoria_por_nombre
+        from core.services.etiquetas import sincronizar_etiquetas
+
+        def clasificar():
+            resultado, = clasificar_lote([{
+                'titulo': self.articulo.titulo, 'contenido': self.articulo.contenido,
+            }], usar_ia=False)
+            self.assertTrue(resultado['confirmada'])
+            vincular_categoria_por_nombre(
+                self.articulo, resultado['categoria'], procedencia_analisis=resultado['procedencia'],
+            )
+            return PublicacionTema.objects.get(id_publicacion_api=self.articulo)
+
+        tema = clasificar()
+        self.assertEqual(tema.metodo_analisis, 'reglas')
+        self.assertEqual(tema.version_analizador, 'clasificacion-reglas-v1')
+        self.assertEqual(tema.tipo_evidencia, 'cuerpo_completo')
+        self.assertIsNotNone(tema.fecha_procesamiento)
+        repetido = clasificar()
+        self.assertEqual((repetido.pk, repetido.fecha_procesamiento), (tema.pk, tema.fecha_procesamiento))
+
+        etiquetas = list(self.articulo.etiquetas.values())
+        self.assertTrue(etiquetas)
+        for etiqueta in etiquetas:
+            self.assertEqual(etiqueta['metodo_analisis'], 'etiquetas')
+            self.assertEqual(etiqueta['version_analizador'], 'extraccion-etiquetas-v1')
+            self.assertEqual(etiqueta['tipo_evidencia'], 'cuerpo_completo')
+            self.assertIsNotNone(etiqueta['fecha_procesamiento'])
+        sincronizar_etiquetas(self.articulo)
+        self.assertEqual(list(self.articulo.etiquetas.values()), etiquetas)
+
+    def test_clasificacion_por_seccion_identifica_la_evidencia_editorial(self):
+        from core.services.clasificacion import clasificar_lote
+
+        resultado, = clasificar_lote([{
+            'titulo': self.articulo.titulo,
+            'contenido': self.articulo.contenido,
+            'seccion': 'deportes',
+        }], usar_ia=False)
+        self.assertEqual(resultado['categoria'], 'Deportes')
+        self.assertEqual(resultado['procedencia']['tipo_evidencia'], 'seccion')
+
+    def test_titular_provisional_rechazado_en_resultados_confirmados(self):
+        from django.db import transaction
+        from core.models import Categoria, PublicacionEtiqueta, PublicacionTema, Tema
+        from core.services.procedencia_analitica import Evidencia, Metodo, procedencia
+
+        tema = Tema.objects.create(id_categoria=Categoria.objects.create(nombre_categoria='Salud'))
+        etiqueta = self.articulo.etiquetas.first()
+        operaciones = [
+            lambda: Sentimiento.objects.create(
+                id_publicacion_api=self.articulo, polaridad=0, confianza=0.5,
+                **procedencia(Metodo.LOCAL, 'prueba-v1', Evidencia.TITULO),
+            ),
+            lambda: PublicacionTema.objects.create(
+                id_publicacion_api=self.articulo, id_temas=tema,
+                **procedencia(Metodo.REGLAS, 'prueba-v1', Evidencia.TITULO),
+            ),
+            lambda: PublicacionEtiqueta.objects.filter(pk=etiqueta.pk).update(tipo_evidencia=Evidencia.TITULO),
+        ]
+        for operacion in operaciones:
+            with self.assertRaises(IntegrityError), transaction.atomic():
+                operacion()

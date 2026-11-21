@@ -222,8 +222,8 @@ class PersistenciaMultifuenteTests(TestCase):
 
     def test_fallo_de_categoria_revierte_todas_las_relaciones_y_permite_reintento(self):
         original = servicio.vincular_categoria_por_nombre
-        def vincular(publicacion, nombre):
-            original(publicacion, nombre)
+        def vincular(publicacion, nombre, **opciones):
+            original(publicacion, nombre, **opciones)
             raise RuntimeError('Fallo simulado después de vincular categoría')
         with patch.object(servicio, 'vincular_categoria_por_nombre', side_effect=vincular):
             resultado = servicio.persistir_lote([self.noticia])
