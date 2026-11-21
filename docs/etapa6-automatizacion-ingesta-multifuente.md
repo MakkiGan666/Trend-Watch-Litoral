@@ -88,11 +88,17 @@ recibir una parada durable mediante `--detener`; esta se atiende al terminar el
 ciclo acotado actual. El sondeo debe estar entre 5 y 60 segundos. El estado
 operativo se consulta con `--estado`, que no consulta medios.
 
-La habilitación del catálogo actual requiere además un cambio de configuración
-controlado de esa fuente; esta implementación no modifica el catálogo y ninguna
-fuente queda activada por defecto. La frecuencia y aprobación deben definirse
-individualmente tras revisar las condiciones vigentes del medio. No existe una
-frecuencia universal recomendada por este cambio.
+Las fuentes deshabilitadas en el catálogo solo pueden habilitarse si la
+programación está configurada explícitamente en modo metadata-only. Esta
+excepción autoriza exclusivamente la consulta RSS y la persistencia de título,
+fecha disponible, fuente y URL: no habilita descargas HTML ni la extracción de
+artículos. El modo completo sigue requiriendo que `FuenteRSS.habilitada` sea
+verdadero. Para cualquier modo, la programación y las confirmaciones operativas
+son necesarias; metadata-only además revalida antes de habilitar, ejecutar y
+reanudar los gates H5.4/H5.6 de fuentes habilitadas, revisadas, aprobación del
+equipo, límite e intervalo. Esa aprobación interna no acredita permiso del
+titular ni sustituye las condiciones de acceso y reutilización del medio.
+Ninguna fuente se activa por defecto.
 
 `--frecuencia-segundos` define el próximo ciclo RSS y `--intervalo-http-segundos`
 define el piso entre cada solicitud. La opción anterior `--intervalo-segundos`
@@ -173,9 +179,19 @@ python manage.py automatizar_ingesta_multifuente --configurar --fuente e24n --fr
 
 El intervalo de 3600 segundos es únicamente un piso preparatorio: H5.6 y
 robots.txt pueden exigir uno superior. La configuración no se siembra mediante
-migración y no modifica el catálogo; todas las fuentes continúan deshabilitadas
-por defecto. La habilitación requiere después la revisión de acceso, aprobación
-operativa explícita y que la fuente esté permitida en el catálogo. El cambio
-requiere la migración aditiva `0034_rss_metadata_only_worker`, que agrega el
-modo a la programación y congela ese modo por trabajo junto con una referencia
-al registro de ingesta.
+migración y no cambia el catálogo; todas las fuentes siguen deshabilitadas por
+defecto. Para fuentes catalogadas como deshabilitadas, el comando
+`--habilitar` solo acepta una programación con `--modo metadatos`; se requieren
+las confirmaciones explícitas de revisión y aprobación, además de los gates RSS
+H5.4/H5.6 configurados. La programación conserva su modo y cada trabajo lo
+congela, de modo que una reanudación no pueda cambiar a extracción completa.
+La migración aditiva `0034_rss_metadata_only_worker` aporta el modo por
+programación/trabajo y la referencia al registro de ingesta.
+
+Ejemplo de flujo (solo con configuración y autorización operativa previamente
+revisadas; no ejecutarlo como parte de pruebas):
+
+```sh
+python manage.py automatizar_ingesta_multifuente --configurar --fuente ID --frecuencia-segundos 21600 --intervalo-http-segundos 3600 --modo metadatos
+python manage.py automatizar_ingesta_multifuente --habilitar --fuente ID --confirmar-revision-acceso --confirmar-aprobacion-operativa
+```

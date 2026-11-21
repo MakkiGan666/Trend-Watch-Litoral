@@ -9,7 +9,8 @@ from django.core.exceptions import ValidationError
 from django.db import DatabaseError, connection
 
 from core.models import (AliasURLPublicacion, Categoria, Etiqueta, Locacion, ProcesamientoIAMultifuente,
-                         Publicacion, PublicacionEtiqueta, PublicacionTema, RegistroDatos, Sentimiento, Tema)
+                         ProgramacionIngestaMultifuente, Publicacion, PublicacionEtiqueta,
+                         PublicacionTema, RegistroDatos, Sentimiento, Tema)
 from core.services import descarga_segura, fuentes_rss, gemini_multifuente, lector_rss
 from core.services.extractor_articulos import analizar_articulo
 from core.services.parametros import entero_positivo
@@ -19,6 +20,7 @@ from core.services.persistencia_rss_metadatos import (
     FuenteBloqueada,
     FuenteRSSEnEspera,
     _finalizar_solicitud,
+    _politica_fuente,
     _reservar_solicitud,
 )
 from core.services.descarga_segura import RespuestaHTTPError
@@ -139,9 +141,11 @@ def _resumen(identificador):
                 feed_valido=False, persistencia_incierta=0)
 
 
-def _seleccionar(identificadores):
+def _seleccionar(identificadores, *, permitir_catalogo_deshabilitado=False):
     if not isinstance(identificadores, (list, tuple)) or not identificadores:
         raise ValueError('Seleccioná al menos una fuente explícitamente.')
+    if type(permitir_catalogo_deshabilitado) is not bool:
+        raise ValueError('La autorización metadata-only debe ser booleana.')
     catalogo = {f.identificador: f for f in fuentes_rss.obtener_fuentes(solo_habilitadas=False)}
     seleccionadas = []
     vistos = set()
@@ -149,7 +153,7 @@ def _seleccionar(identificadores):
         if not isinstance(identificador, str) or identificador not in catalogo:
             raise ValueError('Fuente desconocida.')
         fuente = catalogo[identificador]
-        if not fuente.habilitada:
+        if not fuente.habilitada and not permitir_catalogo_deshabilitado:
             raise ValueError(f'Fuente deshabilitada: {identificador}. Requiere revisión del catálogo fuera del comando.')
         if identificador not in vistos:
             descarga_segura.validar_url(fuente.feed, fuente=fuente)
@@ -187,7 +191,7 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
                                 dry_run=False, procesar_ia=False, limite_ia=5, cliente_ia=None,
                                 snapshots=None, solo_snapshot=False, guardar_snapshot=None,
                                 control_solicitud=None, omitir_conocidas=False,
-                                feed_urls=None, articulo_urls=None):
+                                feed_urls=None, articulo_urls=None, solo_metadatos=False):
     """Descargadas cuenta respuestas RSS+HTML; válidas son entradas reconocidas o aceptadas por H3.1.
 
     El límite cuenta entradas RSS admitidas, incluidas repeticiones, y consultas
@@ -204,8 +208,22 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
         raise ValueError('Máximos: 30 noticias/fuente, 100 noticias/ejecución, 20 llamadas IA.')
     if type(dry_run) is not bool or type(procesar_ia) is not bool:
         raise ValueError('dry_run y procesar_ia deben ser booleanos.')
-    if type(solo_snapshot) is not bool or (guardar_snapshot is not None and not callable(guardar_snapshot)):
+    if (type(solo_snapshot) is not bool or type(solo_metadatos) is not bool
+            or (guardar_snapshot is not None and not callable(guardar_snapshot))):
         raise ValueError('Configuración de snapshot inválida.')
+    if solo_metadatos and (
+        not solo_snapshot or guardar_snapshot is None or control_solicitud is None
+        or dry_run or procesar_ia or snapshots is not None or articulo_urls is not None
+    ):
+        raise ValueError(
+            'Metadata-only requiere capturar un snapshot RSS con control de solicitudes; '
+            'no admite extracción de artículos, IA ni snapshots inyectados.'
+        )
+    if solo_metadatos:
+        from core.services.planificador_multifuente import ControlHTTPConRobots
+
+        if not isinstance(control_solicitud, ControlHTTPConRobots):
+            raise ValueError('Metadata-only requiere el control H5.6 y robots del planificador.')
     if type(omitir_conocidas) is not bool:
         raise ValueError('omitir_conocidas debe ser booleano.')
     if snapshots is not None and not isinstance(snapshots, dict):
@@ -215,7 +233,23 @@ def ejecutar_ingesta_multifuente(identificadores, *, limite_por_fuente=3, limite
             not isinstance(k, str) or not isinstance(v, str) for k, v in mapa.items()
         )):
             raise ValueError('Las URLs de reanudación deben ser un mapa de texto por fuente.')
-    seleccionadas = _seleccionar(identificadores)
+    seleccionadas = _seleccionar(
+        identificadores, permitir_catalogo_deshabilitado=solo_metadatos,
+    )
+    if solo_metadatos:
+        for fuente in seleccionadas:
+            plan = ProgramacionIngestaMultifuente.objects.filter(
+                fuente_id=fuente.identificador,
+            ).first()
+            if not (plan and plan.habilitada and plan.acceso_revisado
+                    and plan.aprobacion_operativa and plan.solo_metadatos):
+                raise ValueError(
+                    f'La fuente {fuente.identificador} no tiene una programación metadata-only aprobada.'
+                )
+            try:
+                _politica_fuente(fuente)
+            except (ImproperlyConfigured, ValueError) as exc:
+                raise ValueError(f'Política RSS metadata-only incompleta: {exc}') from exc
     if not dry_run and (connection.in_atomic_block or not connection.get_autocommit()):
         raise ValueError('Ejecutá el orquestador sin transacción externa.')
     verificar_esquema_multifuente()
