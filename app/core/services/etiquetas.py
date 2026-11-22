@@ -120,8 +120,7 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
     El bloqueo serializa sincronizaciones de una misma publicación en PostgreSQL.
     SQLite no ofrece bloqueo de fila; no reintentamos errores de base de datos.
     """
-    from core.models import Etiqueta, Publicacion, PublicacionEtiqueta
-    from core.services.procedencia_analitica import Metodo, procedencia
+    from core.models import Publicacion, PublicacionEtiqueta
 
     using = using or publicacion._state.db or 'default'
     with transaction.atomic(using=using):
@@ -141,22 +140,31 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
         if existentes == esperadas:
             return len(propuestas)
 
-        # Orden global para no adquirir uniques de slugs en órdenes opuestos
-        # cuando dos publicaciones comparten varias etiquetas nuevas.
-        etiquetas = {}
-        for slug, nombre in sorted(propuestas):
-            etiquetas[slug], _ = Etiqueta.objects.using(using).get_or_create(
-                slug=slug, defaults={'nombre': nombre},
-            )
-        # Reemplazo atómico sólo cuando cambia la secuencia. Evita colisiones
-        # temporales de la restricción única de posición al intercambiar etiquetas.
+        # Reemplazar en bloque evita colisiones al reordenar posiciones.
         vinculadas.delete()
-        datos_analisis = procedencia(Metodo.ETIQUETAS, 'extraccion-etiquetas-v1')
-        relaciones = [
-            PublicacionEtiqueta(
-                publicacion_id=actual.pk, etiqueta=etiquetas[slug], posicion=posicion, **datos_analisis,
-            )
-            for posicion, (slug, _) in enumerate(propuestas, start=1)
-        ]
-        PublicacionEtiqueta.objects.using(using).bulk_create(relaciones)
+        return guardar_etiquetas_propuestas(actual, propuestas)
+
+
+def guardar_etiquetas_propuestas(publicacion, propuestas):
+    """Persiste propuestas ordenadas con la fila bloqueada y sin vínculos vigentes."""
+    from core.models import Etiqueta, PublicacionEtiqueta
+    from core.services.procedencia_analitica import Metodo, procedencia
+
+    if not propuestas:
+        return 0
+    using = publicacion._state.db
+    # Orden global de slugs para evitar ciclos de bloqueo entre publicaciones.
+    etiquetas = {}
+    for slug, nombre in sorted(propuestas):
+        etiquetas[slug], _ = Etiqueta.objects.using(using).get_or_create(
+            slug=slug, defaults={'nombre': nombre},
+        )
+    datos_analisis = procedencia(Metodo.ETIQUETAS, 'extraccion-etiquetas-v1')
+    relaciones = [
+        PublicacionEtiqueta(
+            publicacion_id=publicacion.pk, etiqueta=etiquetas[slug], posicion=posicion, **datos_analisis,
+        )
+        for posicion, (slug, _) in enumerate(propuestas, start=1)
+    ]
+    PublicacionEtiqueta.objects.using(using).bulk_create(relaciones)
     return len(relaciones)

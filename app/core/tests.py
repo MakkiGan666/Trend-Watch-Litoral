@@ -4014,3 +4014,208 @@ class ProcedenciaAnaliticaPublicacionTestCase(TestCase):
         for operacion in operaciones:
             with self.assertRaises(IntegrityError), transaction.atomic():
                 operacion()
+
+
+class ReglasTematicasLocalesTestCase(SimpleTestCase):
+    def test_confirma_con_evidencia_independiente_en_titulo_y_cuerpo(self):
+        from core.services.clasificacion import categoria_local_confirmada
+
+        casos = [
+            ('Hospital incorpora médicos', 'Pacientes reciben atención sanitaria.', 'Salud'),
+            ('Docentes de la universidad', 'Las clases vuelven a las escuelas.', 'Educación'),
+            ('Cosecha de yerba', 'Productores acordaron un precio de exportación.', 'Economía'),
+        ]
+        for titulo, cuerpo, categoria in casos:
+            with self.subTest(titulo=titulo):
+                self.assertEqual(categoria_local_confirmada(titulo, cuerpo), categoria)
+
+    def test_se_abstiene_sin_corroboracion_o_ante_una_competencia_cercana(self):
+        from core.services.clasificacion import categoria_local_confirmada
+
+        casos = [
+            ('Agenda', 'Un informe sin referencias concretas.'),
+            ('Hospital', 'El anuncio se hizo esta mañana.'),
+            ('Hospital', 'hospital ' * 80),
+            ('Saludó al público', 'saludó ' * 80),
+            ('Médicos y docentes', 'Pacientes y estudiantes participaron.'),
+            ('Anuncio oficial', 'Médicos y hospitales preparan una campaña sanitaria.'),
+        ]
+        for titulo, cuerpo in casos:
+            with self.subTest(titulo=titulo):
+                self.assertIsNone(categoria_local_confirmada(titulo, cuerpo))
+
+
+class EnriquecimientoLocalLoteTestCase(TestCase):
+    def crear(self, clave, titulo='Hospital Pediátrico', contenido='Médicos atendieron pacientes.',
+              *, completo=True):
+        from django.db.models.signals import post_save
+
+        # Simula artículos anteriores a la extracción por señales.
+        with patch.object(post_save, 'send'):
+            return Publicacion.objects.create(
+                hash_origen=clave, titulo=titulo, contenido=contenido,
+                contenido_completo=completo, departamento='capital', procesado_ia=True,
+            )
+
+    def ejecutar(self, *argumentos):
+        salida = StringIO()
+        call_command('enriquecer_publicaciones_local', *argumentos, stdout=salida)
+        return json.loads(salida.getvalue())
+
+    def test_simulacion_por_defecto_solo_lee_y_excluye_fichas(self):
+        from core.models import Categoria, Etiqueta
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+
+        articulo = self.crear('simulado')
+        self.crear('rss', contenido='', completo=False)
+        with CaptureQueriesContext(connection) as consultas:
+            resultado = self.ejecutar()
+        self.assertTrue(resultado['dry_run'])
+        self.assertEqual(resultado['cursor'], articulo.pk)
+        self.assertEqual(len(resultado['resultados']), 1)
+        self.assertEqual(resultado['resultados'][0]['categoria'], 'Salud')
+        self.assertTrue(resultado['resultados'][0]['etiquetas'])
+        self.assertTrue(all(q['sql'].lstrip().upper().startswith('SELECT') for q in consultas))
+        self.assertFalse(Categoria.objects.exists())
+        self.assertFalse(Etiqueta.objects.exists())
+
+    def test_aplica_con_procedencia_y_repetir_conserva_ids_y_fechas(self):
+        from core.models import PublicacionEtiqueta, PublicacionTema
+
+        articulo = self.crear('aplicado')
+        publicado_antes = Publicacion.objects.values().get(pk=articulo.pk)
+        previo = self.ejecutar('--dry-run')['resultados'][0]
+        aplicado = self.ejecutar('--aplicar')['resultados'][0]
+        self.assertEqual(aplicado['categoria'], previo['categoria'])
+        self.assertEqual(aplicado['etiquetas'], previo['etiquetas'])
+        tema = PublicacionTema.objects.get(id_publicacion_api=articulo)
+        self.assertEqual((tema.metodo_analisis, tema.version_analizador, tema.tipo_evidencia),
+                         ('reglas', 'clasificacion-reglas-v2', 'cuerpo_completo'))
+        self.assertIsNotNone(tema.fecha_procesamiento)
+        etiquetas = list(PublicacionEtiqueta.objects.values())
+        self.assertTrue(etiquetas)
+        for etiqueta in etiquetas:
+            self.assertEqual(
+                (etiqueta['metodo_analisis'], etiqueta['version_analizador'], etiqueta['tipo_evidencia']),
+                ('etiquetas', 'extraccion-etiquetas-v1', 'cuerpo_completo'),
+            )
+            self.assertIsNotNone(etiqueta['fecha_procesamiento'])
+        antes = list(PublicacionTema.objects.values())
+        self.assertEqual(self.ejecutar('--aplicar')['resultados'], [])
+        self.assertEqual(list(PublicacionTema.objects.values()), antes)
+        self.assertEqual(list(PublicacionEtiqueta.objects.values()), etiquetas)
+        self.assertEqual(Publicacion.objects.values().get(pk=articulo.pk), publicado_antes)
+        self.assertFalse(Sentimiento.objects.exists())
+
+    def test_preserva_vinculos_historicos_y_manuales_y_pagina_por_id(self):
+        from core.models import Categoria, Etiqueta, PublicacionEtiqueta, PublicacionTema, Tema
+        from core.services.procedencia_analitica import Metodo, procedencia
+
+        primera = self.crear('clasificacion-legacy')
+        segunda = self.crear('etiquetas-legacy')
+        tema = Tema.objects.create(id_categoria=Categoria.objects.create(nombre_categoria='Otra'))
+        PublicacionTema.objects.create(id_publicacion_api=primera, id_temas=tema)
+        manual = Tema.objects.create(id_categoria=Categoria.objects.create(nombre_categoria='Manual'))
+        PublicacionTema.objects.create(
+            id_publicacion_api=primera, id_temas=manual,
+            **procedencia(Metodo.MANUAL, 'admin-v1', evidencia=''),
+        )
+        PublicacionEtiqueta.objects.create(publicacion=segunda, posicion=4, etiqueta=Etiqueta.objects.create(
+            nombre='Archivo', slug='archivo',
+        ))
+        temas_antes = list(PublicacionTema.objects.filter(id_publicacion_api=primera).order_by('pk').values())
+        etiquetas_antes = list(segunda.etiquetas.values())
+        lote = self.ejecutar('--aplicar', '--limite', '1')
+        self.assertEqual(lote['cursor'], primera.pk)
+        self.assertTrue(lote['hay_mas'])
+        self.assertEqual(lote['resultados'][0]['clasificacion'], 'conservada')
+        lote = self.ejecutar('--aplicar', '--despues-de-id', str(lote['cursor']))
+        self.assertEqual(lote['cursor'], segunda.pk)
+        self.assertFalse(lote['hay_mas'])
+        self.assertEqual(lote['resultados'][0]['etiquetado'], 'conservadas')
+        self.assertEqual(list(PublicacionTema.objects.filter(id_publicacion_api=primera).order_by('pk').values()),
+                         temas_antes)
+        self.assertEqual(list(segunda.etiquetas.values()), etiquetas_antes)
+
+    def test_abstencion_no_impide_generar_etiquetas(self):
+        from core.models import PublicacionTema
+
+        articulo = self.crear('ambiguo', 'Médicos y docentes', 'Pacientes y estudiantes participaron.')
+        resultado = self.ejecutar('--aplicar')['resultados'][0]
+        self.assertEqual(resultado['clasificacion'], 'abstencion')
+        self.assertTrue(articulo.etiquetas.exists())
+        self.assertFalse(PublicacionTema.objects.exists())
+
+    def test_fallo_revierte_publicacion_e_informa_cursor_reanudable(self):
+        from core.models import PublicacionTema
+        from core.services.clasificacion import vincular_categoria_por_nombre
+
+        primera = self.crear('lote-commiteado')
+        segunda = self.crear('lote-fallido')
+
+        def vincular(publicacion, *args, **kwargs):
+            if publicacion.pk == segunda.pk:
+                raise IntegrityError('fallo simulado tras escribir etiquetas')
+            vincular_categoria_por_nombre(publicacion, *args, **kwargs)
+
+        salida = StringIO()
+        with patch('core.services.enriquecimiento_local.vincular_categoria_por_nombre', side_effect=vincular):
+            with self.assertRaisesMessage(CommandError, f'--despues-de-id {primera.pk}'):
+                call_command('enriquecer_publicaciones_local', '--aplicar', stdout=salida)
+        self.assertEqual(json.loads(salida.getvalue())['cursor'], primera.pk)
+        self.assertTrue(PublicacionTema.objects.filter(id_publicacion_api=primera).exists())
+        self.assertFalse(segunda.etiquetas.exists())
+        retomado = self.ejecutar('--aplicar', '--despues-de-id', str(primera.pk))
+        self.assertEqual(retomado['cursor'], segunda.pk)
+        self.assertEqual(retomado['resultados'][0]['clasificacion'], 'creada')
+
+    def test_revalida_cuerpo_y_vinculos_entre_seleccion_y_escritura(self):
+        from core.services.enriquecimiento_local import aplicar, lote_pendiente
+
+        articulo = self.crear('cambio-concurrente')
+        lote, _ = lote_pendiente(0, 1)
+        self.assertEqual(lote[0].pk, articulo.pk)
+        articulo.contenido = ''
+        articulo.contenido_completo = False
+        articulo.save(update_fields=['contenido', 'contenido_completo'])
+        self.assertEqual(aplicar(articulo.pk)['omitida'], 'eliminada_o_sin_cuerpo')
+        self.assertFalse(articulo.temas.exists())
+        self.assertFalse(articulo.etiquetas.exists())
+
+
+class EnriquecimientoLocalConcurrenciaTestCase(TransactionTestCase):
+    def test_lotes_concurrentes_comparten_catalogo_y_no_duplican_vinculos(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from django.db import connection
+        from core.models import Categoria, PublicacionTema, Tema
+        from core.services.enriquecimiento_local import aplicar
+
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere bloqueos de PostgreSQL.')
+        primera = Publicacion.objects.create(
+            hash_origen='local-concurrente-a', titulo='Hospital Pediátrico',
+            contenido='Médicos atendieron pacientes.',
+        )
+        segunda = Publicacion.objects.create(
+            hash_origen='local-concurrente-b', titulo='Hospital Materno',
+            contenido='Enfermeras asistieron a los pacientes.',
+        )
+        barrera = Barrier(3)
+
+        def procesar(pk):
+            try:
+                barrera.wait(timeout=10)
+                return aplicar(pk)['clasificacion']
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            tareas = [executor.submit(procesar, pk) for pk in (primera.pk, primera.pk, segunda.pk)]
+            self.assertCountEqual([tarea.result(timeout=15) for tarea in tareas],
+                                  ['creada', 'creada', 'conservada'])
+        self.assertEqual(Categoria.objects.filter(nombre_categoria='Salud').count(), 1)
+        self.assertEqual(Tema.objects.filter(id_categoria__nombre_categoria='Salud').count(), 1)
+        self.assertEqual(PublicacionTema.objects.filter(id_publicacion_api=primera).count(), 1)
+        self.assertEqual(PublicacionTema.objects.filter(id_publicacion_api=segunda).count(), 1)
