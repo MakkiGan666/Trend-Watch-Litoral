@@ -121,6 +121,7 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
     SQLite no ofrece bloqueo de fila; no reintentamos errores de base de datos.
     """
     from core.models import Etiqueta, Publicacion, PublicacionEtiqueta
+    from core.services.procedencia_analitica import Metodo, procedencia
 
     using = using or publicacion._state.db or 'default'
     with transaction.atomic(using=using):
@@ -150,8 +151,11 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
         # Reemplazo atómico sólo cuando cambia la secuencia. Evita colisiones
         # temporales de la restricción única de posición al intercambiar etiquetas.
         vinculadas.delete()
+        datos_analisis = procedencia(Metodo.ETIQUETAS, 'extraccion-etiquetas-v1')
         relaciones = [
-            PublicacionEtiqueta(publicacion_id=actual.pk, etiqueta=etiquetas[slug], posicion=posicion)
+            PublicacionEtiqueta(
+                publicacion_id=actual.pk, etiqueta=etiquetas[slug], posicion=posicion, **datos_analisis,
+            )
             for posicion, (slug, _) in enumerate(propuestas, start=1)
         ]
         PublicacionEtiqueta.objects.using(using).bulk_create(relaciones)

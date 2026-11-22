@@ -13,6 +13,7 @@ import re
 
 from core.localidades import DEPARTAMENTOS, normalizar_nombre
 from core.models import Categoria, PublicacionTema, Tema
+from core.services.procedencia_analitica import Evidencia, Metodo, procedencia
 
 logger = logging.getLogger(__name__)
 
@@ -384,28 +385,42 @@ def clasificar_lote(noticias, usar_ia=True, *, fuente_id=None):
             'departamento': departamento_por_texto(noticia['titulo'], noticia.get('contenido')),
             'metodo': 'reglas',
             'confirmada': segura,
+            'procedencia': procedencia(
+                Metodo.REGLAS, 'clasificacion-reglas-v1',
+                Evidencia.SECCION if (noticia.get('seccion') or '').strip().lower() in SECCION_A_CATEGORIA
+                else Evidencia.CUERPO,
+            ) if segura else {},
         })
         if not segura:
             dudosas.append((indice, noticia))
     por_ia = _clasificar_con_ia(dudosas, fuente_id) if usar_ia and dudosas else {}
-    for indice, categoria in por_ia.items():
-        resultados[indice].update(categoria=categoria, metodo='ia', confirmada=True)
+    if por_ia:
+        from core.services.gemini_cliente import gemini_cliente
+        datos_analisis = procedencia(Metodo.GEMINI, f'{gemini_cliente.model_name}/clasificacion-v1')
+        for indice, categoria in por_ia.items():
+            resultados[indice].update(
+                categoria=categoria, metodo='ia', confirmada=True, procedencia=datos_analisis,
+            )
     return resultados
 
 
-def vincular_categoria(publicacion, categoria):
+def vincular_categoria(publicacion, categoria, *, procedencia_analisis=None):
     """Vincula la publicación a la categoría a través de un Tema existente o uno automático."""
+    if procedencia_analisis and not publicacion.tiene_cuerpo_completo:
+        raise ValueError('La clasificación confirmada requiere un cuerpo completo.')
     tema = Tema.objects.filter(id_categoria=categoria).first()
     if not tema:
         tema = Tema.objects.create(
             id_categoria=categoria,
             descripcion=f'Tema automático para {categoria.nombre_categoria}'
         )
-    PublicacionTema.objects.get_or_create(id_publicacion_api=publicacion, id_temas=tema)
+    PublicacionTema.objects.get_or_create(
+        id_publicacion_api=publicacion, id_temas=tema, defaults=procedencia_analisis,
+    )
 
 
-def vincular_categoria_por_nombre(publicacion, nombre):
+def vincular_categoria_por_nombre(publicacion, nombre, *, procedencia_analisis=None):
     categoria = Categoria.objects.filter(nombre_categoria=nombre).order_by('pk').first()
     if categoria is None:
         categoria = Categoria.objects.create(nombre_categoria=nombre)
-    vincular_categoria(publicacion, categoria)
+    vincular_categoria(publicacion, categoria, procedencia_analisis=procedencia_analisis)

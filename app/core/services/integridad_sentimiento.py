@@ -1,6 +1,7 @@
 import math
 
 from core.models import Sentimiento
+from core.services.procedencia_analitica import Metodo, procedencia
 
 
 class ConflictoSentimiento(ValueError):
@@ -32,7 +33,10 @@ def sentimiento_unico(publicacion):
 def guardar_sentimiento_local(publicacion, polaridad, confianza):
     """El llamador mantiene el bloqueo de Publicacion hasta guardar también su estado."""
     sentimiento = sentimiento_unico(publicacion)
+    if sentimiento is not None and sentimiento.pendiente_revision:
+        raise ConflictoSentimiento('Conflicto: sentimiento_pendiente_revision.')
     valores = {
+        **procedencia(Metodo.LOCAL, 'lexicon-probabilistico-v1'),
         'polaridad': validar_numero(polaridad, 'polaridad', -1, 1),
         'confianza': validar_numero(confianza, 'confianza', 0, 1),
     }
@@ -40,5 +44,5 @@ def guardar_sentimiento_local(publicacion, polaridad, confianza):
         return Sentimiento.objects.create(id_publicacion_api=publicacion, **valores)
     for campo, valor in valores.items():
         setattr(sentimiento, campo, valor)
-    sentimiento.save(update_fields=['polaridad', 'confianza'])
+    sentimiento.save(update_fields=valores)
     return sentimiento

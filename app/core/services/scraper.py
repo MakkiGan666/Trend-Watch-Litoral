@@ -203,7 +203,10 @@ class _Lote:
                         fecha_captura=timezone.now()
                     )
                     if clasificacion.get('confirmada') is True:
-                        vincular_categoria_por_nombre(publicacion, clasificacion['categoria'])
+                        vincular_categoria_por_nombre(
+                            publicacion, clasificacion['categoria'],
+                            procedencia_analisis=clasificacion['procedencia'],
+                        )
             except IntegrityError:
                 # Consultar después de salir del bloque que falló. Sólo es duplicado si la
                 # publicación existe; cualquier otra violación interrumpe el lote.

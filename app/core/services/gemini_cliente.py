@@ -9,6 +9,7 @@ except ImportError:  # pragma: no cover - compatibilidad con entornos sin la SDK
 
 from django.conf import settings
 from django.db import transaction
+from core.services.procedencia_analitica import procedencia_sentimiento_gemini
 from core.services.integridad_sentimiento import validar_numero as _numero_validado
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
@@ -112,7 +113,7 @@ class GeminiCliente:
         from core.services.gemini_multifuente import filtro_cliente_global
         pendientes = list(Publicacion.objects.filter(
             filtro_cliente_global(), procesado_ia=False,
-        ).order_by('pk')[:batch_size])
+        ).exclude(sentimiento__pendiente_revision=True).order_by('pk')[:batch_size])
         resultado = {
             'estado': 'SIN_PENDIENTES', 'seleccionadas': len(pendientes),
             'procesadas': 0, 'omitidas': 0, 'fallidas': 0, 'errores': [],
@@ -182,7 +183,8 @@ class GeminiCliente:
             try:
                 with transaction.atomic():
                     publicacion = Publicacion.objects.select_for_update().get(pk=pub.pk)
-                    if publicacion.procesado_ia:
+                    if (publicacion.procesado_ia or not publicacion.tiene_cuerpo_completo
+                            or (publicacion.titulo, publicacion.contenido) != (pub.titulo, pub.contenido)):
                         omitida = True
                     else:
                         sentimientos = list(Sentimiento.objects.filter(
@@ -193,17 +195,21 @@ class GeminiCliente:
                         if Locacion.objects.filter(id_publicacion_api=publicacion).exists():
                             raise ConflictoResultadoIA('locaciones_preexistentes')
 
+                        if sentimientos and sentimientos[0].pendiente_revision:
+                            raise ConflictoResultadoIA('sentimiento_pendiente_revision')
+
+                        valores = {
+                            'polaridad': data['polaridad'],
+                            'confianza': data['confianza'],
+                            **procedencia_sentimiento_gemini(self.model_name),
+                        }
                         if sentimientos:
                             sentimiento = sentimientos[0]
-                            sentimiento.polaridad = data['polaridad']
-                            sentimiento.confianza = data['confianza']
-                            sentimiento.save(update_fields=['polaridad', 'confianza'])
+                            for campo, valor in valores.items():
+                                setattr(sentimiento, campo, valor)
+                            sentimiento.save(update_fields=valores)
                         else:
-                            Sentimiento.objects.create(
-                                polaridad=data['polaridad'],
-                                confianza=data['confianza'],
-                                id_publicacion_api=publicacion,
-                            )
+                            Sentimiento.objects.create(id_publicacion_api=publicacion, **valores)
                         for loc in data['localidades']:
                             Locacion.objects.create(
                                 location=loc['nombre'],
