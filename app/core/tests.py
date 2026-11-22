@@ -3976,7 +3976,7 @@ class ProcedenciaAnaliticaPublicacionTestCase(TestCase):
         self.assertTrue(etiquetas)
         for etiqueta in etiquetas:
             self.assertEqual(etiqueta['metodo_analisis'], 'etiquetas')
-            self.assertEqual(etiqueta['version_analizador'], 'extraccion-etiquetas-v1')
+            self.assertEqual(etiqueta['version_analizador'], 'extraccion-etiquetas-v2')
             self.assertEqual(etiqueta['tipo_evidencia'], 'cuerpo_completo')
             self.assertIsNotNone(etiqueta['fecha_procesamiento'])
         sincronizar_etiquetas(self.articulo)
@@ -4018,7 +4018,7 @@ class ProcedenciaAnaliticaPublicacionTestCase(TestCase):
 
 class ReglasTematicasLocalesTestCase(SimpleTestCase):
     def test_confirma_con_evidencia_independiente_en_titulo_y_cuerpo(self):
-        from core.services.clasificacion import categoria_local_confirmada
+        from core.services.temas_locales import categoria_local_confirmada
 
         casos = [
             ('Hospital incorpora médicos', 'Pacientes reciben atención sanitaria.', 'Salud'),
@@ -4029,8 +4029,66 @@ class ReglasTematicasLocalesTestCase(SimpleTestCase):
             with self.subTest(titulo=titulo):
                 self.assertEqual(categoria_local_confirmada(titulo, cuerpo), categoria)
 
+    def test_regresiones_del_corpus_de_el_territorio(self):
+        from core.services.temas_locales import categoria_local_confirmada
+
+        casos = [
+            (3954, 'Casino Club renueva su cartelera con propuestas para todos los gustos',
+             'Espectáculos musicales y coreografía con entrada gratuita. Casino Club presentó obras de teatro.',
+             'Cultura'),
+            (5057, 'Últimas noches de calle Estudiantina 2026',
+             'Tercera jornada de desfile de la fiesta. Los estudiantes preparan la Expo Carrozas.', 'Festividades'),
+            (4584, 'Adolescente murió electrocutado en una escuela',
+             'Sufrió una descarga eléctrica en el predio escolar. La investigación intenta esclarecer el accidente.',
+             'Policiales'),
+            (5880, 'Las Raíces se vive a pleno en Jardín América pese a las lluvias',
+             'La Fiesta Provincial de las Colectividades continúa con gastronomía, desfile y espectáculos.',
+             'Festividades'),
+            (4882, 'Primer Encuentro de Comunidades Lectoras',
+             'Los clubes de lectura reunirán lectores en la biblioteca para compartir libros.', 'Cultura'),
+            (3557, 'Carne vacuna sigue aumentando y su consumo continúa en caída',
+             'Las carnicerías registran aumentos de precios y cambios en las ventas.', 'Economía'),
+            (6047, 'Se negó a declarar el presunto homicida de Yonatan Suárez',
+             'Está imputado por homicidio. Prosigue la investigación y el detenido solicitó la excarcelación.',
+             'Policiales'),
+        ]
+        for identificador, titulo, cuerpo, esperado in casos:
+            with self.subTest(publicacion=identificador):
+                self.assertEqual(categoria_local_confirmada(titulo, cuerpo), esperado)
+
+    def test_aliases_y_terminos_circunstanciales_no_confirman_categoria(self):
+        from core.services.temas_locales import categoria_local_confirmada
+
+        self.assertIsNone(categoria_local_confirmada(
+            'Saludó a la prensa en el Casino Club',
+            'El Casino Club presentó el comunicado para las familias y recibió visitas.',
+        ))
+        self.assertIsNone(categoria_local_confirmada(
+            'Las aplicaciones prácticas de la ordenanza',
+            'El texto de la ordenanza fue leído durante una reunión abierta.',
+        ))
+
+    def test_etiquetas_descartan_conectores_y_respetan_limites_en_titulos_reales(self):
+        from core.services.etiquetas import sugerir_etiquetas
+
+        casos = [
+            ('Milei, vocero de Adorni. Fin', 'Adorni habló porque hace falta explicar parte del informe.',
+             {'adorni-fin', 'porque', 'parte', 'hace'}, 'adorni'),
+            ('Tecnológicas y Trump difieren en retrasar avances en IA',
+             'Trump expuso diferencias con las tecnológicas sobre inteligencia artificial.',
+             {'tecnologicas-trump'}, 'trump'),
+            ('Biblioteca Sarmiento organiza una suelta de libros',
+             'La Biblioteca Sarmiento compartió libros con sus lectores.',
+             set(), 'biblioteca-sarmiento'),
+        ]
+        for titulo, cuerpo, prohibidas, relevante in casos:
+            with self.subTest(titulo=titulo):
+                slugs = {slug for slug, _ in sugerir_etiquetas(titulo, cuerpo)}
+                self.assertFalse(slugs & prohibidas)
+                self.assertIn(relevante, slugs)
+
     def test_se_abstiene_sin_corroboracion_o_ante_una_competencia_cercana(self):
-        from core.services.clasificacion import categoria_local_confirmada
+        from core.services.temas_locales import categoria_local_confirmada
 
         casos = [
             ('Agenda', 'Un informe sin referencias concretas.'),
@@ -4091,14 +4149,14 @@ class EnriquecimientoLocalLoteTestCase(TestCase):
         self.assertEqual(aplicado['etiquetas'], previo['etiquetas'])
         tema = PublicacionTema.objects.get(id_publicacion_api=articulo)
         self.assertEqual((tema.metodo_analisis, tema.version_analizador, tema.tipo_evidencia),
-                         ('reglas', 'clasificacion-reglas-v2', 'cuerpo_completo'))
+                         ('reglas', 'clasificacion-reglas-v3', 'cuerpo_completo'))
         self.assertIsNotNone(tema.fecha_procesamiento)
         etiquetas = list(PublicacionEtiqueta.objects.values())
         self.assertTrue(etiquetas)
         for etiqueta in etiquetas:
             self.assertEqual(
                 (etiqueta['metodo_analisis'], etiqueta['version_analizador'], etiqueta['tipo_evidencia']),
-                ('etiquetas', 'extraccion-etiquetas-v1', 'cuerpo_completo'),
+                ('etiquetas', 'extraccion-etiquetas-v2', 'cuerpo_completo'),
             )
             self.assertIsNotNone(etiqueta['fecha_procesamiento'])
         antes = list(PublicacionTema.objects.values())

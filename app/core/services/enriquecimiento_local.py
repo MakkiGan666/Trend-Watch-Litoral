@@ -4,9 +4,8 @@ from django.db import transaction
 from django.db.models import Exists, OuterRef
 
 from core.models import Publicacion, PublicacionEtiqueta, PublicacionTema
-from core.services.clasificacion import (
-    VERSION_CLASIFICACION_LOCAL, categoria_local_confirmada, vincular_categoria_por_nombre,
-)
+from core.services.clasificacion import vincular_categoria_por_nombre
+from core.services.temas_locales import VERSION_CLASIFICACION_LOCAL, categoria_local_confirmada
 from core.services.etiquetas import guardar_etiquetas_propuestas, sugerir_etiquetas
 from core.services.procedencia_analitica import Metodo, procedencia
 

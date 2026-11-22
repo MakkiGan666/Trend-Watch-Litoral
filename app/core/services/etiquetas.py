@@ -19,9 +19,40 @@ PALABRAS_COMUNES = set('''
 '''.split())
 PALABRAS_COMUNES.update({'de', 'la', 'el', 'en', 'al', 'se', 'su', 'un', 'y', 'o', 'a', 'e', 'es', 'no', 'le', 'lo', 'ya'})
 PALABRAS_COMUNES.update('nuevo nueva nuevos nuevas todo toda todos todas recibió recibieron regreso nacer llevar realizó realizará anunció publicó kilos vamos estamos dispuesto dispuestos objetivo objetivos queremos dijo afirmó fun agenda on the lunes martes miércoles jueves viernes sábado domingo enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre'.split())
+PALABRAS_COMUNES.update("""
+    porque pues aunque mientras sino tampoco asimismo igualmente además
+    parte partes hace hacen hacer hacía hacerse hecho hechos mucho mucha muchas poco poca
+    estaba estaban estuvo están estar quien quienes manera través pese pleno plena vive partir
+    fin fines era eran antes ahora allí acá todavía quizás cómo dónde cuándo tanto tanta tantas
+    primer primera segundo segunda último última nuevo nueva ya mismo misma principal principales
+    pasado próxima próximo serie caso casos tema temas algo nada nadie cosas cosa personas persona
+    momento vez veces dentro fuera solo solamente cualquier alguna algunas algún así bien mejor
+    tiene tienen tuvo tuvieron tendrá tendrán cuenta cuentan contó contar queremos nacional internacionales
+    compartí compartió compartir relacionada relacionadas foto fotos video captura leer nota notas
+    presentó presenta presentan informó informaron destaca destacó indicar indicó
+    llevar llegó llega llegan sigue siguen único única total punto puntos cotidiana cotidiano anticipadas propuestas mantener
+""".split())
+VERSION_ETIQUETAS = 'extraccion-etiquetas-v2'
 PALABRAS_COMUNES = {slugify(palabra) for palabra in PALABRAS_COMUNES}
 PATRON = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}")
-TITULOS_GENERICOS = {'agenda', 'territorio-fun', 'el-territorio-fun'}
+_PALABRA_PROPIA = r'[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+'
+_NOMBRE_PROPIO = re.compile(rf'\b{_PALABRA_PROPIA}(?:[ \t]+{_PALABRA_PROPIA})+\b')
+TITULOS_GENERICOS = {'agenda', 'agenda-cotidiana', 'territorio-fun', 'el-territorio-fun',
+                     'fun-de-verano', 'el-territorio-fun-de-verano'}
+
+
+def _nombres_propios(texto):
+    for match in _NOMBRE_PROPIO.finditer(texto):
+        nombre = []
+        for palabra in match.group().split():
+            if slugify(palabra) in PALABRAS_COMUNES:
+                if 2 <= len(nombre) <= 4:
+                    yield ' '.join(nombre)
+                nombre = []
+            else:
+                nombre.append(palabra)
+        if 2 <= len(nombre) <= 4:
+            yield ' '.join(nombre)
 
 
 def sugerir_etiquetas(titulo, contenido, limite=15):
@@ -39,34 +70,47 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
         return clave
 
     palabras_titulo = PATRON.findall(titulo)
-    for texto, peso in ((titulo, 3), (contenido, 1)):
-        for palabra in PATRON.findall(texto):
-            if len(palabra) >= 4 and slugify(palabra) not in PALABRAS_COMUNES:
-                agregar(palabra, peso)
+    palabras_cuerpo = Counter()
+    nombres_cuerpo = {}
+    palabras_entrada = set()
+    for match in PATRON.finditer(contenido):
+        palabra = match.group()
+        clave = slugify(palabra)
+        if len(palabra) < 4 or clave in PALABRAS_COMUNES:
+            continue
+        palabras_cuerpo[clave] += 1
+        nombres_cuerpo.setdefault(clave, palabra)
+        if match.start() < 1000:
+            palabras_entrada.add(clave)
 
-    # Sólo unir nombres propios o expresiones con nexo; no mezclar palabras a ambos
-    # lados de un signo de puntuación ni producir todas las parejas posibles.
-    for indice in range(len(palabras_titulo) - 1):
-        izquierda, derecha = palabras_titulo[indice:indice + 2]
-        if (izquierda[0].isupper() and derecha[0].isupper()
-                and slugify(izquierda) not in PALABRAS_COMUNES
-                and slugify(derecha) not in PALABRAS_COMUNES):
-            agregar(f'{izquierda} {derecha}', 9)
-    for match in re.finditer(r'(?iu)\b([a-záéíóúüñ]{4,})\s+(de|del|al|para|con)\s+([a-záéíóúüñ]{4,})\b', titulo):
-        if slugify(match[1]) not in PALABRAS_COMUNES and slugify(match[3]) not in PALABRAS_COMUNES:
+    titulo_claves = set()
+    for palabra in palabras_titulo:
+        clave = slugify(palabra)
+        if len(palabra) >= 4 and clave not in PALABRAS_COMUNES and clave not in titulo_claves:
+            titulo_claves.add(clave)
+            agregar(palabra, 3)
+    for clave, frecuencia in palabras_cuerpo.items():
+        if clave in titulo_claves or (clave in palabras_entrada and frecuencia >= 2):
+            puntuaciones[clave] += min(3, frecuencia)
+            nombres.setdefault(clave, nombres_cuerpo[clave])
+
+    # El separador debe estar presente en el texto original. Tokenizar primero
+    # uniría "Adorni. Fin" y "Tecnológicas y Trump".
+    for nombre in _nombres_propios(titulo):
+        agregar(nombre, 9)
+    for match in re.finditer(r'(?iu)\b([a-záéíóúüñ]{4,})[ \t]+(?:de|del)[ \t]+([a-záéíóúüñ]{4,})\b', titulo):
+        if slugify(match[1]) not in PALABRAS_COMUNES and slugify(match[2]) not in PALABRAS_COMUNES:
             agregar(match.group(0), 7)
 
-    titulo_claves = {slugify(palabra) for palabra in palabras_titulo}
-    for match in re.finditer(r'\b([A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+)[ \t]+([A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+)\b', contenido):
-        if (slugify(match[1]) in titulo_claves
-                and slugify(match[1]) not in PALABRAS_COMUNES
-                and slugify(match[2]) not in PALABRAS_COMUNES):
-            agregar(match.group(0), 5)
+    nombres_repetidos = Counter(slugify(nombre) for nombre in _nombres_propios(contenido))
+    for nombre in _nombres_propios(contenido[:1000]):
+        if slugify(nombre.split()[0]) in titulo_claves and nombres_repetidos[slugify(nombre)] >= 2:
+            agregar(nombre, 5)
 
     ordenadas = sorted(puntuaciones, key=lambda clave: (-puntuaciones[clave], -len(clave.split('-')), clave))
     seleccionadas = []
     for clave in ordenadas:
-        if len(clave.split('-')) == 1 and puntuaciones[clave] < 4:
+        if '-' not in clave and (clave not in titulo_claves or puntuaciones[clave] < 4):
             continue
         if len(clave.split('-')) == 1 and any(
             clave in elegida.split('-') and puntuaciones[elegida] >= puntuaciones[clave]
@@ -81,6 +125,7 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
     # En títulos genéricos o textos literarios puede no repetirse ningún término
     # del título. Sólo en esos casos usamos nombres y términos del cuerpo.
     if not seleccionadas:
+        limite = min(limite, 6)
         titulo_clave = slugify(titulo)
         if titulo_clave not in TITULOS_GENERICOS:
             for palabra in palabras_titulo:
@@ -93,11 +138,9 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
                     if len(seleccionadas) == limite:
                         break
         if len(seleccionadas) < limite:
-            for match in re.finditer(r'\b([A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+)[ \t]+([A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+)\b', contenido[:1000]):
-                if (slugify(match[1]) not in PALABRAS_COMUNES
-                        and slugify(match[2]) not in PALABRAS_COMUNES
-                        and slugify(match.group(0)) not in TITULOS_GENERICOS):
-                    agregar(match.group(0), 1)
+            for nombre in _nombres_propios(contenido[:1000]):
+                if slugify(nombre) not in TITULOS_GENERICOS:
+                    agregar(nombre, 1)
             for clave in sorted(puntuaciones, key=lambda c: (-puntuaciones[c], c)):
                 if clave not in seleccionadas and len(clave.split('-')) > 1:
                     seleccionadas.append(clave)
@@ -159,7 +202,7 @@ def guardar_etiquetas_propuestas(publicacion, propuestas):
         etiquetas[slug], _ = Etiqueta.objects.using(using).get_or_create(
             slug=slug, defaults={'nombre': nombre},
         )
-    datos_analisis = procedencia(Metodo.ETIQUETAS, 'extraccion-etiquetas-v1')
+    datos_analisis = procedencia(Metodo.ETIQUETAS, VERSION_ETIQUETAS)
     relaciones = [
         PublicacionEtiqueta(
             publicacion_id=publicacion.pk, etiqueta=etiquetas[slug], posicion=posicion, **datos_analisis,

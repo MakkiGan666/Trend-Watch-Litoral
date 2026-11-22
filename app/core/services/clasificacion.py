@@ -164,25 +164,6 @@ def categoria_con_confianza(titulo, contenido, seccion=None):
     return ganadora, bool(evidencia_titulo and primero >= _PESO_TITULO and primero >= 2 * segundo)
 
 
-VERSION_CLASIFICACION_LOCAL = 'clasificacion-reglas-v2'
-
-
-def categoria_local_confirmada(titulo, contenido):
-    """Confirma una categoría sólo con evidencia temática en ambos textos."""
-    titulo_n, cuerpo_n = _texto_normalizado(titulo), _texto_normalizado(contenido)
-    candidatas = []
-    for categoria, raices in PALABRAS_CLAVE.items():
-        en_titulo = {raiz for raiz in raices if _contar(raiz, titulo_n)}
-        en_cuerpo = {raiz for raiz in raices if _contar(raiz, cuerpo_n)}
-        puntos = _PESO_TITULO * len(en_titulo) + len(en_cuerpo)
-        candidatas.append((puntos, categoria, en_titulo, en_cuerpo))
-    candidatas.sort(key=lambda candidata: candidata[0], reverse=True)
-    puntos, categoria, en_titulo, en_cuerpo = candidatas[0]
-    if en_titulo and en_cuerpo and len(en_titulo | en_cuerpo) >= 2 and puntos >= 2 * candidatas[1][0]:
-        return categoria
-    return None
-
-
 def categoria_por_reglas(titulo, contenido, seccion=None):
     """Propuesta legacy sin IA; usar categoria_con_confianza antes de persistirla."""
     return categoria_con_confianza(titulo, contenido, seccion)[0]
