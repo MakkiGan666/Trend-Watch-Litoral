@@ -4103,6 +4103,61 @@ class ReglasTematicasLocalesTestCase(SimpleTestCase):
                 self.assertIsNone(categoria_local_confirmada(titulo, cuerpo))
 
 
+class SlugsEtiquetasTestCase(TestCase):
+    def test_extrae_longitud_exacta_y_descarta_excesos_en_titular_y_cuerpo(self):
+        from core.services.etiquetas import sugerir_etiquetas
+
+        limite = 'q' * 110
+        for longitud in (110, 111, 250, 4000):
+            palabra = 'q' * longitud
+            cuerpo = f'{palabra} {palabra}'
+            titulares = ('Agenda', palabra) if longitud <= 250 else ('Agenda',)
+            for titular in titulares:
+                with self.subTest(longitud=longitud, titular_es_palabra=titular == palabra):
+                    esperado = [limite] if longitud == 110 else []
+                    self.assertEqual([slug for slug, _ in sugerir_etiquetas(titular, cuerpo)], esperado)
+
+    def test_alta_y_edicion_por_senal_conservan_los_slugs_validos(self):
+        from core.models import Etiqueta
+
+        larga = 'q' * 111
+        limite = 'r' * 110
+        articulo = Publicacion.objects.create(
+            hash_origen='slug-largo-alta', titulo='Agenda', contenido=f'{larga} {larga}',
+        )
+        self.assertEqual(Publicacion.objects.get(pk=articulo.pk).contenido, f'{larga} {larga}')
+        self.assertFalse(articulo.etiquetas.exists())
+
+        articulo.titulo = f'{larga} Hospital'
+        articulo.contenido = f'{larga} Hospital. {limite} {limite}.'
+        articulo.save(update_fields=['titulo', 'contenido'])
+        self.assertEqual(list(articulo.etiquetas.values_list('etiqueta__slug', flat=True)), ['hospital'])
+        registro = articulo.etiquetas.get()
+        self.assertEqual(registro.version_analizador, 'extraccion-etiquetas-v2')
+        self.assertEqual(registro.tipo_evidencia, 'cuerpo_completo')
+
+        otro = Publicacion.objects.create(
+            hash_origen='slug-limite-alta', titulo='Agenda', contenido=f'{limite} {limite} {larga} {larga}',
+        )
+        self.assertEqual(otro.etiquetas.get().etiqueta.slug, limite)
+        self.assertFalse(Etiqueta.objects.filter(slug=larga).exists())
+
+    def test_persistencia_descarta_slugs_invalidos_y_conserva_el_orden(self):
+        from django.db import transaction
+        from core.services.etiquetas import guardar_etiquetas_propuestas
+
+        articulo = Publicacion.objects.create(hash_origen='slug-validacion-persistencia', contenido='Texto')
+        with transaction.atomic():
+            bloqueada = Publicacion.objects.select_for_update().get(pk=articulo.pk)
+            guardadas = guardar_etiquetas_propuestas(bloqueada, [
+                ('zeta', 'Zeta'), ('q' * 111, 'Larga'), ('dos palabras', 'Espacio'),
+                ('', 'Vacía'), (42, 'No textual'), ('alfa', 'Alfa'),
+            ])
+        self.assertEqual(guardadas, 2)
+        self.assertEqual(list(articulo.etiquetas.values_list('posicion', 'etiqueta__slug')),
+                         [(1, 'zeta'), (2, 'alfa')])
+
+
 class EnriquecimientoLocalLoteTestCase(TestCase):
     def crear(self, clave, titulo='Hospital Pediátrico', contenido='Médicos atendieron pacientes.',
               *, completo=True):
@@ -4204,6 +4259,30 @@ class EnriquecimientoLocalLoteTestCase(TestCase):
         self.assertEqual(resultado['clasificacion'], 'abstencion')
         self.assertTrue(articulo.etiquetas.exists())
         self.assertFalse(PublicacionTema.objects.exists())
+
+    def test_slug_largo_no_detiene_el_lote_y_el_cursor_reanuda(self):
+        larga = 'q' * 111
+        limite = 'q' * 110
+        primera = self.crear('slug-lote-invalido', 'Agenda', f'{larga} {larga}')
+        segunda = self.crear('slug-lote-limite', 'Agenda', f'{limite} {limite} {larga} {larga}')
+        tercera = self.crear('slug-lote-siguiente')
+
+        previo = self.ejecutar('--limite', '2')
+        self.assertEqual([fila['etiquetas'] for fila in previo['resultados']], [[], [limite]])
+        self.assertFalse(segunda.etiquetas.exists())
+        aplicado = self.ejecutar('--aplicar', '--limite', '2')
+        self.assertEqual([fila['etiquetas'] for fila in aplicado['resultados']], [[], [limite]])
+        self.assertEqual(aplicado['cursor'], segunda.pk)
+        self.assertTrue(aplicado['hay_mas'])
+        self.assertFalse(primera.etiquetas.exists())
+        self.assertEqual(segunda.etiquetas.get().etiqueta.slug, limite)
+
+        retomado = self.ejecutar('--aplicar', '--despues-de-id', str(aplicado['cursor']))
+        self.assertEqual(retomado['cursor'], tercera.pk)
+        self.assertTrue(tercera.etiquetas.exists())
+        antes = list(segunda.etiquetas.values()) + list(tercera.etiquetas.values())
+        self.ejecutar('--aplicar')
+        self.assertEqual(list(segunda.etiquetas.values()) + list(tercera.etiquetas.values()), antes)
 
     def test_fallo_revierte_publicacion_e_informa_cursor_reanudable(self):
         from core.models import PublicacionTema

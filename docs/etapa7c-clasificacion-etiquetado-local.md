@@ -132,3 +132,13 @@ En la muestra fija los vínculos propuestos pasaron de 384 a 190. El conjunto de
 | 28 | `ciudad` | 56 | `hombre` | 25 |
 | 29 | `hace` | 56 | `passalacqua` | 25 |
 | 30 | `noche` | 56 | `semana` | 25 |
+
+## Corrección del límite de slugs en 7C.2
+
+En el HEAD de 7C.1, un artículo titulado «Agenda» con una palabra de 111 caracteres repetida en el cuerpo producía un slug fuera del límite. PostgreSQL rechazaba el alta por señal y la aplicación del lote. Reintentar desde el mismo cursor repetía el fallo.
+
+El extractor valida todos los candidatos con el tamaño y los validadores de `Etiqueta.slug`. La persistencia usa la misma comprobación. Los candidatos inválidos se descartan antes de ocupar una posición. Un slug de 110 caracteres se conserva completo. Los slugs más largos se descartan sin recortarlos, para evitar que dos claves distintas se conviertan en la misma etiqueta. Las etiquetas válidas conservan su orden, unicidad y procedencia `extraccion-etiquetas-v2`.
+
+Los casos de prueba cubren el alta y la edición por señal, términos largos en título y cuerpo, y el recorrido del lote en simulación y aplicación. Un artículo con sólo candidatos inválidos avanza el cursor sin crear vínculos. El siguiente lote se reanuda después de ese cursor y la repetición conserva las filas existentes.
+
+Se restauró de nuevo el respaldo operativo de la auditoría 7C.1 en PostgreSQL aislado y se ejecutaron dos simulaciones de solo lectura sobre los 3.219 artículos elegibles. Ambas coincidieron con la salida completa de 7C.1, incluido el orden y el cursor de cada lote. Se obtuvieron 484 propuestas temáticas y 14.148 vínculos de etiquetas, con 845 asociaciones temáticas históricas preservadas y 155 fichas RSS excluidas. Las huellas de las tablas coincidieron antes y después. Los casos de aplicación se verificaron con datos de prueba.

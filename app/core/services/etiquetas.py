@@ -4,9 +4,12 @@ import re
 from collections import Counter
 from html import unescape
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils.html import strip_tags
 from django.utils.text import slugify
+
+from core.models import Etiqueta
 
 PALABRAS_COMUNES = set('''
     acerca actualmente además ahora algunos ante ayer bajo cada casi como contra cuando
@@ -33,12 +36,23 @@ PALABRAS_COMUNES.update("""
     llevar llegó llega llegan sigue siguen único única total punto puntos cotidiana cotidiano anticipadas propuestas mantener
 """.split())
 VERSION_ETIQUETAS = 'extraccion-etiquetas-v2'
+_CAMPO_SLUG = Etiqueta._meta.get_field('slug')
 PALABRAS_COMUNES = {slugify(palabra) for palabra in PALABRAS_COMUNES}
 PATRON = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{2,}")
 _PALABRA_PROPIA = r'[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ]+'
 _NOMBRE_PROPIO = re.compile(rf'\b{_PALABRA_PROPIA}(?:[ \t]+{_PALABRA_PROPIA})+\b')
 TITULOS_GENERICOS = {'agenda', 'agenda-cotidiana', 'territorio-fun', 'el-territorio-fun',
                      'fun-de-verano', 'el-territorio-fun-de-verano'}
+
+
+def _slug_valido(clave):
+    if not isinstance(clave, str) or not clave or len(clave) > _CAMPO_SLUG.max_length:
+        return False
+    try:
+        _CAMPO_SLUG.run_validators(clave)
+    except ValidationError:
+        return False
+    return True
 
 
 def _nombres_propios(texto):
@@ -61,9 +75,9 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
     puntuaciones = Counter()
     nombres = {}
 
-    def agregar(texto, puntos):
-        clave = slugify(texto)
-        if not clave or len(clave) > 110:
+    def agregar(texto, puntos, *, clave=None):
+        clave = slugify(texto) if clave is None else clave
+        if not _slug_valido(clave):
             return
         puntuaciones[clave] += puntos
         nombres.setdefault(clave, texto.strip())
@@ -87,12 +101,11 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
     for palabra in palabras_titulo:
         clave = slugify(palabra)
         if len(palabra) >= 4 and clave not in PALABRAS_COMUNES and clave not in titulo_claves:
-            titulo_claves.add(clave)
-            agregar(palabra, 3)
+            if agregar(palabra, 3, clave=clave):
+                titulo_claves.add(clave)
     for clave, frecuencia in palabras_cuerpo.items():
         if clave in titulo_claves or (clave in palabras_entrada and frecuencia >= 2):
-            puntuaciones[clave] += min(3, frecuencia)
-            nombres.setdefault(clave, nombres_cuerpo[clave])
+            agregar(nombres_cuerpo[clave], min(3, frecuencia), clave=clave)
 
     # El separador debe estar presente en el texto original. Tokenizar primero
     # uniría "Adorni. Fin" y "Tecnológicas y Trump".
@@ -131,7 +144,7 @@ def sugerir_etiquetas(titulo, contenido, limite=15):
             for palabra in palabras_titulo:
                 clave = slugify(palabra)
                 if len(palabra) >= 5 and clave not in PALABRAS_COMUNES:
-                    clave = agregar(palabra, 4)
+                    clave = agregar(palabra, 4, clave=clave)
                     if clave is None or clave in seleccionadas:
                         continue
                     seleccionadas.append(clave)
@@ -190,9 +203,10 @@ def sincronizar_etiquetas(publicacion, *, using=None, solo_sin_etiquetas=False):
 
 def guardar_etiquetas_propuestas(publicacion, propuestas):
     """Persiste propuestas ordenadas con la fila bloqueada y sin vínculos vigentes."""
-    from core.models import Etiqueta, PublicacionEtiqueta
+    from core.models import PublicacionEtiqueta
     from core.services.procedencia_analitica import Metodo, procedencia
 
+    propuestas = [(slug, nombre) for slug, nombre in propuestas if _slug_valido(slug)]
     if not propuestas:
         return 0
     using = publicacion._state.db
