@@ -11,6 +11,8 @@ import json
 import logging
 import re
 
+from django.db import connection, transaction
+
 from core.localidades import DEPARTAMENTOS, normalizar_nombre
 from core.models import Categoria, PublicacionTema, Tema
 from core.services.procedencia_analitica import Evidencia, Metodo, procedencia
@@ -404,23 +406,39 @@ def clasificar_lote(noticias, usar_ia=True, *, fuente_id=None):
     return resultados
 
 
+def _bloquear_alta_catalogo():
+    # Los nombres legacy son modificables y no son únicos. El mismo bloqueo
+    # coordina altas de categorías y temas entre los escritores del servicio.
+    if connection.vendor == 'postgresql':
+        with connection.cursor() as cursor:
+            cursor.execute('SELECT pg_advisory_xact_lock(%s, %s)', [0x54574C, 0x434154])
+
+
 def vincular_categoria(publicacion, categoria, *, procedencia_analisis=None):
     """Vincula la publicación a la categoría a través de un Tema existente o uno automático."""
     if procedencia_analisis and not publicacion.tiene_cuerpo_completo:
         raise ValueError('La clasificación confirmada requiere un cuerpo completo.')
     tema = Tema.objects.filter(id_categoria=categoria).first()
-    if not tema:
-        tema = Tema.objects.create(
-            id_categoria=categoria,
-            descripcion=f'Tema automático para {categoria.nombre_categoria}'
-        )
+    if tema is None:
+        with transaction.atomic():
+            _bloquear_alta_catalogo()
+            tema = Tema.objects.filter(id_categoria=categoria).first()
+            if tema is None:
+                tema = Tema.objects.create(
+                    id_categoria=categoria,
+                    descripcion=f'Tema automático para {categoria.nombre_categoria}',
+                )
     PublicacionTema.objects.get_or_create(
         id_publicacion_api=publicacion, id_temas=tema, defaults=procedencia_analisis,
     )
 
 
+@transaction.atomic
 def vincular_categoria_por_nombre(publicacion, nombre, *, procedencia_analisis=None):
     categoria = Categoria.objects.filter(nombre_categoria=nombre).order_by('pk').first()
     if categoria is None:
-        categoria = Categoria.objects.create(nombre_categoria=nombre)
+        _bloquear_alta_catalogo()
+        categoria = Categoria.objects.filter(nombre_categoria=nombre).order_by('pk').first()
+        if categoria is None:
+            categoria = Categoria.objects.create(nombre_categoria=nombre)
     vincular_categoria(publicacion, categoria, procedencia_analisis=procedencia_analisis)
