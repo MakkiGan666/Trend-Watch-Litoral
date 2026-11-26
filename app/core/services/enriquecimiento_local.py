@@ -25,13 +25,13 @@ def lote_pendiente(cursor, limite):
     return lote[:limite], len(lote) > limite
 
 
-def _proponer(publicacion):
-    categoria = (None if publicacion.tiene_categoria
+def proponer(publicacion, tiene_categoria, tiene_etiquetas):
+    categoria = (None if tiene_categoria
                  else categoria_local_confirmada(publicacion.titulo, publicacion.contenido))
-    etiquetas = ([] if publicacion.tiene_etiquetas
+    etiquetas = ([] if tiene_etiquetas
                  else sugerir_etiquetas(publicacion.titulo, publicacion.contenido))
-    estado_categoria = 'conservada' if publicacion.tiene_categoria else 'abstencion'
-    estado_etiquetas = 'conservadas' if publicacion.tiene_etiquetas else 'sin_propuestas'
+    estado_categoria = 'conservada' if tiene_categoria else 'abstencion'
+    estado_etiquetas = 'conservadas' if tiene_etiquetas else 'sin_propuestas'
     return {
         'id': publicacion.pk,
         'clasificacion': 'propuesta' if categoria else estado_categoria,
@@ -42,7 +42,7 @@ def _proponer(publicacion):
 
 
 def simular(publicacion):
-    resultado, _ = _proponer(publicacion)
+    resultado, _ = proponer(publicacion, publicacion.tiene_categoria, publicacion.tiene_etiquetas)
     return resultado
 
 
@@ -56,7 +56,7 @@ def aplicar(publicacion_id):
     if actual is None:
         return {'id': publicacion_id, 'omitida': 'eliminada_o_sin_cuerpo'}
 
-    resultado, etiquetas = _proponer(actual)
+    resultado, etiquetas = proponer(actual, actual.tiene_categoria, actual.tiene_etiquetas)
     # El alta de artículos toma los bloqueos de etiquetas antes del catálogo temático.
     if etiquetas:
         guardar_etiquetas_propuestas(actual, etiquetas)

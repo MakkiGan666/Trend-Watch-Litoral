@@ -210,12 +210,7 @@ def guardar_etiquetas_propuestas(publicacion, propuestas):
     if not propuestas:
         return 0
     using = publicacion._state.db
-    # Orden global de slugs para evitar ciclos de bloqueo entre publicaciones.
-    etiquetas = {}
-    for slug, nombre in sorted(propuestas):
-        etiquetas[slug], _ = Etiqueta.objects.using(using).get_or_create(
-            slug=slug, defaults={'nombre': nombre},
-        )
+    etiquetas = asegurar_catalogo_etiquetas(propuestas, using=using)
     datos_analisis = procedencia(Metodo.ETIQUETAS, VERSION_ETIQUETAS)
     relaciones = [
         PublicacionEtiqueta(
@@ -225,3 +220,15 @@ def guardar_etiquetas_propuestas(publicacion, propuestas):
     ]
     PublicacionEtiqueta.objects.using(using).bulk_create(relaciones)
     return len(relaciones)
+
+
+
+def asegurar_catalogo_etiquetas(propuestas, *, using):
+    """Adquiere las entradas del catálogo en orden de slug."""
+    # Orden global de slugs para evitar ciclos de bloqueo entre publicaciones.
+    etiquetas = {}
+    for slug, nombre in sorted(propuestas):
+        etiquetas[slug], _ = Etiqueta.objects.using(using).get_or_create(
+            slug=slug, defaults={'nombre': nombre},
+        )
+    return etiquetas

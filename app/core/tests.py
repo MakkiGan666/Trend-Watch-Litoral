@@ -4356,3 +4356,206 @@ class EnriquecimientoLocalConcurrenciaTestCase(TransactionTestCase):
         self.assertEqual(Tema.objects.filter(id_categoria__nombre_categoria='Salud').count(), 1)
         self.assertEqual(PublicacionTema.objects.filter(id_publicacion_api=primera).count(), 1)
         self.assertEqual(PublicacionTema.objects.filter(id_publicacion_api=segunda).count(), 1)
+
+
+class EnriquecimientoExactoTestCase(TestCase):
+    def crear(self, clave, *, titulo='Hospital Pediátrico', contenido='Médicos atendieron pacientes.',
+              completo=True):
+        from django.db.models.signals import post_save
+        with patch.object(post_save, 'send'):
+            return Publicacion.objects.create(
+                hash_origen=clave, titulo=titulo, contenido=contenido, contenido_completo=completo,
+            )
+
+    def test_rechaza_repetidos_ausentes_rss_y_publicaciones_de_prueba(self):
+        from core.services.lotes_enriquecimiento_local import LoteInvalido, simular_lote_exacto
+
+        articulo = self.crear('exacto-valido')
+        ficha = self.crear('exacto-rss', contenido='', completo=False)
+        prueba = self.crear('exacto-prueba', titulo='Prueba de Publicación')
+        for ids, excluidos, mensaje in (
+            ([articulo.pk, articulo.pk], [], 'únicos'),
+            ([articulo.pk, ficha.pk + 10000], [], 'inexistentes'),
+            ([ficha.pk], [], 'sin cuerpo'),
+            ([prueba.pk], [], 'publicación de prueba'),
+            ([articulo.pk], [articulo.pk], 'expresamente excluidos'),
+        ):
+            with self.subTest(ids=ids), self.assertRaisesMessage(LoteInvalido, mensaje):
+                simular_lote_exacto(ids, excluidos)
+
+    def test_comando_aplica_solo_ids_aprobados_y_repite_sin_escrituras(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from core.models import AplicacionLoteEnriquecimientoLocal, PublicacionEtiqueta, PublicacionTema
+
+        primera = self.crear('exacto-primera')
+        intermedia = self.crear('exacto-no-seleccionada')
+        tercera = self.crear('exacto-tercera')
+        salida = StringIO()
+        call_command('enriquecer_publicaciones_local', '--ids', f'{tercera.pk},{primera.pk}',
+                     '--excluir-ids', str(intermedia.pk), stdout=salida)
+        manifiesto = json.loads(salida.getvalue())
+        self.assertEqual(manifiesto['contenido']['ids'], [primera.pk, tercera.pk])
+        self.assertFalse(PublicacionEtiqueta.objects.exists())
+        llegada = self.crear('exacto-alta-despues-del-manifiesto')
+        with TemporaryDirectory() as directorio:
+            ruta = Path(directorio) / 'lote.json'
+            ruta.write_text(salida.getvalue(), encoding='utf-8')
+            argumentos = ('--aplicar', '--manifiesto', str(ruta), '--sha256', manifiesto['sha256'])
+            salida = StringIO()
+            call_command('enriquecer_publicaciones_local', *argumentos, stdout=salida)
+            self.assertEqual(json.loads(salida.getvalue())['estado'], 'aplicado')
+            etiquetas = list(PublicacionEtiqueta.objects.values())
+            temas = list(PublicacionTema.objects.values())
+            salida = StringIO()
+            call_command('enriquecer_publicaciones_local', *argumentos, stdout=salida)
+        self.assertEqual(json.loads(salida.getvalue())['estado'], 'ya_aplicado')
+        self.assertEqual(AplicacionLoteEnriquecimientoLocal.objects.count(), 1)
+        self.assertEqual(list(PublicacionEtiqueta.objects.values()), etiquetas)
+        self.assertEqual(list(PublicacionTema.objects.values()), temas)
+        self.assertEqual({f['publicacion_id'] for f in etiquetas}, {primera.pk, tercera.pk})
+        self.assertEqual({f['id_publicacion_api_id'] for f in temas}, {primera.pk, tercera.pk})
+        self.assertFalse(llegada.etiquetas.exists())
+        self.assertEqual({f['version_analizador'] for f in etiquetas}, {'extraccion-etiquetas-v2'})
+        self.assertEqual({f['version_analizador'] for f in temas}, {'clasificacion-reglas-v3'})
+
+    def test_rechaza_alteracion_recalculada_propuestas_y_version_obsoleta(self):
+        from copy import deepcopy
+        from core.models import PublicacionEtiqueta
+        from core.services.lotes_enriquecimiento_local import (
+            LoteInvalido, _huella, aplicar_lote_exacto, simular_lote_exacto,
+        )
+
+        articulo = self.crear('exacto-manifiesto')
+        manifiesto = simular_lote_exacto([articulo.pk], [])
+        editado = deepcopy(manifiesto)
+        editado['contenido']['publicaciones'][0]['categoria'] = 'Turismo'
+        editado['sha256'] = _huella(editado['contenido'])
+        with self.assertRaisesMessage(LoteInvalido, 'SHA-256 aprobado'):
+            aplicar_lote_exacto(editado, manifiesto['sha256'])
+        with self.assertRaisesMessage(LoteInvalido, 'propuestas'):
+            aplicar_lote_exacto(editado, editado['sha256'])
+        with patch('core.services.lotes_enriquecimiento_local.VERSION_CLASIFICACION_LOCAL', 'otra'):
+            with self.assertRaisesMessage(LoteInvalido, 'incompatibles'):
+                aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+        with patch('core.services.enriquecimiento_local.categoria_local_confirmada', return_value='Turismo'):
+            with self.assertRaisesMessage(LoteInvalido, 'propuestas'):
+                aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+        self.assertFalse(PublicacionEtiqueta.objects.exists())
+
+    def test_rechaza_manifiesto_incompleto_y_aplicacion_directa_por_ids(self):
+        from core.services.lotes_enriquecimiento_local import (
+            LoteInvalido, _huella, aplicar_lote_exacto, simular_lote_exacto,
+        )
+
+        articulo = self.crear('exacto-incompleto')
+        manifiesto = simular_lote_exacto([articulo.pk], [])
+        manifiesto['contenido']['publicaciones'].clear()
+        manifiesto['sha256'] = _huella(manifiesto['contenido'])
+        with self.assertRaisesMessage(LoteInvalido, 'propuestas'):
+            aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+        with self.assertRaisesMessage(CommandError, 'manifiesto revisado'):
+            call_command('enriquecer_publicaciones_local', '--aplicar', '--ids', str(articulo.pk))
+        self.assertFalse(articulo.etiquetas.exists())
+
+    def test_preserva_historicos_y_revierte_el_lote_ante_un_fallo(self):
+        from core.models import AplicacionLoteEnriquecimientoLocal, Categoria, Etiqueta, PublicacionTema, Tema
+        from core.services.lotes_enriquecimiento_local import aplicar_lote_exacto, simular_lote_exacto
+
+        primera = self.crear('exacto-historica')
+        segunda = self.crear('exacto-fallo')
+        tema = Tema.objects.create(id_categoria=Categoria.objects.create(nombre_categoria='Histórica'))
+        vinculo = PublicacionTema.objects.create(id_publicacion_api=primera, id_temas=tema)
+        anterior = PublicacionTema.objects.values().get(pk=vinculo.pk)
+        manifiesto = simular_lote_exacto([primera.pk, segunda.pk], [])
+        with patch('core.services.lotes_enriquecimiento_local.vincular_categoria_por_nombre',
+                   side_effect=IntegrityError('fallo inducido después de guardar etiquetas')):
+            with self.assertRaises(IntegrityError):
+                aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+        self.assertFalse(Etiqueta.objects.exists())
+        self.assertFalse(AplicacionLoteEnriquecimientoLocal.objects.exists())
+        aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+        self.assertEqual(PublicacionTema.objects.values().get(pk=vinculo.pk), anterior)
+        self.assertEqual(primera.temas.count(), 1)
+
+
+class EnriquecimientoExactoConcurrenciaTestCase(TransactionTestCase):
+    def test_verifica_cambios_concurrentes_despues_de_adquirir_bloqueo(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from django.db import connection, transaction
+        from core.models import AplicacionLoteEnriquecimientoLocal, Categoria, PublicacionTema, Tema
+        from core.services.lotes_enriquecimiento_local import (
+            LoteInvalido, aplicar_lote_exacto, simular_lote_exacto,
+        )
+
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere los bloqueos de fila PostgreSQL.')
+        for cambio in ('contenido', 'asociacion'):
+            with self.subTest(cambio=cambio):
+                articulo = Publicacion(
+                    hash_origen=f'exacto-concurrente-{cambio}', titulo='Hospital Pediátrico',
+                    contenido='Médicos atendieron pacientes.',
+                )
+                Publicacion.objects.bulk_create([articulo])
+                manifiesto = simular_lote_exacto([articulo.pk], [])
+                intenta_bloquear = Event()
+
+                def aplicar():
+                    def observar(execute, sql, params, many, context):
+                        if 'FOR UPDATE' in sql and '"Publicacion"' in sql:
+                            intenta_bloquear.set()
+                        return execute(sql, params, many, context)
+                    try:
+                        with connections['default'].execute_wrapper(observar):
+                            return aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+                    finally:
+                        connections.close_all()
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    with transaction.atomic():
+                        Publicacion.objects.select_for_update().get(pk=articulo.pk)
+                        tarea = executor.submit(aplicar)
+                        self.assertTrue(intenta_bloquear.wait(10))
+                        if cambio == 'contenido':
+                            Publicacion.objects.filter(pk=articulo.pk).update(titulo='Anuncio regional')
+                        else:
+                            tema = Tema.objects.create(
+                                id_categoria=Categoria.objects.create(nombre_categoria='Manual'),
+                            )
+                            PublicacionTema.objects.create(id_publicacion_api=articulo, id_temas=tema)
+                    with self.assertRaisesMessage(LoteInvalido, 'Cambió'):
+                        tarea.result(timeout=10)
+                self.assertFalse(articulo.etiquetas.exists())
+                self.assertFalse(AplicacionLoteEnriquecimientoLocal.objects.exists())
+
+    def test_aborta_si_otro_escritor_tiene_bloqueado_un_vinculo_historico(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from django.db import connection, transaction
+        from core.models import Categoria, PublicacionTema, Tema
+        from core.services.lotes_enriquecimiento_local import (
+            LoteInvalido, aplicar_lote_exacto, simular_lote_exacto,
+        )
+
+        if connection.vendor != 'postgresql':
+            self.skipTest('Requiere NOWAIT de PostgreSQL.')
+        articulo = Publicacion(hash_origen='exacto-vinculo-bloqueado', titulo='Hospital Pediátrico',
+                               contenido='Médicos atendieron pacientes.')
+        Publicacion.objects.bulk_create([articulo])
+        tema = Tema.objects.create(id_categoria=Categoria.objects.create(nombre_categoria='Histórica'))
+        historico = PublicacionTema.objects.create(id_publicacion_api=articulo, id_temas=tema)
+        manifiesto = simular_lote_exacto([articulo.pk], [])
+
+        def aplicar():
+            try:
+                aplicar_lote_exacto(manifiesto, manifiesto['sha256'])
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=1) as executor, transaction.atomic():
+            PublicacionTema.objects.select_for_update().get(pk=historico.pk)
+            tarea = executor.submit(aplicar)
+            with self.assertRaisesMessage(LoteInvalido, 'asociación bloqueada'):
+                tarea.result(timeout=10)
+        self.assertFalse(articulo.etiquetas.exists())
+        self.assertTrue(PublicacionTema.objects.filter(pk=historico.pk).exists())
