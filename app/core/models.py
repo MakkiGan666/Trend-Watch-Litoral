@@ -1281,3 +1281,11 @@ class SentimientoComentario(models.Model):
         if self.polaridad < -0.05:
             return 'negativo'
         return 'neutral'
+
+
+class AplicacionLoteEnriquecimientoLocal(models.Model):
+    """Comprobante de un manifiesto aplicado y de su estado posterior."""
+
+    sha256 = models.CharField(max_length=64, primary_key=True)
+    huella_resultante = models.CharField(max_length=64)
+    aplicado_en = models.DateTimeField(auto_now_add=True)

@@ -142,3 +142,29 @@ El extractor valida todos los candidatos con el tamaño y los validadores de `Et
 Los casos de prueba cubren el alta y la edición por señal, términos largos en título y cuerpo, y el recorrido del lote en simulación y aplicación. Un artículo con sólo candidatos inválidos avanza el cursor sin crear vínculos. El siguiente lote se reanuda después de ese cursor y la repetición conserva las filas existentes.
 
 Se restauró de nuevo el respaldo operativo de la auditoría 7C.1 en PostgreSQL aislado y se ejecutaron dos simulaciones de solo lectura sobre los 3.219 artículos elegibles. Ambas coincidieron con la salida completa de 7C.1, incluido el orden y el cursor de cada lote. Se obtuvieron 484 propuestas temáticas y 14.148 vínculos de etiquetas, con 845 asociaciones temáticas históricas preservadas y 155 fichas RSS excluidas. Las huellas de las tablas coincidieron antes y después. Los casos de aplicación se verificaron con datos de prueba.
+
+## Selección exacta y manifiesto de aprobación
+
+El modo por cursor conserva sus opciones y simula por defecto. Para una revisión editorial, `--ids` acepta sólo la lista explícita de publicaciones. La simulación ordena los IDs, rechaza repetidos, faltantes, fichas RSS, publicaciones con ambos vínculos ya presentes y el título de prueba conocido «Prueba de Publicación». `--excluir-ids` permite agregar exclusiones operativas específicas, como los IDs 20, 21 y 22 del piloto. Una selección que incluye un ID excluido falla por completo.
+
+El manifiesto JSON incluye formato, versiones, IDs seleccionados y excluidos, y un registro por artículo. Cada registro contiene la huella de título y cuerpo, el estado de los vínculos previos con sus IDs y su huella, la categoría propuesta o abstención, y el nombre y slug de cada etiqueta en el orden propuesto. La huella de vínculos cubre la fila de asociación completa, incluida su procedencia. La salida también incluye el SHA-256 del contenido JSON canónico.
+
+### Reanudación del piloto 7C.3
+
+Una vez integrada y aplicada la migración aditiva 0037, se simula una selección editorial de hasta 20 artículos completos, manteniendo las exclusiones del piloto. Los IDs del ejemplo muestran la sintaxis. La lista exacta debe salir de la selección revisada para la ejecución real.
+
+```bash
+python app/manage.py enriquecer_publicaciones_local --ids 3,6,14 --excluir-ids 20,21,22 > piloto-7c3.json
+```
+
+Después de revisar todo el contenido, se guarda el SHA-256 aprobado por separado y se usa ese valor al aplicar. El parámetro representa la aprobación del operador. Copiar el hash del archivo al momento de aplicar no sustituye esa revisión independiente. Cursor y límite están excluidos de ambos modos explícitos.
+
+```bash
+python app/manage.py enriquecer_publicaciones_local --aplicar --manifiesto piloto-7c3.json --sha256 SHA256_APROBADO
+```
+
+La aplicación valida el SHA-256 externo y vuelve a verificar versiones, elegibilidad, texto, asociaciones y propuestas dentro de una sola transacción. Ante una discrepancia se cancela el lote completo. Un cambio legítimo requiere generar y revisar un manifiesto nuevo.
+
+En PostgreSQL, las publicaciones se bloquean por ID ascendente y los vínculos existentes por publicación e ID. Si otro escritor ya bloqueó un vínculo, se aborta para evitar esperar con el bloqueo de la publicación retenido. Después de validar todo el lote, se adquieren los slugs del catálogo en orden global. Las etiquetas se guardan antes de tomar los bloqueos del catálogo temático, en concordancia con las altas habituales. Ninguna fila fuera del manifiesto puede incorporarse por un cambio de cursor o por una publicación nueva.
+
+La única tabla de 0037 guarda el SHA-256 aplicado, la huella resultante y la fecha. El comprobante se confirma junto con todos los vínculos. Así, repetir un manifiesto aplicado responde `ya_aplicado` sin escrituras si el resultado y las propuestas siguen coincidiendo. Si cambian posteriormente, el reintento falla. El comprobante evita confundir una ejecución previa con asociaciones equivalentes creadas por otro flujo. Las publicaciones y los vínculos históricos conservan su identidad y procedencia.
